@@ -9,7 +9,7 @@
 
 set -euo pipefail
 
-VERSION="${1:-0.5.0}"
+VERSION="${1:-$(grep -E '^VERSION = ' core/version.py | cut -d'"' -f2)}"
 APP_NAME="Paragraphos"
 APP_PATH="dist/${APP_NAME}.app"
 DMG_PATH="dist/${APP_NAME}-${VERSION}.dmg"

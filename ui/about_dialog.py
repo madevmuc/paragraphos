@@ -8,6 +8,8 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (QDialog, QLabel, QPushButton, QScrollArea,
                              QTabWidget, QTextBrowser, QVBoxLayout, QWidget)
 
+from core.version import VERSION
+
 # CHANGELOG.md sits at the Paragraphos repo root, one level above `ui/`.
 CHANGELOG_PATH = Path(__file__).resolve().parent.parent / "CHANGELOG.md"
 
@@ -52,7 +54,7 @@ class AboutDialog(QDialog):
         w = QWidget(); v = QVBoxLayout(w)
         v.addWidget(QLabel("<h2>Paragraphos</h2>"))
         v.addWidget(QLabel("Local podcast → whisper.cpp pipeline.<br>"
-                           "Version 0.3 · Apple Silicon only"))
+                           f"Version {VERSION} · Apple Silicon only"))
         v.addWidget(QLabel(
             "<br>The name <b>Paragraphos</b> refers to the ancient Greek "
             "punctuation mark that signalled a change of speaker in a text — "

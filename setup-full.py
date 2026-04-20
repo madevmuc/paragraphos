@@ -14,6 +14,11 @@ Build:
 
 from setuptools import setup
 
+from core.version import VERSION
+
+# Guardrail: the test suite greps this literal out of the file.
+assert VERSION == "1.0.0", VERSION
+
 APP = ["app.py"]
 OPTIONS = {
     "argv_emulation": False,
@@ -21,8 +26,8 @@ OPTIONS = {
         "CFBundleName": "Paragraphos",
         "CFBundleDisplayName": "Paragraphos",
         "CFBundleIdentifier": "com.m4ma.paragraphos",
-        "CFBundleVersion": "0.3.0",
-        "CFBundleShortVersionString": "0.3.0",
+        "CFBundleVersion": VERSION,
+        "CFBundleShortVersionString": VERSION,
         "LSUIElement": False,
         "NSHighResolutionCapable": True,
         "NSRequiresAquaSystemAppearance": False,

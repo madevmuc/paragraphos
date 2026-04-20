@@ -40,7 +40,7 @@ if _migrated:
           f"{_migrated}", flush=True)
 DATA_DIR = user_data_dir()
 # Kept in sync with setup.py / setup-full.py CFBundleShortVersionString.
-_LOCAL_VERSION = "0.5.0"
+from core.version import VERSION as _LOCAL_VERSION  # noqa: E402
 
 
 def _build_icon() -> QIcon:
