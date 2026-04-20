@@ -178,6 +178,22 @@ class ShowsTab(QWidget):
             return False
         if f.get("has_failed") and not self._row_count(show.slug, "failed"):
             return False
+        feed_flags = [k for k in ("feed_ok", "feed_stale", "feed_unreachable") if f.get(k)]
+        if feed_flags:
+            pill = self._feed_pills.get(show.slug)
+            # Pill stores its state via QLabel.property("kind"); fall back to
+            # None when the pill hasn't been created yet.
+            kind = pill.property("kind") if pill is not None else None
+            # Pill only emits "ok" | "fail" | "idle" today — there is no
+            # distinct "stale" kind. Conflate feed_stale with feed_unreachable
+            # (both match "fail") until a real stale-detection path lands.
+            matches = (
+                ("feed_ok" in feed_flags and kind == "ok") or
+                ("feed_stale" in feed_flags and kind == "fail") or
+                ("feed_unreachable" in feed_flags and kind == "fail")
+            )
+            if not matches:
+                return False
         return True
 
     def _row_count(self, slug: str, status: str) -> int:
