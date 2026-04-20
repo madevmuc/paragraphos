@@ -80,8 +80,13 @@ def transcribe_episode(*, mp3_path: Path, output_dir: Path, slug: str,
             raise TranscriptionError(
                 f"whisper-cli exit {result.returncode}: {result.stderr[:400]}")
 
-        txt_path = stem.with_suffix(".txt")
-        srt_src = stem.with_suffix(".srt")
+        # whisper-cli APPENDS '.txt'/'.srt' to the -of prefix — it does NOT
+        # replace a suffix. Path.with_suffix() would truncate at the last
+        # dot in the slug (e.g. 'Nachhaltigkeit & Co. müssen' → 'Co.txt'),
+        # so we'd read the wrong filename and falsely raise "produced no
+        # output files". Construct paths by string append instead.
+        txt_path = stem.parent / (stem.name + ".txt")
+        srt_src = stem.parent / (stem.name + ".srt")
         if not txt_path.exists() or not srt_src.exists():
             raise TranscriptionError("whisper-cli produced no output files")
 

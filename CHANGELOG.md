@@ -1,5 +1,31 @@
 # Paragraphos Changelog
 
+## v0.4.3 — 2026-04-20 (transcriber path bug)
+
+**Fix:** whisper-cli output lookup was using `Path.with_suffix(".txt")` on
+the `-of` prefix. For slugs containing a dot mid-title — e.g.
+`"… Co. (Kein) Plädoyer …"` or `"Nachhaltigkeit & Co. müssen …"` —
+`with_suffix` truncates at the last dot, so we looked for `Co.txt` while
+whisper-cli had actually written the full-length filename. Result: every
+episode with a dot in the title raised *"whisper-cli produced no output
+files"* even though whisper succeeded. Root cause reproduced with a
+focused regression test; fixed by constructing the path via string
+append (`stem.parent / (stem.name + ".txt")`).
+
+Affected shows observed: 5 limmo episodes (title pattern journalistic,
+heavy use of `.` as a separator). All 893 previously-transcribed
+episodes were unaffected because they don't exhibit the pattern
+(or were transcribed by the pre-Paragraphos `scripts/transcribe.py`).
+
+Migration: all `failed` episodes with this error were reset to
+`pending` in state.sqlite so the next Check Now will retry them.
+
+Test coverage: new `test_transcribe_slug_with_dots_in_title` locks in
+the regression; both transcriber + pipeline fakes updated to mimic
+whisper-cli's actual "append suffix" behaviour.
+
+84 tests green (83 + 1 new regression test).
+
 ## v0.4.2 — 2026-04-20 (safe quit)
 
 - **Quit-confirmation dialog** when the queue is still running. Fires

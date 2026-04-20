@@ -50,8 +50,11 @@ def test_full_pipeline_success(tmp_path: Path):
         for i, arg in enumerate(cmd):
             if arg == "-of":
                 prefix = Path(cmd[i + 1]); break
-        prefix.with_suffix(".txt").write_text("word " * 500, encoding="utf-8")
-        prefix.with_suffix(".srt").write_text("1\n00:00 --> 00:02\nx\n", encoding="utf-8")
+        # whisper-cli appends the extension to the -of prefix; mirror that.
+        (prefix.parent / (prefix.name + ".txt")).write_text(
+            "word " * 500, encoding="utf-8")
+        (prefix.parent / (prefix.name + ".srt")).write_text(
+            "1\n00:00 --> 00:02\nx\n", encoding="utf-8")
         class R: returncode = 0; stdout = ""; stderr = ""
         return R()
 
