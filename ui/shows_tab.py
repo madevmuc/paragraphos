@@ -30,6 +30,24 @@ class ShowsTab(QWidget):
         self.global_stats_label.setTextFormat(Qt.TextFormat.RichText)
         layout.addWidget(self.global_stats_label)
 
+        # Bulk-action toolbar — operates on all currently selected rows.
+        # Buttons are disabled until the table has a selection.
+        bulk_row = QHBoxLayout()
+        self._bulk_disable = QPushButton("Disable selected")
+        self._bulk_enable = QPushButton("Enable selected")
+        self._bulk_stale = QPushButton("Mark stale selected")
+        self._bulk_delete = QPushButton("Delete selected")
+        self._bulk_delete.setProperty("class", "danger")
+        for b, fn in ((self._bulk_disable, self._do_bulk_disable),
+                      (self._bulk_enable, self._do_bulk_enable),
+                      (self._bulk_stale, self._do_bulk_stale),
+                      (self._bulk_delete, self._do_bulk_delete)):
+            b.setEnabled(False)
+            b.clicked.connect(fn)
+            bulk_row.addWidget(b)
+        bulk_row.addStretch()
+        layout.addLayout(bulk_row)
+
         # Filter toolbar — summary label on the left, filter button + count
         # pill on the right. The legacy standalone QLineEdit search was
         # folded into FilterPopover's "search" field.
@@ -63,6 +81,7 @@ class ShowsTab(QWidget):
         self.table.setSortingEnabled(True)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._context_menu)
+        self.table.itemSelectionChanged.connect(self._on_selection_changed)
         layout.addWidget(self.table)
 
         btns = QHBoxLayout()
@@ -392,5 +411,71 @@ class ShowsTab(QWidget):
         for show in self.ctx.watchlist.shows:
             if show.slug == slug:
                 show.enabled = not show.enabled
+        self.ctx.watchlist.save(self.ctx.data_dir / "watchlist.yaml")
+        self.refresh()
+
+    # ----- bulk actions on multi-selected rows --------------------------
+
+    def _selected_slugs(self) -> list[str]:
+        rows = {idx.row() for idx in self.table.selectedIndexes()}
+        slugs: list[str] = []
+        for row in rows:
+            item = self.table.item(row, 0)
+            if item:
+                slugs.append(item.text())
+        return slugs
+
+    def _find_show(self, slug: str):
+        return next((s for s in self.ctx.watchlist.shows if s.slug == slug),
+                    None)
+
+    def _on_selection_changed(self) -> None:
+        has = bool(self._selected_slugs())
+        for b in (self._bulk_disable, self._bulk_enable, self._bulk_stale,
+                  self._bulk_delete):
+            b.setEnabled(has)
+
+    def _do_bulk_disable(self) -> None:
+        for slug in self._selected_slugs():
+            s = self._find_show(slug)
+            if s:
+                s.enabled = False
+        self.ctx.watchlist.save(self.ctx.data_dir / "watchlist.yaml")
+        self.refresh()
+
+    def _do_bulk_enable(self) -> None:
+        for slug in self._selected_slugs():
+            s = self._find_show(slug)
+            if s:
+                s.enabled = True
+        self.ctx.watchlist.save(self.ctx.data_dir / "watchlist.yaml")
+        self.refresh()
+
+    def _do_bulk_stale(self) -> None:
+        # Same blanket-reset semantics as the single-row _mark_stale helper
+        # — flips every episode back to 'pending'. Inlined (rather than
+        # looping _mark_stale) to avoid N refreshes clearing the selection
+        # mid-loop.
+        with self.ctx.state._conn() as c:
+            for slug in self._selected_slugs():
+                c.execute(
+                    "UPDATE episodes SET status='pending' WHERE show_slug=?",
+                    (slug,))
+        self.refresh()
+
+    def _do_bulk_delete(self) -> None:
+        slugs = self._selected_slugs()
+        if not slugs:
+            return
+        reply = QMessageBox.question(
+            self, "Delete shows",
+            f"Remove {len(slugs)} show(s) from the watchlist?\n"
+            "On-disk transcripts are kept.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        self.ctx.watchlist.shows = [
+            s for s in self.ctx.watchlist.shows if s.slug not in slugs
+        ]
         self.ctx.watchlist.save(self.ctx.data_dir / "watchlist.yaml")
         self.refresh()
