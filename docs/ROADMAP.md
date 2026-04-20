@@ -322,17 +322,169 @@ watchlist (~3,000 pending) drops from ~200 h to ~50 h of CPU time.**
 
 ---
 
+## Phase 6 — Design refresh (v0.7.0)
+
+Full UI overhaul against the handoff brief at
+`docs/design-handoff/README.md`. Scope is **view-layer only** — no
+changes to `core/`, worker threads, signals, CLI, or state schema.
+Native macOS palette stays; ochre accent (`#b47a3a` approximately) is
+the only new token, applied only where the design calls for highlight.
+
+Reference assets live in the repo:
+- `docs/design-handoff/README.md` — source of truth
+- `docs/design-handoff/_screens/*.png` — 6 comparison screenshots
+- `docs/design-handoff/design_reference/` — HTML/React mockups
+  (open `index.html`, toggle "clean" mode)
+
+### Task 6.1: Reusable widget library
+New files under `ui/widgets/`:
+- `pill.py` — `Pill(QLabel, kind)`; kinds `ok`, `fail`, `running`, `idle`.
+- `progress_bar.py` — thin styled bar (4–6 px, radius 3) if the default
+  `QProgressBar` styling can't be coerced.
+- `progress_ring.py` — circular ring, custom `QPainter`, used by Queue hero.
+- `sidebar.py` — vertical nav list with right-aligned count chips.
+- `filter_popover.py` — frameless popover anchored to a button.
+- `_tokens.py` — spacing (4/6/8/10/12/14/18 px), radii (5–6 / 8–10),
+  font sizes (10 tiny / 11 muted / 12 small / 13 body / 14 bold),
+  mono Menlo, accent color. Single `apply_app_qss(app)` function
+  installs the global stylesheet.
+
+### Task 6.2: Sidebar navigation (replaces top tab bar)
+**File:** `ui/main_window.py`.
+- Add `Sidebar` widget (160 px, full height). Groups *Library* (Shows ·
+  Queue · Failed · All episodes) and *System* (Settings · Logs · About).
+- Body becomes `QStackedWidget`, swapped by sidebar selection.
+- Counts subscribe to existing `queue_sized` / `episode_done` /
+  `finished_all` signals.
+- Remove the old `QTabWidget`.
+
+### Task 6.3: Shows tab — filter toolbar + popover + table restyle
+**File:** `ui/shows_tab.py`.
+- Library stats header unchanged.
+- New filter toolbar: left = muted summary, right = `▾ Filter` button
+  with count pill. Opens `FilterPopover` (enabled_only · has_pending ·
+  has_failed · feed ok/stale/unreachable · search text). State
+  persisted via `QSettings`.
+- Table re-columned: On (●/○) · Title-over-slug · Progress bar ·
+  Pending · Feed `Pill`.
+- Button row: primary `+ Add podcast`, `Add episodes` / `Check now`,
+  spacer, ghost `Check feeds` / `Rescan library`. Stop/Pause **move
+  to Queue tab** (where the run UI is).
+
+### Task 6.4: Queue hero dashboard
+**File:** `ui/queue_tab.py` + new `ui/widgets/queue_hero.py`.
+- Hero card shown only when active:
+  - Left: `ProgressRing` 110×110, `3/12` mono 22 px + `25%` tiny muted.
+  - Right: pill row (running · ep title · Pause · Stop); 4-col stats
+    grid (STARTED · ELAPSED · PER EP. · FINISH ≈) — date lines with
+    day-of-week; finish sub-line with human framing ("before lunch",
+    "this afternoon", "tomorrow morning", …) per bucket table in brief.
+- Idle state: hide hero, keep stats header restyled; buttons become
+  `Start` / `Pause` (disabled) / `Stop` (disabled) / ghost `Refresh`.
+- Pending table: drop unused columns; Status cell uses `Pill` with
+  detail (`transcribing · 62%` / `downloading · 18%` / `queued ·
+  position N of M`). Rich sub-line slots (`whisper · seg 44/71 · …`)
+  prepared; emission lives in Phase 1.5 / 2 wiring.
+
+### Task 6.5: Failed tab — flat table + row context menu
+**File:** `ui/failed_tab.py`.
+- Columns: `Show` · `Episode` (bold) · `Reason` (tiny danger) · `Tries`
+  · `Last attempt` · `⋯` cell (context menu: Retry · Mark resolved ·
+  Show log · Copy error · Skip forever). Right-click same menu.
+- Button row: `Retry selected` · `Mark resolved` · spacer · ghost
+  `Export .log`.
+- Humanise reason strings (`SSRFGuardError` → `ssrf-guard: private IP`,
+  `FileTooLargeError` → `mp3 > 2GB cap`, `HashMismatch` → `model hash
+  mismatch`). Keep low-level whisper errors verbatim.
+
+### Task 6.6: Settings — inline recommendation hints
+**File:** `ui/settings_pane.py`.
+- New helper `_add_field(label, widget, hint=None, hint_kind="info")`;
+  every row becomes a 150-/-flex two-column grid.
+- Hints: 11 px italic `ⓘ` info, upright `✓` good (accent color).
+- Apply exact copy from brief's hint table.
+- Refactor `_hw_recommendation()` to return just the detail string
+  ("2 (16 GB RAM, 8 perf cores)") so UI wraps with "recommended: ".
+- `QScrollArea` + auto-save indicator untouched.
+
+### Task 6.7: First-run wizard — restyled dep checklist
+**File:** `ui/first_run_wizard.py`.
+- Modal 520 px. Heading + muted sub-copy.
+- Vertical stack of dep rows, `line-soft` dividers.
+- Status column: `Pill[ok] ✓ installed` · progress bar + % · muted
+  "not installed — will download on start".
+- Footer: ghost `Cancel`, primary `Continue to Paragraphos` (disabled
+  until all four deps ok).
+
+### Task 6.8: Add Podcast — 3-mode segmented dialog
+**File:** `ui/add_show_dialog.py`.
+- Segmented control top: `[ By name ] [ By URL ] [ Paste Apple link ]`
+  (default: By name).
+- Mode A: search + iTunes results + expanded form (slug / title / RSS
+  / Backlog combo / prompt textarea).
+- Mode B: RSS input → rich preview (artwork · title · publisher · ep
+  count · latest date) + yellow-callout about the auto-prompt +
+  segmented Backlog `[ All ] [ Only new ] [ Last 20 ] [ Last 50 ]`;
+  primary action `Save & start`.
+- Mode C: single-paste input → auto-detected dashed-border card
+  (`<title>` · `<ep_count> eps · <feed_host>` · `Pill[ok]`). Footer
+  `Cancel` / `Customise…` (→ Mode A pre-filled) / primary `Add`.
+- Shared: 540 px wide, Esc cancels, Enter primary. All three funnel
+  through existing `_do_save`.
+
+### Task 6.9: Show Details — single restyled sheet
+**File:** `ui/show_details_dialog.py`.
+- 620 × 440. Header: 64×64 artwork + title + `slug · N eps …` + feed
+  URL; right-side feed-health `Pill`.
+- Form grid 120-/-flex: Enabled toggle, Whisper prompt textarea.
+- Recent-episodes table (last 10): date mono · title · status `Pill`.
+- Footer: ghost `Remove` (confirm) · `Mark all stale` · primary `Save`.
+
+### Task 6.10: Menu-bar tray — live count icon + rich status block
+**File:** `ui/menu_bar.py` + new `ui/widgets/tray_icon_renderer.py`.
+- `IconRenderer(done, total, running) -> QIcon` renders `3/12` text
+  into a 22×22/44×44 pixmap with `QPainter`. Light/dark detection via
+  palette `windowText().color().lightness()`.
+- On `episode_done`: update icon. On `finished_all`: briefly show `✓`
+  for 5 s, revert to `P`.
+- Menu (active): `QWidgetAction` rich block (pill + fraction + ETA +
+  progress bar + truncated current title), separator, Open window /
+  Pause / Stop, separator, Import OPML…, separator, Quit.
+- Menu (idle): Open window ⌘O · Check now ⌘R · separator · Import
+  OPML… · separator · Quit ⌘Q.
+- Min-width 280 px.
+
+### Cross-cutting verification
+- Every existing test must still pass after every task.
+- Offscreen QT smoke test after each task: build the affected widget
+  and assert it constructs without raising.
+- Manual pass after Task 6.2 (sidebar) to confirm every tab is still
+  reachable.
+- Manual A/B compare against `docs/design-handoff/_screens/*.png`
+  after each task.
+
+### Out-of-scope in Phase 6
+- New backend (`core/`, workers, state). Any change there belongs to
+  Phases 1–5.
+- New runtime dependencies — PyQt6 + stdlib only.
+- Code signing / notarisation (excluded from entire plan).
+
+---
+
 ## Execution order
 
-Phases run in order (0 → 1 → 2 → 3 → 4 → 5) because each builds on the
-previous. Within a phase, tasks are independent — they can ship in any
-order as sub-commits.
+Phases run in order (0 → 1 → 1.5 → 2 → 3 → 4 → 5 → 6). Phase 6 is the
+last — a view-only refresh on top of the reliability + performance +
+feature work delivered earlier. Within a phase, tasks are independent
+and can ship in any order as sub-commits.
 
 Commit cadence: one commit per numbered task. Version bumps:
 - v0.5.0 after Phase 1 (reliability)
+- v0.5.1 after Phase 1.5 (performance)
 - v0.6.0 after Phase 2 (new features)
 - v0.6.x incrementally through Phase 3
-- v1.0.0 after Phase 4 + 5 (distribution ready)
+- v1.0 rc after Phase 4 + 5 (distribution ready)
+- v0.7.0 or v1.0 (whichever lands first) after Phase 6 (design refresh)
 
 ## Testing discipline
 
@@ -342,3 +494,6 @@ Commit cadence: one commit per numbered task. Version bumps:
 - Phase 4 is tested manually (DMG mount, install, launch).
 - Phase 5.20 adds the integration test that would have caught the
   dotted-slug bug that cost us hours on 2026-04-20.
+- Phase 6 is view-only; every task ends with an offscreen Qt smoke
+  test that constructs the affected widget + a manual A/B pass
+  against the handoff screenshots.
