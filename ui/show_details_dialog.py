@@ -12,11 +12,11 @@ from __future__ import annotations
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
-from PyQt6.QtWidgets import (QCheckBox, QDialog, QFrame, QGridLayout,
-                             QHBoxLayout, QHeaderView, QLabel, QLineEdit,
-                             QMessageBox, QPushButton, QSizePolicy,
-                             QTableWidget, QTableWidgetItem, QVBoxLayout,
-                             QWidget)
+from PyQt6.QtWidgets import (QCheckBox, QComboBox, QDialog, QFrame,
+                             QGridLayout, QGroupBox, QHBoxLayout, QHeaderView,
+                             QLabel, QLineEdit, QMessageBox, QPlainTextEdit,
+                             QPushButton, QSizePolicy, QTableWidget,
+                             QTableWidgetItem, QVBoxLayout, QWidget)
 
 from core.stats import compute_show_stats
 from ui.widgets.pill import Pill
@@ -31,6 +31,15 @@ _STATUS_PILL_KIND = {
     "downloading": "running",
     "skipped": "idle",
 }
+
+# (display label, whisper language code) — mirrors the pre-restyle picker.
+_LANGUAGES = [
+    ("Deutsch", "de"), ("English", "en"), ("Español", "es"),
+    ("Français", "fr"), ("Italiano", "it"), ("Nederlands", "nl"),
+    ("Português", "pt"), ("Polski", "pl"), ("Čeština", "cs"),
+    ("Русский", "ru"), ("日本語", "ja"), ("中文", "zh"),
+    ("Auto-detect", "auto"),
+]
 
 
 class ShowDetailsDialog(QDialog):
@@ -51,6 +60,7 @@ class ShowDetailsDialog(QDialog):
 
         root.addLayout(self._build_header())
         root.addLayout(self._build_form())
+        root.addWidget(self._build_advanced_group())
         root.addWidget(self._build_episodes_table(), 1)
         root.addLayout(self._build_footer())
 
@@ -183,6 +193,67 @@ class ShowDetailsDialog(QDialog):
         except Exception:
             return "—"
 
+    # ── advanced (collapsed by default) ──────────────────────
+
+    def _build_advanced_group(self) -> QGroupBox:
+        box = QGroupBox("Advanced — tuning")
+        box.setCheckable(True)
+        box.setChecked(False)  # collapsed by default
+        box.setFlat(True)
+
+        inner = QGridLayout(box)
+        inner.setHorizontalSpacing(10)
+        inner.setVerticalSpacing(6)
+        inner.setColumnMinimumWidth(0, 120)
+        inner.setColumnStretch(0, 0)
+        inner.setColumnStretch(1, 1)
+
+        r = 0
+        inner.addWidget(self._label("Title"), r, 0)
+        self._title_edit = QLineEdit(self.show_.title or "")
+        inner.addWidget(self._title_edit, r, 1)
+        r += 1
+
+        inner.addWidget(self._label("Language"), r, 0)
+        self._language_combo = QComboBox()
+        for label, code in _LANGUAGES:
+            self._language_combo.addItem(f"{label} ({code})", code)
+        current = getattr(self.show_, "language", "de") or "de"
+        idx = next(
+            (i for i, (_, c) in enumerate(_LANGUAGES) if c == current), 0
+        )
+        self._language_combo.setCurrentIndex(idx)
+        inner.addWidget(self._language_combo, r, 1)
+        r += 1
+
+        inner.addWidget(self._label("Whisper prompt"), r, 0)
+        self._whisper_prompt_edit = QPlainTextEdit(
+            self.show_.whisper_prompt or ""
+        )
+        self._whisper_prompt_edit.setFixedHeight(64)
+        inner.addWidget(self._whisper_prompt_edit, r, 1)
+        r += 1
+
+        hint = QLabel(
+            "Comma-separated hints (names, jargon, places). "
+            "Improves recognition."
+        )
+        hint.setStyleSheet("color: palette(mid); font-size: 11px;")
+        hint.setWordWrap(True)
+        inner.addWidget(hint, r, 1)
+        r += 1
+
+        # Collapse/expand children when the group is toggled. Widgets added
+        # at this point are direct children of `box`; layout recalcs on
+        # visibility change.
+        def _toggle(expanded: bool):
+            for child in box.findChildren(QWidget):
+                child.setVisible(expanded)
+
+        box.toggled.connect(_toggle)
+        _toggle(False)
+        return box
+
     # ── recent episodes ──────────────────────────────────────
 
     def _build_episodes_table(self) -> QTableWidget:
@@ -269,6 +340,14 @@ class ShowDetailsDialog(QDialog):
         self.show_.enabled = self.enabled_toggle.isChecked()
         out = self.output_edit.text().strip()
         self.show_.output_override = out or None
+        # Advanced — tuning
+        new_title = self._title_edit.text().strip()
+        if new_title:
+            self.show_.title = new_title
+        self.show_.language = self._language_combo.currentData() or "de"
+        self.show_.whisper_prompt = (
+            self._whisper_prompt_edit.toPlainText().strip()
+        )
         self.ctx.watchlist.save(self.ctx.data_dir / "watchlist.yaml")
         self.accept()
 
