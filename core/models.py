@@ -63,6 +63,8 @@ class Settings(BaseModel):
     download_concurrency_per_host: int = 2
     use_etag_cache: bool = True      # RSS conditional GET
     library_scan_cache: bool = True  # skip re-parse of unchanged .md at startup
+    # Phase 3 UX
+    notify_mode: str = "per_episode"  # per_episode | daily_summary | off
     # Optional external knowledge-base root (e.g. an Obsidian vault /
     # knowledge-hub repo). When set AND the directory contains
     # raw/.last_compiled, the Shows tab shows a 'N transcripts since last

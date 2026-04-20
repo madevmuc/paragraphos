@@ -26,13 +26,26 @@ class ShowsTab(QWidget):
             "padding:8px 12px; background:palette(alternate-base); border-radius:4px;")
         self.global_stats_label.setTextFormat(Qt.TextFormat.RichText)
         layout.addWidget(self.global_stats_label)
+        # Filter / search toolbar
+        filter_row = QHBoxLayout()
+        from PyQt6.QtWidgets import QLineEdit
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("Filter shows by title or slug…")
+        self.search.textChanged.connect(self._apply_filter)
+        filter_row.addWidget(self.search)
+        layout.addLayout(filter_row)
+
         self.table = QTableWidget(0, 7)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        # ExtendedSelection for multi-select bulk actions.
+        self.table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         self.table.doubleClicked.connect(self._open_details)
         self.table.setHorizontalHeaderLabels(
             ["Slug", "Title", "On", "Total", "Done", "Pending", "Feed"])
         self.table.horizontalHeader().setSectionResizeMode(
             1, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSortIndicatorShown(True)
+        self.table.setSortingEnabled(True)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._context_menu)
         layout.addWidget(self.table)
@@ -138,6 +151,14 @@ class ShowsTab(QWidget):
         menu.addSeparator()
         menu.addAction(pause_act)
         menu.exec(self.table.viewport().mapToGlobal(pos))
+
+    def _apply_filter(self) -> None:
+        needle = self.search.text().lower().strip()
+        for r in range(self.table.rowCount()):
+            slug = (self.table.item(r, 0).text() or "").lower()
+            title = (self.table.item(r, 1).text() or "").lower()
+            visible = not needle or needle in slug or needle in title
+            self.table.setRowHidden(r, not visible)
 
     def _toggle_show_pause(self, slug: str) -> None:
         key = f"show_paused:{slug}"

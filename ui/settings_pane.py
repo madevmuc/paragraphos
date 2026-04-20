@@ -112,6 +112,17 @@ class SettingsPane(QWidget):
         notify_row.addWidget(sys_btn)
         notify_row.addStretch()
         f3.addRow("Notify on successful transcription", notify_row)
+
+        self.notify_mode = QComboBox()
+        for label, code in (("Per-episode", "per_episode"),
+                             ("Daily summary (one message per run)", "daily_summary"),
+                             ("Off", "off")):
+            self.notify_mode.addItem(label, code)
+        idx = next((i for i in range(self.notify_mode.count())
+                    if self.notify_mode.itemData(i) == self.ctx.settings.notify_mode), 0)
+        self.notify_mode.setCurrentIndex(idx)
+        self.notify_mode.currentIndexChanged.connect(self._schedule_save)
+        f3.addRow("Notification frequency", self.notify_mode)
         root.addLayout(f3)
 
         # ── Transcription engine ───────────────────────────────
@@ -295,6 +306,7 @@ class SettingsPane(QWidget):
         s.whisper_model = self.model.currentText()
         s.whisper_fast_mode = self.fast_mode.isChecked()
         s.whisper_multiproc = self.multiproc.value()
+        s.notify_mode = self.notify_mode.currentData() or "per_episode"
         s.log_retention_days = self.log_retention.value()
         s.save(self.ctx.data_dir / "settings.yaml")
         from datetime import datetime

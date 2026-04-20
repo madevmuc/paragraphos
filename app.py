@@ -71,6 +71,7 @@ class ParagraphosApp(QObject):
         self.ctx = AppContext.load(DATA_DIR)
         setup_logging(DATA_DIR, retention_days=self.ctx.settings.log_retention_days)
         self._thread: CheckAllThread | None = None
+        self._run_tally: dict[str, object] = {}
 
         if not QSystemTrayIcon.isSystemTrayAvailable():
             print("ERROR: system tray not available on this system.", flush=True)
@@ -159,13 +160,22 @@ class ParagraphosApp(QObject):
     def _on_episode_done(self, slug: str, guid: str, action: str,
                          done_idx: int, total: int,
                          show_title: str, ep_title: str) -> None:
-        if action != "transcribed":
+        # Tally into the rolling run-summary — used by daily_summary mode.
+        self._run_tally.setdefault(action, 0)
+        self._run_tally[action] += 1
+        if self._run_tally.get("_first_ep_title") is None and action == "transcribed":
+            self._run_tally["_first_ep_title"] = f"{show_title} — {ep_title}"
+
+        mode = self.ctx.settings.notify_mode
+        if mode == "off":
             return
-        if not self.ctx.settings.notify_on_success:
+        if action != "transcribed":
             return
         spot_key = f"spotcheck_done:{slug}"
         title_prefix = f"{done_idx}/{total}"
         if self.ctx.state.get_meta(spot_key) != "1":
+            # Spot-check always fires regardless of mode — it's a one-time
+            # per-show QA handshake.
             self.ctx.state.set_meta(spot_key, "1")
             self.tray.showMessage(
                 f"✅ First transcript — {show_title}",
@@ -173,10 +183,11 @@ class ParagraphosApp(QObject):
                 f"Open in Obsidian to spot-check the whisper_prompt quality.",
             )
             return
-        self.tray.showMessage(
-            f"{title_prefix} — {show_title}",
-            ep_title[:120],
-        )
+        if mode == "per_episode":
+            self.tray.showMessage(
+                f"{title_prefix} — {show_title}",
+                ep_title[:120],
+            )
 
     def quit_with_confirm(self) -> bool:
         """Show a confirm dialog if the queue is running / work would be lost.
@@ -225,6 +236,23 @@ class ParagraphosApp(QObject):
             "last_successful_check",
             datetime.now(timezone.utc).isoformat(),
         )
+        # Daily-summary notification: single consolidated message after a
+        # run instead of one-per-episode. Useful for overnight catch-ups.
+        if self.ctx.settings.notify_mode == "daily_summary":
+            t = self._run_tally
+            done = int(t.get("transcribed", 0))
+            skipped = int(t.get("skipped", 0))
+            failed = int(t.get("failed", 0))
+            if done + failed > 0:
+                parts = []
+                if done: parts.append(f"{done} new")
+                if failed: parts.append(f"{failed} failed")
+                if skipped: parts.append(f"{skipped} skipped")
+                self.tray.showMessage(
+                    "Paragraphos — run complete",
+                    " · ".join(parts) + "\n"
+                    + f"First: {t.get('_first_ep_title') or '—'}")
+        self._run_tally = {}
         if self._window:
             self._window.shows_tab.refresh()
 
