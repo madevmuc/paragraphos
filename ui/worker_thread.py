@@ -9,6 +9,7 @@ widget.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from PyQt6.QtCore import QThread, pyqtSignal
@@ -51,35 +52,72 @@ class CheckAllThread(QThread):
 
         from core import backoff
 
-        # Pass 1: refresh feeds + gather pending.
-        all_pending: list[tuple] = []
+        # Pass 1a: filter out skipped shows (backoff / per-show pause),
+        # then fetch all remaining feeds concurrently. The network I/O
+        # is the bottleneck — parallelising it cuts wall-clock time
+        # for "Check Now" with many feeds from O(N × RTT) to O(RTT).
+        fetch_targets = []
         for show in targets:
             if self._stop:
                 break
             if backoff.in_backoff(self.ctx.state, show.slug):
-                self.progress.emit(f"skip {show.slug} (in backoff after repeated feed failures)")
+                self.progress.emit(
+                    f"skip {show.slug} (in backoff after repeated feed failures)")
                 continue
             if self.ctx.state.get_meta(f"show_paused:{show.slug}") == "1":
                 self.progress.emit(f"skip {show.slug} (paused per-show)")
                 continue
-            try:
-                canonical, manifest = build_manifest_with_url(
-                    show.rss, timeout=60)
-                backoff.on_success(self.ctx.state, show.slug)
-            except Exception as e:
-                fails = backoff.on_failure(self.ctx.state, show.slug)
-                self.progress.emit(f"feed error {show.slug} (fail #{fails}): {e}")
+            fetch_targets.append(show)
+
+        # results: {slug: (show, canonical_url, manifest)} — preserves
+        # ordering-independent mapping for the sequential pass 1b below.
+        fetch_results: dict[str, tuple] = {}
+        max_workers = min(max(int(self.settings.rss_concurrency or 1), 1), 16)
+        if fetch_targets:
+            with ThreadPoolExecutor(max_workers=max_workers,
+                                    thread_name_prefix="rss") as ex:
+                future_to_show = {}
+                for show in fetch_targets:
+                    if self._stop:
+                        break
+                    future_to_show[
+                        ex.submit(build_manifest_with_url, show.rss, timeout=60)
+                    ] = show
+                for f in as_completed(future_to_show):
+                    show = future_to_show[f]
+                    if self._stop:
+                        # let remaining futures finish naturally; don't
+                        # cancel mid-flight (httpx client handles it)
+                        continue
+                    try:
+                        canonical, manifest = f.result()
+                    except Exception as e:
+                        fails = backoff.on_failure(self.ctx.state, show.slug)
+                        self.progress.emit(
+                            f"feed error {show.slug} (fail #{fails}): {e}")
+                        continue
+                    backoff.on_success(self.ctx.state, show.slug)
+                    fetch_results[show.slug] = (show, canonical, manifest)
+
+        # Pass 1b: persist redirects, upsert episodes, gather pending.
+        # Runs sequentially on the main worker thread so SQLite writes
+        # and watchlist.yaml saves stay single-writer.
+        from core.stats import _parse_duration as _pd
+        all_pending: list[tuple] = []
+        # Iterate in the original target order for deterministic logs.
+        for show in fetch_targets:
+            if self._stop:
+                break
+            res = fetch_results.get(show.slug)
+            if res is None:
                 continue
-            # Persist redirects so the next daily check hits the final URL
-            # directly. Saves handshake latency and survives feeds moving
-            # platforms (podigee → buzzsprout etc.).
+            _, canonical, manifest = res
             if canonical and canonical != show.rss:
                 self.progress.emit(
                     f"feed moved: {show.rss} → {canonical} — updating watchlist")
                 show.rss = canonical
                 self.ctx.watchlist.save(
                     self.ctx.data_dir / "watchlist.yaml")
-            from core.stats import _parse_duration as _pd
             for ep in manifest:
                 self.ctx.state.upsert_episode(
                     show_slug=show.slug, guid=ep["guid"], title=ep["title"],
