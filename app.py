@@ -192,8 +192,9 @@ class ParagraphosApp(QObject):
         spot_key = f"spotcheck_done:{slug}"
         title_prefix = f"{done_idx}/{total}"
         if self.ctx.state.get_meta(spot_key) != "1":
-            # Spot-check always fires regardless of mode — it's a one-time
-            # per-show QA handshake.
+            # Spot-check: one-time per-show QA handshake. Respects
+            # notify_mode="off" via the early-return above — users who
+            # opted out of notifications get zero tray messages, ever.
             self.ctx.state.set_meta(spot_key, "1")
             self.tray.showMessage(
                 f"✅ First transcript — {show_title}",
