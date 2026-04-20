@@ -12,7 +12,8 @@ FIX = Path(__file__).parent / "fixtures"
 def test_scrape_og_audio():
     respx.head("https://example.com/ep42").respond(200, headers={"content-type": "text/html"})
     respx.get("https://example.com/ep42").respond(
-        200, text=(FIX / "podigee_episode.html").read_text(),
+        200,
+        text=(FIX / "podigee_episode.html").read_text(),
     )
     ep = scrape_episode("https://example.com/ep42")
     assert ep.mp3_url == "https://cdn.podigee.com/ep-42.mp3"
@@ -25,7 +26,8 @@ def test_scrape_og_audio():
 def test_scrape_jsonld():
     respx.head("https://example.com/j").respond(200, headers={"content-type": "text/html"})
     respx.get("https://example.com/j").respond(
-        200, text=(FIX / "jsonld_episode.html").read_text(),
+        200,
+        text=(FIX / "jsonld_episode.html").read_text(),
     )
     ep = scrape_episode("https://example.com/j")
     assert ep.mp3_url == "https://example.com/audio.mp3"
@@ -37,7 +39,8 @@ def test_scrape_jsonld():
 @respx.mock
 def test_scrape_direct_mp3():
     respx.head("https://x.test/a.mp3").respond(
-        200, headers={"content-type": "audio/mpeg", "content-length": "1000"},
+        200,
+        headers={"content-type": "audio/mpeg", "content-length": "1000"},
     )
     ep = scrape_episode("https://x.test/a.mp3")
     assert ep.mp3_url == "https://x.test/a.mp3"

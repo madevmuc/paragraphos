@@ -29,18 +29,26 @@ OPTIONS = {
         "LSUIElement": False,  # Set True to hide Dock icon (menu-bar-only)
         "NSHighResolutionCapable": True,
         "NSRequiresAquaSystemAppearance": False,
-        "CFBundleDocumentTypes": [{
-            "CFBundleTypeName": "OPML Subscription File",
-            "CFBundleTypeExtensions": ["opml", "xml"],
-            "CFBundleTypeRole": "Viewer",
-            "LSItemContentTypes": ["public.xml", "public.opml"],
-            "LSHandlerRank": "Alternate",
-        }],
+        "CFBundleDocumentTypes": [
+            {
+                "CFBundleTypeName": "OPML Subscription File",
+                "CFBundleTypeExtensions": ["opml", "xml"],
+                "CFBundleTypeRole": "Viewer",
+                "LSItemContentTypes": ["public.xml", "public.opml"],
+                "LSHandlerRank": "Alternate",
+            }
+        ],
     },
     "packages": ["core", "ui"],
     "includes": [
-        "apscheduler", "watchdog", "feedparser", "httpx", "yaml",
-        "pydantic", "bs4", "lxml",
+        "apscheduler",
+        "watchdog",
+        "feedparser",
+        "httpx",
+        "yaml",
+        "pydantic",
+        "bs4",
+        "lxml",
     ],
 }
 

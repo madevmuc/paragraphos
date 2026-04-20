@@ -10,8 +10,12 @@ from pathlib import Path
 import httpx
 
 from core.http import get_client
-from core.security import (DownloadTooLargeError, MAX_MP3_BYTES,
-                           is_allowed_audio_content_type, safe_url)
+from core.security import (
+    MAX_MP3_BYTES,
+    DownloadTooLargeError,
+    is_allowed_audio_content_type,
+    safe_url,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +35,11 @@ def _should_retry(exc: BaseException) -> bool:
         return exc.response.status_code in RETRIABLE_STATUSES
     # Timeouts, connection errors, protocol errors, pool errors — all
     # transient. TooLarge / security errors propagate up untouched.
-    return isinstance(exc, (httpx.TimeoutException, httpx.NetworkError,
-                            httpx.RemoteProtocolError, httpx.PoolTimeout))
+    return isinstance(
+        exc,
+        (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError, httpx.PoolTimeout),
+    )
+
 
 USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
@@ -48,16 +55,22 @@ class DownloadResult:
 
 
 def _expected_size(url: str, timeout: float = 10.0) -> int:
-    r = get_client().head(url, headers={"User-Agent": USER_AGENT},
-                          follow_redirects=True, timeout=timeout)
+    r = get_client().head(
+        url, headers={"User-Agent": USER_AGENT}, follow_redirects=True, timeout=timeout
+    )
     r.raise_for_status()
     return int(r.headers.get("content-length", "0") or 0)
 
 
-def download_mp3(url: str, dest: Path, *, chunk: int = 1 << 16,
-                 timeout: float = 60.0,
-                 max_bytes: int = MAX_MP3_BYTES,
-                 _sleep=time.sleep) -> DownloadResult:
+def download_mp3(
+    url: str,
+    dest: Path,
+    *,
+    chunk: int = 1 << 16,
+    timeout: float = 60.0,
+    max_bytes: int = MAX_MP3_BYTES,
+    _sleep=time.sleep,
+) -> DownloadResult:
     """Download an MP3 with retry on transient network failures.
 
     Retries 3×: delays 1s, 5s, 20s. Retries on 5xx / 429 / timeouts /
@@ -70,24 +83,27 @@ def download_mp3(url: str, dest: Path, *, chunk: int = 1 << 16,
     last_exc: BaseException | None = None
     for attempt, delay in enumerate(RETRY_DELAYS):
         try:
-            return _download_once(url, dest, chunk=chunk, timeout=timeout,
-                                  max_bytes=max_bytes)
+            return _download_once(url, dest, chunk=chunk, timeout=timeout, max_bytes=max_bytes)
         except Exception as e:
             if not _should_retry(e):
                 raise
             last_exc = e
             logger.warning(
-                "download transient failure attempt %d/%d — "
-                "sleeping %.0fs then retrying: %s",
-                attempt + 1, len(RETRY_DELAYS), delay, e)
+                "download transient failure attempt %d/%d — " "sleeping %.0fs then retrying: %s",
+                attempt + 1,
+                len(RETRY_DELAYS),
+                delay,
+                e,
+            )
             _sleep(delay)
     # All retries exhausted.
     assert last_exc is not None
     raise last_exc
 
 
-def _download_once(url: str, dest: Path, *, chunk: int,
-                   timeout: float, max_bytes: int) -> DownloadResult:
+def _download_once(
+    url: str, dest: Path, *, chunk: int, timeout: float, max_bytes: int
+) -> DownloadResult:
     expected = 0
     try:
         expected = _expected_size(url, timeout=timeout)
@@ -95,15 +111,16 @@ def _download_once(url: str, dest: Path, *, chunk: int,
         pass  # Some servers block HEAD — fall through to GET.
     if expected and expected > max_bytes:
         raise DownloadTooLargeError(
-            f"remote advertises {expected} bytes — refusing "
-            f"(cap {max_bytes})")
+            f"remote advertises {expected} bytes — refusing " f"(cap {max_bytes})"
+        )
     if dest.exists() and expected and dest.stat().st_size == expected:
         return DownloadResult(0, True, expected)
 
     tmp = dest.with_suffix(dest.suffix + ".part")
     written = 0
-    with get_client().stream("GET", url, headers={"User-Agent": USER_AGENT},
-                             follow_redirects=True, timeout=timeout) as r:
+    with get_client().stream(
+        "GET", url, headers={"User-Agent": USER_AGENT}, follow_redirects=True, timeout=timeout
+    ) as r:
         r.raise_for_status()
         # Content-Type sniff — reject obvious non-audio (HTML, JSON, etc.).
         ct = r.headers.get("content-type", "")
@@ -116,9 +133,10 @@ def _download_once(url: str, dest: Path, *, chunk: int,
                 written += len(block)
                 if written > max_bytes:
                     f.close()
-                    try: tmp.unlink()
-                    except OSError: pass
-                    raise DownloadTooLargeError(
-                        f"stream exceeded {max_bytes} bytes without EOF")
+                    try:
+                        tmp.unlink()
+                    except OSError:
+                        pass
+                    raise DownloadTooLargeError(f"stream exceeded {max_bytes} bytes without EOF")
     tmp.replace(dest)
     return DownloadResult(written, False, dest.stat().st_size)

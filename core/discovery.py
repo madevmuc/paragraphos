@@ -22,8 +22,9 @@ class PodcastMatch:
     itunes_collection_id: Optional[int]
 
 
-def search_itunes(term: str, *, limit: int = 10, country: str = "de",
-                  timeout: float = 10.0) -> List[PodcastMatch]:
+def search_itunes(
+    term: str, *, limit: int = 10, country: str = "de", timeout: float = 10.0
+) -> List[PodcastMatch]:
     r = httpx.get(
         ITUNES_SEARCH_URL,
         params={"media": "podcast", "term": term, "limit": limit, "country": country},
@@ -37,13 +38,15 @@ def search_itunes(term: str, *, limit: int = 10, country: str = "de",
         feed = item.get("feedUrl")
         if not feed:
             continue
-        out.append(PodcastMatch(
-            title=item.get("collectionName", ""),
-            author=item.get("artistName", ""),
-            feed_url=feed,
-            artwork_url=item.get("artworkUrl600") or item.get("artworkUrl100"),
-            itunes_collection_id=item.get("collectionId"),
-        ))
+        out.append(
+            PodcastMatch(
+                title=item.get("collectionName", ""),
+                author=item.get("artistName", ""),
+                feed_url=feed,
+                artwork_url=item.get("artworkUrl600") or item.get("artworkUrl100"),
+                itunes_collection_id=item.get("collectionId"),
+            )
+        )
     return out
 
 
@@ -54,15 +57,13 @@ def _is_rss_content_type(ct: str) -> bool:
 
 def find_rss_from_url(url: str, *, timeout: float = 10.0) -> Optional[str]:
     """Given a landing-page or direct-RSS URL, return the canonical RSS URL."""
-    r = httpx.get(url, headers={"User-Agent": USER_AGENT},
-                  follow_redirects=True, timeout=timeout)
+    r = httpx.get(url, headers={"User-Agent": USER_AGENT}, follow_redirects=True, timeout=timeout)
     r.raise_for_status()
     ct = r.headers.get("content-type", "")
     if _is_rss_content_type(ct):
         return str(r.url)
     soup = BeautifulSoup(r.text, "lxml")
-    link = soup.find("link", rel="alternate",
-                     type=lambda t: t and "rss" in t.lower())
+    link = soup.find("link", rel="alternate", type=lambda t: t and "rss" in t.lower())
     if link and link.get("href"):
         base = httpx.URL(str(r.url))
         return str(base.join(link["href"]))

@@ -6,7 +6,7 @@ import difflib
 from pathlib import Path
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import (QDialog, QPushButton, QTextBrowser, QVBoxLayout)
+from PyQt6.QtWidgets import QDialog, QPushButton, QTextBrowser, QVBoxLayout
 
 
 class TranscriptDiffDialog(QDialog):
@@ -24,8 +24,11 @@ class TranscriptDiffDialog(QDialog):
         old_lines = old_path.read_text(encoding="utf-8", errors="replace").splitlines()
         new_lines = new_path.read_text(encoding="utf-8", errors="replace").splitlines()
         html = difflib.HtmlDiff(tabsize=2, wrapcolumn=80).make_table(
-            old_lines, new_lines,
-            fromdesc=old_path.name, todesc=new_path.name, context=False,
+            old_lines,
+            new_lines,
+            fromdesc=old_path.name,
+            todesc=new_path.name,
+            context=False,
         )
         # Scope-minimal CSS: difflib's output is a complete HTML fragment.
         # Wrap with a font-family + background reset.

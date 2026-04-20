@@ -93,11 +93,19 @@ class StateStore:
                 except Exception:
                     pass
 
-    def upsert_episode(self, *, show_slug: str, guid: str, title: str,
-                       pub_date: str, mp3_url: str,
-                       duration_sec: int | None = None) -> None:
+    def upsert_episode(
+        self,
+        *,
+        show_slug: str,
+        guid: str,
+        title: str,
+        pub_date: str,
+        mp3_url: str,
+        duration_sec: int | None = None,
+    ) -> None:
         with self._conn() as c:
-            c.execute("""
+            c.execute(
+                """
                 INSERT INTO episodes (guid, show_slug, title, pub_date, mp3_url,
                                        status, duration_sec)
                 VALUES (?, ?, ?, ?, ?, 'pending', ?)
@@ -106,17 +114,21 @@ class StateStore:
                     pub_date=excluded.pub_date,
                     mp3_url=excluded.mp3_url,
                     duration_sec=COALESCE(excluded.duration_sec, episodes.duration_sec)
-            """, (guid, show_slug, title, pub_date, mp3_url, duration_sec))
+            """,
+                (guid, show_slug, title, pub_date, mp3_url, duration_sec),
+            )
 
-    def record_completion(self, guid: str, word_count: int,
-                          duration_sec: int | None = None) -> None:
+    def record_completion(
+        self, guid: str, word_count: int, duration_sec: int | None = None
+    ) -> None:
         with self._conn() as c:
             if duration_sec is not None:
-                c.execute("UPDATE episodes SET word_count=?, duration_sec=? WHERE guid=?",
-                          (word_count, duration_sec, guid))
+                c.execute(
+                    "UPDATE episodes SET word_count=?, duration_sec=? WHERE guid=?",
+                    (word_count, duration_sec, guid),
+                )
             else:
-                c.execute("UPDATE episodes SET word_count=? WHERE guid=?",
-                          (word_count, guid))
+                c.execute("UPDATE episodes SET word_count=? WHERE guid=?", (word_count, guid))
 
     def get_episode(self, guid: str) -> Optional[Dict[str, Any]]:
         with self._conn() as c:
@@ -134,25 +146,30 @@ class StateStore:
 
     def set_priority(self, guid: str, priority: int) -> None:
         with self._conn() as c:
-            c.execute("UPDATE episodes SET priority=? WHERE guid=?",
-                      (priority, guid))
+            c.execute("UPDATE episodes SET priority=? WHERE guid=?", (priority, guid))
 
-    def set_status(self, guid: str, status: EpisodeStatus,
-                   *, error_text: Optional[str] = None) -> None:
+    def set_status(
+        self, guid: str, status: EpisodeStatus, *, error_text: Optional[str] = None
+    ) -> None:
         now = datetime.now(timezone.utc).isoformat()
         with self._conn() as c:
             if status == EpisodeStatus.DONE:
-                c.execute("UPDATE episodes SET status=?, completed_at=?, error_text=NULL WHERE guid=?",
-                          (status.value, now, guid))
+                c.execute(
+                    "UPDATE episodes SET status=?, completed_at=?, error_text=NULL WHERE guid=?",
+                    (status.value, now, guid),
+                )
             elif status in (EpisodeStatus.DOWNLOADING, EpisodeStatus.TRANSCRIBING):
-                c.execute("UPDATE episodes SET status=?, attempted_at=? WHERE guid=?",
-                          (status.value, now, guid))
+                c.execute(
+                    "UPDATE episodes SET status=?, attempted_at=? WHERE guid=?",
+                    (status.value, now, guid),
+                )
             elif status == EpisodeStatus.FAILED:
-                c.execute("UPDATE episodes SET status=?, error_text=? WHERE guid=?",
-                          (status.value, error_text, guid))
+                c.execute(
+                    "UPDATE episodes SET status=?, error_text=? WHERE guid=?",
+                    (status.value, error_text, guid),
+                )
             else:
-                c.execute("UPDATE episodes SET status=? WHERE guid=?",
-                          (status.value, guid))
+                c.execute("UPDATE episodes SET status=? WHERE guid=?", (status.value, guid))
 
     def recover_in_flight(self) -> int:
         """Called on startup: reset downloading/transcribing → pending."""
@@ -165,10 +182,13 @@ class StateStore:
 
     def set_meta(self, key: str, value: str) -> None:
         with self._conn() as c:
-            c.execute("""
+            c.execute(
+                """
                 INSERT INTO meta (key, value) VALUES (?, ?)
                 ON CONFLICT(key) DO UPDATE SET value=excluded.value
-            """, (key, value))
+            """,
+                (key, value),
+            )
 
     def get_meta(self, key: str) -> Optional[str]:
         with self._conn() as c:

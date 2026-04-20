@@ -38,8 +38,7 @@ class GlobalStats:
 
 def compute_global_stats(state) -> GlobalStats:
     with state._conn() as c:
-        totals = dict(c.execute(
-            "SELECT status, COUNT(*) FROM episodes GROUP BY status").fetchall())
+        totals = dict(c.execute("SELECT status, COUNT(*) FROM episodes GROUP BY status").fetchall())
         transcripts = totals.get("done", 0)
         words_row = c.execute(
             "SELECT COALESCE(SUM(word_count), 0) FROM episodes WHERE status='done'"
@@ -77,7 +76,8 @@ class ShowStats:
 
 def compute_show_stats(state, slug: str) -> ShowStats:
     with state._conn() as c:
-        row = c.execute("""
+        row = c.execute(
+            """
             SELECT
                 COUNT(*) AS total,
                 SUM(CASE WHEN status='done' THEN 1 ELSE 0 END) AS done,
@@ -89,7 +89,9 @@ def compute_show_stats(state, slug: str) -> ShowStats:
                 COALESCE(SUM(CASE WHEN status='done' THEN word_count END), 0) AS total_words,
                 MAX(CASE WHEN status='done' THEN completed_at END) AS last_done
             FROM episodes WHERE show_slug = ?
-        """, (slug,)).fetchone()
+        """,
+            (slug,),
+        ).fetchone()
     if row is None:
         return ShowStats(slug, 0, 0, 0, 0, 0, 0, 0, 0, None)
     return ShowStats(
@@ -125,6 +127,7 @@ def rescan_library_counts(state, output_root: Path) -> int:
             continue
         # Crude frontmatter scan: look for "guid:" line.
         import yaml
+
         try:
             fm = yaml.safe_load(m.group(1)) or {}
         except yaml.YAMLError:
@@ -132,7 +135,7 @@ def rescan_library_counts(state, output_root: Path) -> int:
         guid = fm.get("guid")
         if not guid:
             continue
-        body = text[m.end():]
+        body = text[m.end() :]
         words = len(body.split())
         dur = _duration_from_srt(md.with_suffix(".srt"))
         state.record_completion(guid, words, dur)
@@ -175,6 +178,7 @@ def historical_avg_transcribe_sec(state, *, sample_limit: int = 50) -> float:
     if not rows:
         return 0.0
     from datetime import datetime
+
     deltas: list[float] = []
     for r in rows:
         try:
@@ -214,8 +218,9 @@ def prompt_coverage(prompt: str, sample_texts: list[str]) -> float:
     return hit / len(tokens)
 
 
-def show_prompt_coverage(state, slug: str, prompt: str,
-                         sample_limit: int = 10) -> tuple[int, float]:
+def show_prompt_coverage(
+    state, slug: str, prompt: str, sample_limit: int = 10
+) -> tuple[int, float]:
     """Sample the last `sample_limit` DONE episodes of `slug` and return
     `(n_sampled, coverage)`. Caller renders the badge when
     n ≥ 5 and coverage < 0.2."""
@@ -242,7 +247,7 @@ def show_prompt_coverage(state, slug: str, prompt: str,
         if text.startswith("---"):
             end = text.find("\n---", 3)
             if end != -1:
-                text = text[end + 4:]
+                text = text[end + 4 :]
         samples.append(text)
     if not samples:
         return 0, 0.0

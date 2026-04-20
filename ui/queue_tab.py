@@ -5,9 +5,17 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtWidgets import (QHBoxLayout, QHeaderView, QLabel, QMenu,
-                             QPushButton, QTableWidget, QTableWidgetItem,
-                             QVBoxLayout, QWidget)
+from PyQt6.QtWidgets import (
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QMenu,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
 
 from ui.retranscribe import retranscribe_episode
 from ui.widgets.queue_hero import QueueHero
@@ -44,16 +52,15 @@ class QueueTab(QWidget):
         # Header — status summary
         self.header = QLabel()
         self.header.setStyleSheet(
-            "padding:8px 12px; background:palette(alternate-base); border-radius:4px;")
+            "padding:8px 12px; background:palette(alternate-base); border-radius:4px;"
+        )
         self.header.setTextFormat(Qt.TextFormat.RichText)
         v.addWidget(self.header)
 
         # Table of pending episodes
         self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(
-            ["Show", "Pub Date", "Ep#", "Title", "Status"])
-        self.table.horizontalHeader().setSectionResizeMode(
-            3, QHeaderView.ResizeMode.Stretch)
+        self.table.setHorizontalHeaderLabels(["Show", "Pub Date", "Ep#", "Title", "Status"])
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._on_context_menu)
         v.addWidget(self.table)
@@ -98,9 +105,16 @@ class QueueTab(QWidget):
         self._last_ep_start = datetime.now()
         self.refresh()
 
-    def on_episode_done(self, slug: str, guid: str, action: str,
-                        done_idx: int, total: int,
-                        show_title: str, ep_title: str) -> None:
+    def on_episode_done(
+        self,
+        slug: str,
+        guid: str,
+        action: str,
+        done_idx: int,
+        total: int,
+        show_title: str,
+        ep_title: str,
+    ) -> None:
         self._done = done_idx
         self._total = total
         now = datetime.now()
@@ -146,6 +160,7 @@ class QueueTab(QWidget):
 
     def refresh(self) -> None:
         import time
+
         now = time.monotonic()
         self._tick_header()
         if now - self._last_table_refresh < 3.0:
@@ -159,6 +174,7 @@ class QueueTab(QWidget):
 
     def _deferred_refresh(self) -> None:
         import time
+
         self._refresh_pending = False
         self._last_table_refresh = time.monotonic()
         self._refresh_table()
@@ -170,30 +186,34 @@ class QueueTab(QWidget):
     def _format_header(self) -> str:
         with self.ctx.state._conn() as c:
             status_counts = {}
-            for row in c.execute(
-                "SELECT status, COUNT(*) FROM episodes GROUP BY status"):
+            for row in c.execute("SELECT status, COUNT(*) FROM episodes GROUP BY status"):
                 status_counts[row[0]] = row[1]
         pending_total = status_counts.get("pending", 0)
         done_total = status_counts.get("done", 0)
         failed = status_counts.get("failed", 0)
 
         if self._started_at is None or self._total == 0:
-            return (f"<b>Queue</b> — pending: {pending_total} · "
-                    f"done: {done_total} · failed: {failed} · "
-                    "<i>idle (click Start on any tab to run)</i>")
+            return (
+                f"<b>Queue</b> — pending: {pending_total} · "
+                f"done: {done_total} · failed: {failed} · "
+                "<i>idle (click Start on any tab to run)</i>"
+            )
 
         elapsed = datetime.now() - self._started_at
-        live_avg = (sum(self._episode_durations) / len(self._episode_durations)
-                    if self._episode_durations else 0)
+        live_avg = (
+            sum(self._episode_durations) / len(self._episode_durations)
+            if self._episode_durations
+            else 0
+        )
         # Fall back to shared state — its historical DB estimate is populated
         # at start_check so "finish ≈" is shown from t=0.
         avg = live_avg or self.ctx.queue.effective_avg_sec
         remaining = self._total - self._done
         eta_sec = avg * remaining if avg else 0
-        finish_at = (datetime.now() + timedelta(seconds=eta_sec)
-                     if eta_sec else None)
+        finish_at = datetime.now() + timedelta(seconds=eta_sec) if eta_sec else None
 
         from ui.main_window import _fmt_dt_locale
+
         parts = [
             f"<b>Running</b>: {self._done}/{self._total}",
             f"started: {_fmt_dt_locale(self._started_at)}",
@@ -260,5 +280,6 @@ def _fmt_duration(sec: float) -> str:
         return f"{sec}s"
     if sec < 3600:
         return f"{sec // 60}m {sec % 60}s"
-    h = sec // 3600; m = (sec % 3600) // 60
+    h = sec // 3600
+    m = (sec % 3600) // 60
     return f"{h}h {m}m"

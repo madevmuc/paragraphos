@@ -19,8 +19,8 @@ class ProgressRing(QWidget):
         self._stroke = stroke
         self._done = 0
         self._total = 0
-        self._accent = QColor(180, 122, 58)        # TOKENS['accent']
-        self._track = QColor(0, 0, 0, 50)           # 'line-soft' rough equivalent
+        self._accent = QColor(180, 122, 58)  # TOKENS['accent']
+        self._track = QColor(0, 0, 0, 50)  # 'line-soft' rough equivalent
 
     def set_progress(self, done: int, total: int) -> None:
         self._done = max(0, done)
@@ -30,8 +30,7 @@ class ProgressRing(QWidget):
     def paintEvent(self, _ev) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        r = self.rect().adjusted(self._stroke, self._stroke,
-                                  -self._stroke, -self._stroke)
+        r = self.rect().adjusted(self._stroke, self._stroke, -self._stroke, -self._stroke)
 
         # Track
         p.setPen(QPen(self._track, self._stroke))
@@ -50,16 +49,15 @@ class ProgressRing(QWidget):
         # Centered text — fraction + percent.
         p.setPen(QColor(0, 0, 0))
         f_big = QFont()
-        f_big.setPointSize(20); f_big.setBold(True)
+        f_big.setPointSize(20)
+        f_big.setBold(True)
         p.setFont(f_big)
         txt = f"{self._done}/{self._total}" if self._total else "—"
-        p.drawText(self.rect().adjusted(0, -8, 0, 0),
-                   Qt.AlignmentFlag.AlignCenter, txt)
+        p.drawText(self.rect().adjusted(0, -8, 0, 0), Qt.AlignmentFlag.AlignCenter, txt)
         f_small = QFont()
         f_small.setPointSize(10)
         p.setFont(f_small)
         p.setPen(QColor(120, 120, 120))
         pct = f"{int((self._done / self._total) * 100)}%" if self._total else ""
-        p.drawText(self.rect().adjusted(0, 18, 0, 0),
-                   Qt.AlignmentFlag.AlignCenter, pct)
+        p.drawText(self.rect().adjusted(0, 18, 0, 0), Qt.AlignmentFlag.AlignCenter, pct)
         p.end()

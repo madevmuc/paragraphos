@@ -67,16 +67,18 @@ class DownloadOutcome:
     transcription could start. Otherwise ``mp3_path`` / ``show_dir`` / ``slug``
     carry the artefacts the transcribe phase needs.
     """
+
     guid: str
-    result: PipelineResult | None = None          # terminal (skipped/failed)
+    result: PipelineResult | None = None  # terminal (skipped/failed)
     mp3_path: Path | None = None
     show_dir: Path | None = None
     slug: str | None = None
     ep: dict | None = None
 
 
-def download_phase(guid: str, ctx: PipelineContext,
-                   *, episode_number: str = "0000") -> DownloadOutcome:
+def download_phase(
+    guid: str, ctx: PipelineContext, *, episode_number: str = "0000"
+) -> DownloadOutcome:
     """Dedup + download. Terminal results are folded into DownloadOutcome.result."""
     ep = ctx.state.get_episode(guid)
     if ep is None:
@@ -90,12 +92,12 @@ def download_phase(guid: str, ctx: PipelineContext,
         ctx.state.set_status(guid, EpisodeStatus.DONE)
         return DownloadOutcome(
             guid=guid,
-            result=PipelineResult("skipped", guid,
-                                  f"dedup/{dup.reason} → {dup.path}"),
+            result=PipelineResult("skipped", guid, f"dedup/{dup.reason} → {dup.path}"),
         )
 
     # 2) Download
     from core.security import safe_path_within
+
     show_dir = ctx.output_root / ep["show_slug"]
     audio_dir = show_dir / "audio"
     mp3_path = audio_dir / f"{slug}.mp3"
@@ -112,24 +114,29 @@ def download_phase(guid: str, ctx: PipelineContext,
             result=PipelineResult("failed", guid, f"disk: {e}"),
         )
     except Exception as e:
-        err = (f"download failed [{type(e).__name__}]: {e}\n"
-               f"  show={ep['show_slug']}  guid={guid}\n"
-               f"  url={ep['mp3_url']}\n"
-               f"  dest={mp3_path}")
-        logger.error("download failed: %s (guid=%s)", ep["show_slug"], guid,
-                     exc_info=True)
+        err = (
+            f"download failed [{type(e).__name__}]: {e}\n"
+            f"  show={ep['show_slug']}  guid={guid}\n"
+            f"  url={ep['mp3_url']}\n"
+            f"  dest={mp3_path}"
+        )
+        logger.error("download failed: %s (guid=%s)", ep["show_slug"], guid, exc_info=True)
         ctx.state.set_status(guid, EpisodeStatus.FAILED, error_text=err)
         return DownloadOutcome(
-            guid=guid, result=PipelineResult("failed", guid, err),
+            guid=guid,
+            result=PipelineResult("failed", guid, err),
         )
     ctx.state.set_status(guid, EpisodeStatus.DOWNLOADED)
     return DownloadOutcome(
-        guid=guid, mp3_path=mp3_path, show_dir=show_dir, slug=slug, ep=ep,
+        guid=guid,
+        mp3_path=mp3_path,
+        show_dir=show_dir,
+        slug=slug,
+        ep=ep,
     )
 
 
-def transcribe_phase(outcome: DownloadOutcome,
-                     ctx: PipelineContext) -> PipelineResult:
+def transcribe_phase(outcome: DownloadOutcome, ctx: PipelineContext) -> PipelineResult:
     """Transcribe an already-downloaded episode + run retention."""
     assert outcome.result is None and outcome.ep is not None
     assert outcome.mp3_path is not None and outcome.show_dir is not None
@@ -143,26 +150,33 @@ def transcribe_phase(outcome: DownloadOutcome,
 
     ctx.state.set_status(guid, EpisodeStatus.TRANSCRIBING)
     from pathlib import Path as _P
+
     model_path = _P.home() / ".config/open-wispr/models" / f"ggml-{ctx.model_name}.bin"
     try:
         result = transcribe_episode(
-            mp3_path=mp3_path, output_dir=show_dir, slug=slug,
-            metadata=ep, whisper_prompt=ctx.whisper_prompt,
-            language=ctx.language, model_path=model_path,
-            fast_mode=ctx.fast_mode, processors=ctx.processors,
+            mp3_path=mp3_path,
+            output_dir=show_dir,
+            slug=slug,
+            metadata=ep,
+            whisper_prompt=ctx.whisper_prompt,
+            language=ctx.language,
+            model_path=model_path,
+            fast_mode=ctx.fast_mode,
+            processors=ctx.processors,
         )
     except TranscriptionError as e:
-        err = (f"transcribe failed: {e}\n"
-               f"  show={ep['show_slug']}  guid={guid}\n"
-               f"  mp3={mp3_path}")
-        logger.error("transcribe failed: %s (guid=%s)", ep["show_slug"], guid,
-                     exc_info=True)
+        err = (
+            f"transcribe failed: {e}\n"
+            f"  show={ep['show_slug']}  guid={guid}\n"
+            f"  mp3={mp3_path}"
+        )
+        logger.error("transcribe failed: %s (guid=%s)", ep["show_slug"], guid, exc_info=True)
         ctx.state.set_status(guid, EpisodeStatus.FAILED, error_text=err)
         return PipelineResult("failed", guid, err)
     ctx.library.add(result.md_path)
     from core.stats import _duration_from_srt
-    ctx.state.record_completion(guid, result.word_count,
-                                 _duration_from_srt(result.srt_path))
+
+    ctx.state.record_completion(guid, result.word_count, _duration_from_srt(result.srt_path))
     ctx.state.set_status(guid, EpisodeStatus.DONE)
 
     # Retention
@@ -175,8 +189,9 @@ def transcribe_phase(outcome: DownloadOutcome,
     return PipelineResult("transcribed", guid, str(result.md_path))
 
 
-def process_episode(guid: str, ctx: PipelineContext,
-                    *, episode_number: str = "0000") -> PipelineResult:
+def process_episode(
+    guid: str, ctx: PipelineContext, *, episode_number: str = "0000"
+) -> PipelineResult:
     """Serial dedup → download → transcribe → retention (kept for CLI/tests)."""
     outcome = download_phase(guid, ctx, episode_number=episode_number)
     if outcome.result is not None:

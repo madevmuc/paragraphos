@@ -2,19 +2,27 @@
 
 from __future__ import annotations
 
-from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QHBoxLayout,
-                             QHeaderView, QMenu, QMessageBox, QPushButton,
-                             QTableWidget, QTableWidgetItem, QVBoxLayout,
-                             QWidget)
+from PyQt6.QtWidgets import (
+    QAbstractItemView,
+    QApplication,
+    QHBoxLayout,
+    QHeaderView,
+    QMenu,
+    QMessageBox,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
 
 from core.state import EpisodeStatus
-
 
 _REASON_MAP = {
     "SSRFGuardError": "ssrf-guard: private IP",
     "FileTooLargeError": "mp3 > 2GB cap",
     "HashMismatch": "model hash mismatch",
-    "TranscriptionError": None,   # None = keep underlying message
+    "TranscriptionError": None,  # None = keep underlying message
     "TimeoutError": "whisper timed out",
 }
 
@@ -44,8 +52,9 @@ class FailedTab(QWidget):
         push_top.clicked.connect(self._push_on_top)
         play = QPushButton("Play MP3")
         play.clicked.connect(self._play_selected)
-        play.setToolTip("Open the partial MP3 of the selected row in the "
-                        "default audio app for a spot-check.")
+        play.setToolTip(
+            "Open the partial MP3 of the selected row in the " "default audio app for a spot-check."
+        )
         clean = QPushButton("Clear older than 30 days")
         clean.clicked.connect(self._clear_old)
         refresh = QPushButton("Refresh")
@@ -57,9 +66,9 @@ class FailedTab(QWidget):
 
         self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(
-            ["Show", "Episode", "Reason", "Tries", "Last attempt", ""])
-        self.table.setSelectionBehavior(
-            QAbstractItemView.SelectionBehavior.SelectRows)
+            ["Show", "Episode", "Reason", "Tries", "Last attempt", ""]
+        )
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
@@ -93,7 +102,7 @@ class FailedTab(QWidget):
             self.table.setItem(row, 3, QTableWidgetItem("—"))
             self.table.setItem(row, 4, QTableWidgetItem(r["attempted_at"] or ""))
             # Stash guid on the row (column 0) for selection-based helpers.
-            self.table.item(row, 0).setData(0x0100, guid)   # Qt.ItemDataRole.UserRole
+            self.table.item(row, 0).setData(0x0100, guid)  # Qt.ItemDataRole.UserRole
 
             btn = QPushButton("⋯")
             btn.setFlat(True)
@@ -150,6 +159,7 @@ class FailedTab(QWidget):
     def _play_selected(self):
         import subprocess
         from pathlib import Path
+
         rows = {idx.row() for idx in self.table.selectedIndexes()}
         if not rows:
             return
@@ -162,8 +172,8 @@ class FailedTab(QWidget):
             return
         with self.ctx.state._conn() as c:
             ep = c.execute(
-                "SELECT show_slug, mp3_path FROM episodes WHERE guid=?",
-                (guid,)).fetchone()
+                "SELECT show_slug, mp3_path FROM episodes WHERE guid=?", (guid,)
+            ).fetchone()
         if ep is None:
             return
         mp3 = Path(ep["mp3_path"]) if ep["mp3_path"] else None
@@ -179,22 +189,21 @@ class FailedTab(QWidget):
         with self.ctx.state._conn() as c:
             c.execute(
                 "DELETE FROM episodes WHERE status='failed' "
-                "AND attempted_at < datetime('now', '-30 days')")
+                "AND attempted_at < datetime('now', '-30 days')"
+            )
         self.refresh()
 
     def _add_all_to_queue(self):
         """Mark all failed as pending (priority 0) and kick off a check if idle."""
         with self.ctx.state._conn() as c:
-            c.execute("UPDATE episodes SET status='pending', priority=0 "
-                      "WHERE status='failed'")
+            c.execute("UPDATE episodes SET status='pending', priority=0 " "WHERE status='failed'")
         self.refresh()
         self._trigger_start()
 
     def _push_on_top(self):
         """Mark all failed as pending with priority=10 → processed first."""
         with self.ctx.state._conn() as c:
-            c.execute("UPDATE episodes SET status='pending', priority=10 "
-                      "WHERE status='failed'")
+            c.execute("UPDATE episodes SET status='pending', priority=10 " "WHERE status='failed'")
         self.refresh()
         self._trigger_start()
 

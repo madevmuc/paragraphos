@@ -10,7 +10,6 @@ from pathlib import Path
 
 import pytest
 
-
 pytestmark = pytest.mark.integration
 
 
@@ -45,13 +44,19 @@ def test_transcribe_dotted_slug_real_whisper(tmp_path):
     Proves the fix holds end-to-end, not just in mocks."""
     _skip_if_unavailable()
     from core.transcriber import transcribe_episode
+
     slug = "2020-05-20_0021_Co. (Kein) Plädoyer für Privatisierung"
     r = transcribe_episode(
         mp3_path=FIXTURE_MP3,
         output_dir=tmp_path / "out",
         slug=slug,
-        metadata={"guid": "g", "title": "T", "show_slug": "demo",
-                  "pub_date": "2020-05-20", "mp3_url": "http://x"},
+        metadata={
+            "guid": "g",
+            "title": "T",
+            "show_slug": "demo",
+            "pub_date": "2020-05-20",
+            "mp3_url": "http://x",
+        },
         model_path=_resolve_model(),
     )
     assert r.md_path.exists()

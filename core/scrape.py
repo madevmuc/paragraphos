@@ -108,17 +108,20 @@ def scrape_episode(url: str, *, timeout: float = 10.0) -> ScrapedEpisode:
     safe_url(url)
     # Direct-MP3 detection first — cheap HEAD request.
     try:
-        head = get_client().head(url, headers={"User-Agent": USER_AGENT},
-                                 follow_redirects=True, timeout=timeout)
+        head = get_client().head(
+            url, headers={"User-Agent": USER_AGENT}, follow_redirects=True, timeout=timeout
+        )
         if head.status_code < 400 and _is_audio(head.headers.get("content-type", "")):
             name = urlparse(url).path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
-            return ScrapedEpisode(mp3_url=url, title=name or "audio",
-                                  show_name=None, pub_date=None, source_url=url)
+            return ScrapedEpisode(
+                mp3_url=url, title=name or "audio", show_name=None, pub_date=None, source_url=url
+            )
     except httpx.HTTPError:
         pass  # fall through
 
-    r = get_client().get(url, headers={"User-Agent": USER_AGENT},
-                         follow_redirects=True, timeout=timeout)
+    r = get_client().get(
+        url, headers={"User-Agent": USER_AGENT}, follow_redirects=True, timeout=timeout
+    )
     r.raise_for_status()
     # Bound HTML size to protect against parser-bombs.
     if len(r.content) > MAX_HTML_BYTES:
@@ -130,7 +133,10 @@ def scrape_episode(url: str, *, timeout: float = 10.0) -> ScrapedEpisode:
             # Revalidate the extracted mp3_url — feed might point at file://
             safe_url(ep.mp3_url)
             return ScrapedEpisode(
-                mp3_url=ep.mp3_url, title=ep.title, show_name=ep.show_name,
-                pub_date=ep.pub_date, source_url=url,
+                mp3_url=ep.mp3_url,
+                title=ep.title,
+                show_name=ep.show_name,
+                pub_date=ep.pub_date,
+                source_url=url,
             )
     raise ValueError(f"no audio found at {url}")

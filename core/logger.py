@@ -14,8 +14,12 @@ def setup_logging(data_dir: Path, retention_days: int = 90) -> Path:
     log_file = logs_dir / "paragraphos.log"
 
     handler = logging.handlers.TimedRotatingFileHandler(
-        log_file, when="midnight", interval=1, backupCount=retention_days,
-        encoding="utf-8", delay=True,
+        log_file,
+        when="midnight",
+        interval=1,
+        backupCount=retention_days,
+        encoding="utf-8",
+        delay=True,
     )
     handler.suffix = "%Y-%m-%d"
     fmt = logging.Formatter(
@@ -27,8 +31,7 @@ def setup_logging(data_dir: Path, retention_days: int = 90) -> Path:
     root = logging.getLogger()
     root.setLevel(logging.INFO)
     # Avoid duplicating if setup_logging is called twice.
-    if not any(isinstance(h, logging.handlers.TimedRotatingFileHandler)
-               for h in root.handlers):
+    if not any(isinstance(h, logging.handlers.TimedRotatingFileHandler) for h in root.handlers):
         root.addHandler(handler)
 
     # Prune anything older than retention_days even if backupCount drifted.

@@ -29,6 +29,7 @@ def _parse_semver(tag: str) -> tuple[int, int, int]:
     if "-" in s:
         s = s.split("-", 1)[0]
     parts = s.split(".")
+
     def _num(p: str) -> int:
         n = ""
         for ch in p:
@@ -37,6 +38,7 @@ def _parse_semver(tag: str) -> tuple[int, int, int]:
             else:
                 break
         return int(n) if n else 0
+
     while len(parts) < 3:
         parts.append("0")
     return _num(parts[0]), _num(parts[1]), _num(parts[2])
@@ -46,20 +48,29 @@ def is_newer(remote: str, local: str) -> bool:
     return _parse_semver(remote) > _parse_semver(local)
 
 
-def check_for_update(local_version: str,
-                     on_update_available: Callable[[str, str], None],
-                     *, repo: Optional[str] = None,
-                     timeout: float = 8.0) -> None:
+def check_for_update(
+    local_version: str,
+    on_update_available: Callable[[str, str], None],
+    *,
+    repo: Optional[str] = None,
+    timeout: float = 8.0,
+) -> None:
     """Fire-and-forget: starts a daemon thread, calls
     on_update_available(remote_tag, url) if a newer version is out.
     Silent on network errors."""
     repo_slug = repo or DEFAULT_GITHUB_REPO
     releases_api = f"https://api.github.com/repos/{repo_slug}/releases/latest"
+
     def run() -> None:
         try:
-            r = get_client().get(releases_api, timeout=timeout,
-                                 headers={"Accept": "application/vnd.github+json",
-                                          "User-Agent": "paragraphos/updater"})
+            r = get_client().get(
+                releases_api,
+                timeout=timeout,
+                headers={
+                    "Accept": "application/vnd.github+json",
+                    "User-Agent": "paragraphos/updater",
+                },
+            )
             if r.status_code != 200:
                 return
             data = r.json()
@@ -69,4 +80,5 @@ def check_for_update(local_version: str,
                 on_update_available(tag, url)
         except Exception as e:
             logger.debug("update check failed: %s", e)
+
     threading.Thread(target=run, daemon=True).start()

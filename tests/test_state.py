@@ -10,14 +10,15 @@ def _fresh(tmp_path: Path) -> StateStore:
 
 
 def test_init_creates_schema(tmp_path: Path):
-    db = _fresh(tmp_path)
+    _fresh(tmp_path)
     assert (tmp_path / "s.sqlite").exists()
 
 
 def test_insert_and_get_episode(tmp_path: Path):
     db = _fresh(tmp_path)
-    db.upsert_episode(show_slug="foo", guid="abc", title="Ep 1",
-                      pub_date="2026-04-01", mp3_url="https://x/1.mp3")
+    db.upsert_episode(
+        show_slug="foo", guid="abc", title="Ep 1", pub_date="2026-04-01", mp3_url="https://x/1.mp3"
+    )
     ep = db.get_episode("abc")
     assert ep["show_slug"] == "foo"
     assert ep["status"] == EpisodeStatus.PENDING.value
@@ -62,8 +63,7 @@ def test_meta_kv(tmp_path: Path):
 def test_list_by_status(tmp_path: Path):
     db = _fresh(tmp_path)
     for i, s in enumerate(["a", "b", "c"]):
-        db.upsert_episode(show_slug="x", guid=s, title=s, pub_date=f"2026-04-0{i+1}",
-                          mp3_url="u")
+        db.upsert_episode(show_slug="x", guid=s, title=s, pub_date=f"2026-04-0{i+1}", mp3_url="u")
     db.set_status("b", EpisodeStatus.DONE)
     pend = db.list_by_status("x", EpisodeStatus.PENDING)
     assert [p["guid"] for p in pend] == ["a", "c"]

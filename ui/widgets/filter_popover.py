@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Callable
-
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QCursor
-from PyQt6.QtWidgets import (QCheckBox, QDialog, QHBoxLayout, QLabel,
-                             QLineEdit, QPushButton, QVBoxLayout)
+from PyQt6.QtWidgets import (
+    QCheckBox,
+    QDialog,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QVBoxLayout,
+)
 
 
 class FilterPopover(QDialog):
@@ -70,25 +74,35 @@ class FilterPopover(QDialog):
         apply = QPushButton("Apply")
         apply.setProperty("role", "primary")
         apply.clicked.connect(self._apply)
-        btns.addStretch(); btns.addWidget(clear); btns.addWidget(apply)
+        btns.addStretch()
+        btns.addWidget(clear)
+        btns.addWidget(apply)
         root.addLayout(btns)
 
     def _clear(self):
-        for cb in (self.cb_enabled, self.cb_pending, self.cb_failed,
-                   self.cb_ok, self.cb_stale, self.cb_unreach):
+        for cb in (
+            self.cb_enabled,
+            self.cb_pending,
+            self.cb_failed,
+            self.cb_ok,
+            self.cb_stale,
+            self.cb_unreach,
+        ):
             cb.setChecked(False)
         self.search.clear()
 
     def _apply(self):
-        self.applied.emit({
-            "enabled_only": self.cb_enabled.isChecked(),
-            "has_pending": self.cb_pending.isChecked(),
-            "has_failed": self.cb_failed.isChecked(),
-            "feed_ok": self.cb_ok.isChecked(),
-            "feed_stale": self.cb_stale.isChecked(),
-            "feed_unreachable": self.cb_unreach.isChecked(),
-            "search": self.search.text().strip(),
-        })
+        self.applied.emit(
+            {
+                "enabled_only": self.cb_enabled.isChecked(),
+                "has_pending": self.cb_pending.isChecked(),
+                "has_failed": self.cb_failed.isChecked(),
+                "feed_ok": self.cb_ok.isChecked(),
+                "feed_stale": self.cb_stale.isChecked(),
+                "feed_unreachable": self.cb_unreach.isChecked(),
+                "search": self.search.text().strip(),
+            }
+        )
         self.accept()
 
     def show_at_button(self, button):

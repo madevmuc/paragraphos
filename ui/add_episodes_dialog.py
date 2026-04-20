@@ -2,8 +2,15 @@
 
 from __future__ import annotations
 
-from PyQt6.QtWidgets import (QComboBox, QDialog, QLabel, QMessageBox,
-                             QPushButton, QTextEdit, QVBoxLayout)
+from PyQt6.QtWidgets import (
+    QComboBox,
+    QDialog,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QTextEdit,
+    QVBoxLayout,
+)
 
 from core.sanitize import sanitize_filename
 from core.scrape import scrape_episode
@@ -41,16 +48,20 @@ class AddEpisodesDialog(QDialog):
                 continue
             slug_for_show = target_slug
             if slug_for_show.startswith("<detect"):
-                slug_for_show = sanitize_filename(
-                    (ep.show_name or "curated").lower()).replace(" ", "-")
+                slug_for_show = sanitize_filename((ep.show_name or "curated").lower()).replace(
+                    " ", "-"
+                )
             guid = ep.source_url or ep.mp3_url
             existing = self.ctx.state.get_episode(guid)
             if existing:
                 skipped += 1
                 continue
             self.ctx.state.upsert_episode(
-                show_slug=slug_for_show, guid=guid, title=ep.title,
-                pub_date=ep.pub_date or "1970-01-01", mp3_url=ep.mp3_url,
+                show_slug=slug_for_show,
+                guid=guid,
+                title=ep.title,
+                pub_date=ep.pub_date or "1970-01-01",
+                mp3_url=ep.mp3_url,
             )
             added += 1
         msg = f"Queued: {added}, skipped (dup): {skipped}"

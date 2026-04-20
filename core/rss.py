@@ -43,8 +43,9 @@ class FeedHealth:
     @classmethod
     def check(cls, url: str, *, timeout: float = 10.0) -> "FeedHealth":
         try:
-            r = get_client().head(url, headers={"User-Agent": USER_AGENT},
-                                  follow_redirects=True, timeout=timeout)
+            r = get_client().head(
+                url, headers={"User-Agent": USER_AGENT}, follow_redirects=True, timeout=timeout
+            )
         except httpx.HTTPError as e:
             return cls(False, f"network: {e}")
         if r.status_code >= 400:
@@ -96,8 +97,7 @@ def _duration(entry: Any) -> str:
     return str(d)
 
 
-def build_manifest(feed_url: str, *, timeout: float = 30.0
-                   ) -> List[Dict[str, Any]]:
+def build_manifest(feed_url: str, *, timeout: float = 30.0) -> List[Dict[str, Any]]:
     """Fetch + parse a feed, return the canonical manifest list.
 
     Backwards-compatible signature — see `build_manifest_with_url`
@@ -135,8 +135,7 @@ def build_manifest_with_url(
         headers["If-None-Match"] = etag
     if modified:
         headers["If-Modified-Since"] = modified
-    r = get_client().get(feed_url, headers=headers,
-                         follow_redirects=True, timeout=timeout)
+    r = get_client().get(feed_url, headers=headers, follow_redirects=True, timeout=timeout)
     if r.status_code == 304:
         # Unchanged — keep caller's stored validators, skip parse.
         return str(r.url), None, None, None
@@ -151,16 +150,18 @@ def build_manifest_with_url(
         mp3 = _extract_mp3_url(entry)
         if not mp3:
             continue
-        episodes.append({
-            "guid": entry.get("id") or entry.get("guid") or mp3,
-            "title": entry.get("title", ""),
-            "pubDate": _pub_date_iso(entry),
-            "duration": _duration(entry),
-            "episode_number": _episode_number(entry),
-            "mp3_url": mp3,
-            "description": entry.get("summary", "") or entry.get("description", ""),
-            "url": entry.get("link", ""),
-        })
+        episodes.append(
+            {
+                "guid": entry.get("id") or entry.get("guid") or mp3,
+                "title": entry.get("title", ""),
+                "pubDate": _pub_date_iso(entry),
+                "duration": _duration(entry),
+                "episode_number": _episode_number(entry),
+                "mp3_url": mp3,
+                "description": entry.get("summary", "") or entry.get("description", ""),
+                "url": entry.get("link", ""),
+            }
+        )
 
     episodes.sort(key=lambda x: x["pubDate"])
     new_etag = r.headers.get("etag")
@@ -170,8 +171,9 @@ def build_manifest_with_url(
 
 def feed_metadata(feed_url: str, *, timeout: float = 30.0) -> Dict[str, str]:
     """Return channel-level metadata (title, author, description)."""
-    r = get_client().get(feed_url, headers={"User-Agent": USER_AGENT},
-                         follow_redirects=True, timeout=timeout)
+    r = get_client().get(
+        feed_url, headers={"User-Agent": USER_AGENT}, follow_redirects=True, timeout=timeout
+    )
     r.raise_for_status()
     parsed = feedparser.parse(r.content)
     ch = parsed.feed

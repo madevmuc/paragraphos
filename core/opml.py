@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Dict, List
+
 try:
     from defusedxml import ElementTree as ET  # type: ignore
 except ImportError:  # pragma: no cover — bundled install always has defusedxml
@@ -23,8 +24,10 @@ def parse_opml(path: Path) -> List[Dict[str, str]]:
         xml_url = node.get("xmlUrl")
         if not xml_url:
             continue
-        out.append({
-            "title": node.get("title") or node.get("text", "untitled"),
-            "xmlUrl": xml_url,
-        })
+        out.append(
+            {
+                "title": node.get("title") or node.get("text", "untitled"),
+                "xmlUrl": xml_url,
+            }
+        )
     return out

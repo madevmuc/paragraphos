@@ -37,8 +37,7 @@ def _run_migration(target: Path) -> None:
     for legacy in _LEGACY_CANDIDATES:
         if not legacy.exists():
             continue
-        for name in ("watchlist.yaml", "settings.yaml", "state.sqlite",
-                     "state.sqlite-journal"):
+        for name in ("watchlist.yaml", "settings.yaml", "state.sqlite", "state.sqlite-journal"):
             src = legacy / name
             dst = target / name
             if src.exists() and (not dst.exists() or dst.stat().st_size == 0):

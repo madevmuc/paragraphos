@@ -20,6 +20,7 @@ import httpx
 
 try:
     import h2  # noqa: F401
+
     _HTTP2 = True
 except ImportError:
     _HTTP2 = False
@@ -38,8 +39,7 @@ def get_client() -> httpx.Client:
                 _client = httpx.Client(
                     http2=_HTTP2,
                     timeout=httpx.Timeout(30.0, connect=10.0),
-                    limits=httpx.Limits(max_connections=20,
-                                        max_keepalive_connections=10),
+                    limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
                     headers={"User-Agent": USER_AGENT},
                     follow_redirects=True,
                 )

@@ -1,4 +1,5 @@
 """Test bootstrap: expose hyphenated dir as importable package root."""
+
 import sys
 from pathlib import Path
 

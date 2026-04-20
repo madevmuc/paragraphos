@@ -14,8 +14,9 @@ def _parse_hhmm(s: str) -> time:
     return time(int(hh), int(mm))
 
 
-def should_catch_up(last_check_iso: Optional[str], daily_time_hhmm: str,
-                    now: Optional[datetime] = None) -> bool:
+def should_catch_up(
+    last_check_iso: Optional[str], daily_time_hhmm: str, now: Optional[datetime] = None
+) -> bool:
     now = now or datetime.now(timezone.utc)
     slot = _parse_hhmm(daily_time_hhmm)
     today_slot = datetime.combine(now.date(), slot, tzinfo=now.tzinfo)
@@ -28,10 +29,10 @@ def should_catch_up(last_check_iso: Optional[str], daily_time_hhmm: str,
     return False
 
 
-def build_scheduler(daily_time_hhmm: str,
-                    job: Callable[[], None]) -> BackgroundScheduler:
+def build_scheduler(daily_time_hhmm: str, job: Callable[[], None]) -> BackgroundScheduler:
     sched = BackgroundScheduler(timezone="UTC")
     hh, mm = daily_time_hhmm.split(":")
-    sched.add_job(job, CronTrigger(hour=int(hh), minute=int(mm)),
-                  id="daily_check", replace_existing=True)
+    sched.add_job(
+        job, CronTrigger(hour=int(hh), minute=int(mm)), id="daily_check", replace_existing=True
+    )
     return sched

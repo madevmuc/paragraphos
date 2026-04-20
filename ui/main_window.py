@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core.paths import user_data_dir  # noqa: E402
 from ui.app_context import AppContext
 from ui.failed_tab import FailedTab
 from ui.log_dock import LogDock
@@ -25,7 +26,6 @@ from ui.settings_pane import SettingsPane
 from ui.shows_tab import ShowsTab
 from ui.widgets import Sidebar
 
-from core.paths import user_data_dir  # noqa: E402
 DATA_DIR = user_data_dir()
 
 
@@ -52,6 +52,8 @@ def _fmt_dt_locale(dt) -> str:
     if "yyyy" not in date_fmt:
         date_fmt = date_fmt.replace("yy", "yyyy")
     return loc.toString(qdt, f"ddd, {date_fmt} HH:mm")
+
+
 def _last_compiled_path(ctx) -> Path:
     """Path to the knowledge-hub's compile marker, driven by settings so the
     banner works after Paragraphos is extracted into its own repo."""
@@ -121,8 +123,9 @@ class MainWindow(QMainWindow):
             ("Ctrl+.", self.shows_tab._stop),
             ("Ctrl+L", lambda: self.log_dock.setVisible(not self.log_dock.isVisible())),
         ):
-            QShortcut(QKeySequence(key) if isinstance(key, str) else QKeySequence(key),
-                      self, activated=fn)
+            QShortcut(
+                QKeySequence(key) if isinstance(key, str) else QKeySequence(key), self, activated=fn
+            )
 
         # Global status bar — visible from every tab.
         sb = QStatusBar()
@@ -153,19 +156,23 @@ class MainWindow(QMainWindow):
             # Dark mode: dark amber bg, soft cream text, subtle border
             self.banner.setStyleSheet(
                 "background:#4a3f00; color:#ffe7a0; padding:8px 12px; "
-                "border:1px solid #8a6b00; border-radius:4px;")
+                "border:1px solid #8a6b00; border-radius:4px;"
+            )
         else:
             self.banner.setStyleSheet(
                 "background:#fff7d0; color:#3a2d00; padding:8px 12px; "
-                "border:1px solid #e0c870; border-radius:4px;")
+                "border:1px solid #e0c870; border-radius:4px;"
+            )
 
     def _on_nav(self, key: str) -> None:
         if key == "logs":
             import subprocess
+
             subprocess.run(["open", str(self.ctx.data_dir / "logs")])
             return
         if key == "about":
             from ui.about_dialog import AboutDialog
+
             AboutDialog(self).exec()
             return
         idx = self._nav_index.get(key)
@@ -194,25 +201,25 @@ class MainWindow(QMainWindow):
 
     def _refresh_status_bar(self) -> None:
         from datetime import datetime, timedelta
+
         q = self.ctx.queue
         if not q.running:
             paused = self.ctx.state.get_meta("queue_paused") == "1"
             if paused:
                 self.status_label.setText(
                     "<span style='color:#a06030;'>● queue paused</span> "
-                    "— click Start on any tab to resume")
+                    "— click Start on any tab to resume"
+                )
             else:
-                self.status_label.setText(
-                    "<span style='color:#888;'>● idle</span>")
+                self.status_label.setText("<span style='color:#888;'>● idle</span>")
             return
         elapsed = (datetime.now() - q.started_at).total_seconds() if q.started_at else 0
         remaining = q.total - q.done
         avg = q.effective_avg_sec
         eta_sec = avg * remaining if avg else 0
-        finish_at = (datetime.now() + timedelta(seconds=eta_sec)
-                     if eta_sec else None)
+        finish_at = datetime.now() + timedelta(seconds=eta_sec) if eta_sec else None
         parts = [
-            f"<span style='color:#4a7aa0;'>● running</span>",
+            "<span style='color:#4a7aa0;'>● running</span>",
             f"<b>{q.done}/{q.total}</b>",
         ]
         if q.started_at:
@@ -245,7 +252,8 @@ class MainWindow(QMainWindow):
         if new_count > 0:
             self.banner.setText(
                 f"📝 {new_count} transcripts newer than last wiki compile "
-                f"— run the 'Compile' workflow in Claude to pull them into the wiki.")
+                f"— run the 'Compile' workflow in Claude to pull them into the wiki."
+            )
             self.banner.setVisible(True)
         else:
             self.banner.setVisible(False)

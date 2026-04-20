@@ -41,9 +41,13 @@ class IconRenderer:
         p.drawText(pm.rect(), Qt.AlignmentFlag.AlignCenter, text)
         p.end()
 
-    def render(self, done: int = 0, total: int = 0,
-               running: bool = False,
-               override_text: Optional[str] = None) -> QIcon:
+    def render(
+        self,
+        done: int = 0,
+        total: int = 0,
+        running: bool = False,
+        override_text: Optional[str] = None,
+    ) -> QIcon:
         if override_text is not None:
             text = override_text
         elif running and total > 0:

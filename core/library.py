@@ -64,6 +64,7 @@ class LibraryIndex:
             return
         try:
             import json
+
             data = json.loads(self._cache_path.read_text(encoding="utf-8"))
             if isinstance(data, dict):
                 self._mtime_cache = {
@@ -79,10 +80,14 @@ class LibraryIndex:
             return
         try:
             import json
+
             self._cache_path.parent.mkdir(parents=True, exist_ok=True)
-            self._cache_path.write_text(json.dumps(
-                {k: [v[0], v[1]] for k, v in self._mtime_cache.items()},
-                ensure_ascii=False), encoding="utf-8")
+            self._cache_path.write_text(
+                json.dumps(
+                    {k: [v[0], v[1]] for k, v in self._mtime_cache.items()}, ensure_ascii=False
+                ),
+                encoding="utf-8",
+            )
         except Exception:
             pass
 
@@ -119,8 +124,7 @@ class LibraryIndex:
     def has_guid(self, guid: str) -> bool:
         return guid in self._by_guid
 
-    def check_dedup(self, *, guid: Optional[str],
-                    filename_key: Optional[str]) -> DedupResult:
+    def check_dedup(self, *, guid: Optional[str], filename_key: Optional[str]) -> DedupResult:
         if guid and guid in self._by_guid:
             return DedupResult(True, "guid", self._by_guid[guid])
         if filename_key and filename_key in self._by_filename:

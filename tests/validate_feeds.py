@@ -34,22 +34,25 @@ from core.rss import build_manifest  # noqa: E402
 # Feed list (copied from raw/transcripts/podcast_downloader.py to avoid importing it,
 # since that file sits under raw/ and has side-effect imports).
 FEEDS: List[Tuple[str, str]] = [
-    ("one-a-lage",             "https://1alage.podigee.io/feed/mp3"),
-    ("immocation",             "https://immocation.podigee.io/feed/mp3"),
-    ("limmo",                  "https://haufe-immobilienpodcast.podigee.io/feed/mp3"),
-    ("hausverwalter-inside",   "https://divmpodcast.libsyn.com/rss"),
-    ("immobileros",            "https://immobileros.podigee.io/feed/mp3"),
-    ("real-estate-pioneers",   "https://feeds.buzzsprout.com/1997738.rss"),
-    ("dmrex",                  "https://feeds.buzzsprout.com/2078041.rss"),
-    ("grundgedanken",          "https://gvh.podcaster.de/grundeigentuemerverband.rss"),
-    ("faz-finanzen-immobilien","https://fazfinanzen.podigee.io/feed/mp3"),
-    ("lagebericht",            "https://feeds.acast.com/public/shows/61e97e498ad1d30012c50117"),
-    ("immopreneur",            "https://anchor.fm/s/10204d0b4/podcast/rss"),
-    ("denkmalimmobilien",      "https://denkmalimmobilien-marcelkeller.podigee.io/feed/mp3"),
-    ("beyond-buildings",       "https://letscast.fm/podcasts/beyond-buildings-der-podcast-fuer-die-immobilienwelt-im-wandel-0bcfcb5f/feed"),
-    ("immokaiser",             "https://immokaiser.podigee.io/feed/mp3"),
-    ("vermieter-probleme",     "https://16qkrph.podcaster.de/Vermietershop-de.rss"),
-    ("gluecklich-wohnen",      "https://buwog.podigee.io/feed/mp3"),
+    ("one-a-lage", "https://1alage.podigee.io/feed/mp3"),
+    ("immocation", "https://immocation.podigee.io/feed/mp3"),
+    ("limmo", "https://haufe-immobilienpodcast.podigee.io/feed/mp3"),
+    ("hausverwalter-inside", "https://divmpodcast.libsyn.com/rss"),
+    ("immobileros", "https://immobileros.podigee.io/feed/mp3"),
+    ("real-estate-pioneers", "https://feeds.buzzsprout.com/1997738.rss"),
+    ("dmrex", "https://feeds.buzzsprout.com/2078041.rss"),
+    ("grundgedanken", "https://gvh.podcaster.de/grundeigentuemerverband.rss"),
+    ("faz-finanzen-immobilien", "https://fazfinanzen.podigee.io/feed/mp3"),
+    ("lagebericht", "https://feeds.acast.com/public/shows/61e97e498ad1d30012c50117"),
+    ("immopreneur", "https://anchor.fm/s/10204d0b4/podcast/rss"),
+    ("denkmalimmobilien", "https://denkmalimmobilien-marcelkeller.podigee.io/feed/mp3"),
+    (
+        "beyond-buildings",
+        "https://letscast.fm/podcasts/beyond-buildings-der-podcast-fuer-die-immobilienwelt-im-wandel-0bcfcb5f/feed",
+    ),
+    ("immokaiser", "https://immokaiser.podigee.io/feed/mp3"),
+    ("vermieter-probleme", "https://16qkrph.podcaster.de/Vermietershop-de.rss"),
+    ("gluecklich-wohnen", "https://buwog.podigee.io/feed/mp3"),
 ]
 
 
@@ -60,7 +63,7 @@ class FeedResult:
     parsed_count: int = 0
     reference_count: int = 0
     missing_in_parsed: List[str] = field(default_factory=list)  # in ref, not parsed
-    new_in_parsed: List[str] = field(default_factory=list)      # in parsed, not ref
+    new_in_parsed: List[str] = field(default_factory=list)  # in parsed, not ref
     null_mp3: int = 0
     missing_pubdate: int = 0
     wrong_ep_num_format: int = 0
@@ -134,15 +137,22 @@ def validate_feed(slug: str, url: str) -> FeedResult:
 
 def format_result(r: FeedResult) -> str:
     badge = "✅" if r.ok else "❌"
-    line = (f"{badge} {r.slug:25s} parsed={r.parsed_count:4d}  "
-            f"ref={r.reference_count:4d}  "
-            f"Δnew={len(r.new_in_parsed):3d}  Δmiss={len(r.missing_in_parsed):3d}")
+    line = (
+        f"{badge} {r.slug:25s} parsed={r.parsed_count:4d}  "
+        f"ref={r.reference_count:4d}  "
+        f"Δnew={len(r.new_in_parsed):3d}  Δmiss={len(r.missing_in_parsed):3d}"
+    )
     flags = []
-    if r.null_mp3: flags.append(f"null_mp3={r.null_mp3}")
-    if r.missing_pubdate: flags.append(f"missing_pubdate={r.missing_pubdate}")
-    if r.wrong_ep_num_format: flags.append(f"wrong_ep_num={r.wrong_ep_num_format}")
-    if r.duplicate_guids: flags.append(f"dup_guids={r.duplicate_guids}")
-    if r.errors: flags.append(f"errors={r.errors}")
+    if r.null_mp3:
+        flags.append(f"null_mp3={r.null_mp3}")
+    if r.missing_pubdate:
+        flags.append(f"missing_pubdate={r.missing_pubdate}")
+    if r.wrong_ep_num_format:
+        flags.append(f"wrong_ep_num={r.wrong_ep_num_format}")
+    if r.duplicate_guids:
+        flags.append(f"dup_guids={r.duplicate_guids}")
+    if r.errors:
+        flags.append(f"errors={r.errors}")
     if flags:
         line += "  [" + ", ".join(flags) + "]"
     return line
@@ -202,8 +212,10 @@ def phase3_transcript_crosscheck(results: List[FeedResult]) -> None:
         # Gaps: ref GUIDs with no .md
         gaps = [g for g in ref_guids if g not in md_guids]
 
-        print(f"\n  {slug}: .md files with GUID frontmatter = {len(md_guids)}, "
-              f"ref = {len(ref_guids)}")
+        print(
+            f"\n  {slug}: .md files with GUID frontmatter = {len(md_guids)}, "
+            f"ref = {len(ref_guids)}"
+        )
         print(f"    orphans (md without manifest entry): {len(orphans)}")
         if orphans[:5]:
             for p in orphans[:5]:

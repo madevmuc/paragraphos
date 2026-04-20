@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Callable, Optional
+from typing import Optional
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget)
+from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 
 class _SidebarItem(QFrame):
@@ -20,8 +20,7 @@ class _SidebarItem(QFrame):
         self._label = QLabel(label)
         self._count = QLabel("")
         self._count.setProperty("class", "count")
-        self._count.setAlignment(
-            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self._count.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         h = QHBoxLayout(self)
         h.setContentsMargins(0, 0, 0, 0)
         h.addWidget(self._label)
@@ -38,7 +37,8 @@ class _SidebarItem(QFrame):
 
     def set_active(self, active: bool) -> None:
         self.setProperty("active", "true" if active else "false")
-        self.style().unpolish(self); self.style().polish(self)
+        self.style().unpolish(self)
+        self.style().polish(self)
 
 
 class Sidebar(QWidget):

@@ -15,8 +15,16 @@ def test_build_manifest_parses_items():
     episodes = build_manifest("https://a.test/rss")
     assert len(episodes) == 2
     first = episodes[0]
-    for key in ("guid", "title", "pubDate", "duration",
-                "episode_number", "mp3_url", "description", "url"):
+    for key in (
+        "guid",
+        "title",
+        "pubDate",
+        "duration",
+        "episode_number",
+        "mp3_url",
+        "description",
+        "url",
+    ):
         assert key in first
     assert first["mp3_url"].startswith("https://")
     assert first["episode_number"].isdigit()
@@ -46,8 +54,7 @@ def test_feed_health_reports_failure_on_4xx():
 def test_build_manifest_with_url_returns_canonical_after_redirect():
     """Feed 301-redirects; build_manifest_with_url exposes the final URL
     so the caller can persist it in watchlist.yaml."""
-    respx.get("https://old.test/rss").respond(
-        301, headers={"location": "https://new.test/rss"})
+    respx.get("https://old.test/rss").respond(301, headers={"location": "https://new.test/rss"})
     respx.get("https://new.test/rss").respond(200, text=FIX.read_text())
     canonical, episodes, _etag, _mod = build_manifest_with_url("https://old.test/rss")
     assert canonical == "https://new.test/rss"
@@ -68,8 +75,7 @@ def test_build_manifest_with_url_returns_304_sentinel_when_unchanged():
     skip manifest parsing for this show."""
     route = respx.get("https://cond.test/rss")
     route.respond(200, headers={"etag": '"abc"'}, text=FIX.read_text())
-    canonical, episodes, etag, modified = build_manifest_with_url(
-        "https://cond.test/rss")
+    canonical, episodes, etag, modified = build_manifest_with_url("https://cond.test/rss")
     assert canonical == "https://cond.test/rss"
     assert episodes is not None and len(episodes) == 2
     assert etag == '"abc"'
@@ -80,7 +86,8 @@ def test_build_manifest_with_url_returns_304_sentinel_when_unchanged():
     route2 = respx.get("https://cond.test/rss")
     route2.respond(304)
     canonical2, episodes2, etag2, modified2 = build_manifest_with_url(
-        "https://cond.test/rss", etag=etag, modified=modified)
+        "https://cond.test/rss", etag=etag, modified=modified
+    )
     assert episodes2 is None
     assert etag2 is None and modified2 is None
     # Verify the request carried the conditional header.

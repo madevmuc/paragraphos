@@ -14,12 +14,27 @@ from pathlib import Path
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
-from PyQt6.QtWidgets import (QCheckBox, QComboBox, QDialog, QFrame,
-                             QGridLayout, QGroupBox, QHBoxLayout, QHeaderView,
-                             QLabel, QLineEdit, QMenu, QMessageBox,
-                             QPlainTextEdit, QPushButton, QSizePolicy,
-                             QTableWidget, QTableWidgetItem, QVBoxLayout,
-                             QWidget)
+from PyQt6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QFrame,
+    QGridLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QMenu,
+    QMessageBox,
+    QPlainTextEdit,
+    QPushButton,
+    QSizePolicy,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
 
 from core.stats import compute_show_stats
 from ui.retranscribe import retranscribe_episode
@@ -38,10 +53,18 @@ _STATUS_PILL_KIND = {
 
 # (display label, whisper language code) — mirrors the pre-restyle picker.
 _LANGUAGES = [
-    ("Deutsch", "de"), ("English", "en"), ("Español", "es"),
-    ("Français", "fr"), ("Italiano", "it"), ("Nederlands", "nl"),
-    ("Português", "pt"), ("Polski", "pl"), ("Čeština", "cs"),
-    ("Русский", "ru"), ("日本語", "ja"), ("中文", "zh"),
+    ("Deutsch", "de"),
+    ("English", "en"),
+    ("Español", "es"),
+    ("Français", "fr"),
+    ("Italiano", "it"),
+    ("Nederlands", "nl"),
+    ("Português", "pt"),
+    ("Polski", "pl"),
+    ("Čeština", "cs"),
+    ("Русский", "ru"),
+    ("日本語", "ja"),
+    ("中文", "zh"),
     ("Auto-detect", "auto"),
 ]
 
@@ -99,17 +122,14 @@ class ShowDetailsDialog(QDialog):
         text_col.addWidget(title)
 
         s = compute_show_stats(self.ctx.state, self.slug)
-        meta_text = (f"{self.show_.slug} · {s.total} eps · "
-                     f"{s.done} done · {s.pending} pending")
+        meta_text = f"{self.show_.slug} · {s.total} eps · " f"{s.done} done · {s.pending} pending"
         meta = QLabel(meta_text)
         meta.setProperty("class", "muted")
         meta.setStyleSheet("color: palette(mid); font-size: 11px;")
         text_col.addWidget(meta)
 
         feed = QLabel(self.show_.rss)
-        feed.setStyleSheet(
-            "color: palette(mid); font-family: Menlo, monospace; font-size: 11px;"
-        )
+        feed.setStyleSheet("color: palette(mid); font-family: Menlo, monospace; font-size: 11px;")
         feed.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         text_col.addWidget(feed)
         text_col.addStretch(1)
@@ -223,25 +243,18 @@ class ShowDetailsDialog(QDialog):
         for label, code in _LANGUAGES:
             self._language_combo.addItem(f"{label} ({code})", code)
         current = getattr(self.show_, "language", "de") or "de"
-        idx = next(
-            (i for i, (_, c) in enumerate(_LANGUAGES) if c == current), 0
-        )
+        idx = next((i for i, (_, c) in enumerate(_LANGUAGES) if c == current), 0)
         self._language_combo.setCurrentIndex(idx)
         inner.addWidget(self._language_combo, r, 1)
         r += 1
 
         inner.addWidget(self._label("Whisper prompt"), r, 0)
-        self._whisper_prompt_edit = QPlainTextEdit(
-            self.show_.whisper_prompt or ""
-        )
+        self._whisper_prompt_edit = QPlainTextEdit(self.show_.whisper_prompt or "")
         self._whisper_prompt_edit.setFixedHeight(64)
         inner.addWidget(self._whisper_prompt_edit, r, 1)
         r += 1
 
-        hint = QLabel(
-            "Comma-separated hints (names, jargon, places). "
-            "Improves recognition."
-        )
+        hint = QLabel("Comma-separated hints (names, jargon, places). " "Improves recognition.")
         hint.setStyleSheet("color: palette(mid); font-size: 11px;")
         hint.setWordWrap(True)
         inner.addWidget(hint, r, 1)
@@ -342,6 +355,7 @@ class ShowDetailsDialog(QDialog):
     def _md_path_for(self, guid: str) -> Path | None:
         """Mirror `ui.retranscribe` path derivation so diff sees the same file."""
         from core.pipeline import build_slug
+
         ep = self.ctx.state.get_episode(guid)
         if ep is None:
             return None
@@ -354,6 +368,7 @@ class ShowDetailsDialog(QDialog):
 
     def _open_diff(self, old: Path, new: Path) -> None:
         from ui.transcript_diff_dialog import TranscriptDiffDialog
+
         TranscriptDiffDialog(old, new, parent=self).exec()
 
     def _retranscribe(self, guid: str) -> None:
@@ -404,9 +419,7 @@ class ShowDetailsDialog(QDialog):
         if new_title:
             self.show_.title = new_title
         self.show_.language = self._language_combo.currentData() or "de"
-        self.show_.whisper_prompt = (
-            self._whisper_prompt_edit.toPlainText().strip()
-        )
+        self.show_.whisper_prompt = self._whisper_prompt_edit.toPlainText().strip()
         self.ctx.watchlist.save(self.ctx.data_dir / "watchlist.yaml")
         self.accept()
 
@@ -417,7 +430,8 @@ class ShowDetailsDialog(QDialog):
                 (self.slug,),
             )
         QMessageBox.information(
-            self, "Marked stale",
+            self,
+            "Marked stale",
             f"All episodes of '{self.show_.title}' were marked pending.",
         )
         # Refresh the backlog label in-place so the user sees the effect.
@@ -425,7 +439,8 @@ class ShowDetailsDialog(QDialog):
 
     def _remove(self):
         resp = QMessageBox.question(
-            self, "Remove show",
+            self,
+            "Remove show",
             f"Remove '{self.show_.title}' from the watchlist?\n"
             "Existing transcripts on disk are not deleted.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -433,8 +448,6 @@ class ShowDetailsDialog(QDialog):
         )
         if resp != QMessageBox.StandardButton.Yes:
             return
-        self.ctx.watchlist.shows = [
-            s for s in self.ctx.watchlist.shows if s.slug != self.slug
-        ]
+        self.ctx.watchlist.shows = [s for s in self.ctx.watchlist.shows if s.slug != self.slug]
         self.ctx.watchlist.save(self.ctx.data_dir / "watchlist.yaml")
         self.accept()

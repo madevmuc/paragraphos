@@ -13,10 +13,11 @@ def test_show_defaults():
 
 
 def test_watchlist_roundtrip(tmp_path: Path):
-    wl = Watchlist(shows=[
-        Show(slug="foo", title="Foo", rss="https://foo.test/rss",
-             whisper_prompt="Host Alice"),
-    ])
+    wl = Watchlist(
+        shows=[
+            Show(slug="foo", title="Foo", rss="https://foo.test/rss", whisper_prompt="Host Alice"),
+        ]
+    )
     p = tmp_path / "wl.yaml"
     wl.save(p)
     loaded = Watchlist.load(p)

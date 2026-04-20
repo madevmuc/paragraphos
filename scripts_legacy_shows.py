@@ -36,9 +36,6 @@ elif _LEGACY.exists():
         _mod = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
         sys.modules["_legacy_transcribe"] = _mod
         _spec.loader.exec_module(_mod)  # type: ignore[union-attr]
-        SHOWS_PROMPTS = {
-            slug: cfg.get("whisper_prompt", "")
-            for slug, cfg in _mod.SHOWS.items()
-        }
+        SHOWS_PROMPTS = {slug: cfg.get("whisper_prompt", "") for slug, cfg in _mod.SHOWS.items()}
     except Exception:
         SHOWS_PROMPTS = {}

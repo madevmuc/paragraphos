@@ -10,18 +10,30 @@ from typing import Optional
 from urllib.parse import urlparse
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
-from PyQt6.QtWidgets import (QButtonGroup, QDialog, QFormLayout, QFrame,
-                             QHBoxLayout, QLabel, QLineEdit, QListWidget,
-                             QListWidgetItem, QMessageBox, QPushButton,
-                             QRadioButton, QStackedWidget, QTextEdit,
-                             QVBoxLayout, QWidget)
+from PyQt6.QtWidgets import (
+    QButtonGroup,
+    QDialog,
+    QFormLayout,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMessageBox,
+    QPushButton,
+    QRadioButton,
+    QStackedWidget,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
 
 from core.discovery import find_rss_from_url, search_itunes
 from core.models import Show
 from core.prompt_gen import suggest_whisper_prompt
 from core.rss import FeedHealth, build_manifest_with_url, feed_metadata
 from ui.widgets.pill import Pill
-
 
 # --------------------------------------------------------------------------- #
 # Background fetchers                                                         #
@@ -31,7 +43,7 @@ from ui.widgets.pill import Pill
 class _FeedFetchThread(QThread):
     """Fetch feed_metadata + build_manifest_with_url + FeedHealth off-thread."""
 
-    done = pyqtSignal(dict)   # {ok, rss, meta, manifest, health, error}
+    done = pyqtSignal(dict)  # {ok, rss, meta, manifest, health, error}
 
     def __init__(self, rss_url: str, parent=None):
         super().__init__(parent)
@@ -43,13 +55,15 @@ class _FeedFetchThread(QThread):
             meta = feed_metadata(self.rss_url)
             canonical, manifest, _etag, _modified = build_manifest_with_url(self.rss_url)
             health = FeedHealth.check(canonical)
-            out.update({
-                "ok": True,
-                "rss": canonical,
-                "meta": meta,
-                "manifest": manifest,
-                "health": health,
-            })
+            out.update(
+                {
+                    "ok": True,
+                    "rss": canonical,
+                    "meta": meta,
+                    "manifest": manifest,
+                    "health": health,
+                }
+            )
         except Exception as e:  # noqa: BLE001
             out["error"] = str(e)
         self.done.emit(out)
@@ -58,7 +72,7 @@ class _FeedFetchThread(QThread):
 class _AppleResolveThread(QThread):
     """Resolve an Apple Podcasts (or generic) landing URL → RSS URL."""
 
-    done = pyqtSignal(dict)   # {ok, rss, error}
+    done = pyqtSignal(dict)  # {ok, rss, error}
 
     def __init__(self, apple_url: str, parent=None):
         super().__init__(parent)
@@ -83,7 +97,7 @@ class _AppleResolveThread(QThread):
 
 
 def _shorten(url: str, n: int = 48) -> str:
-    return url if len(url) <= n else url[:n - 1] + "\u2026"
+    return url if len(url) <= n else url[: n - 1] + "\u2026"
 
 
 class AddShowDialog(QDialog):
@@ -200,8 +214,7 @@ class AddShowDialog(QDialog):
                 item.setData(Qt.ItemDataRole.UserRole, m.feed_url)
                 self.results.addItem(item)
             if self.results.count() == 0:
-                QMessageBox.information(self, "No matches",
-                                        "iTunes returned no results.")
+                QMessageBox.information(self, "No matches", "iTunes returned no results.")
         except Exception as e:  # noqa: BLE001
             QMessageBox.warning(self, "Error", str(e))
 
@@ -220,9 +233,11 @@ class AddShowDialog(QDialog):
         default_slug = (meta["title"] or "show").lower().replace(" ", "-")
         self.name_slug.setText(default_slug)
         prompt = suggest_whisper_prompt(
-            title=meta["title"], author=meta["author"],
-            episodes=[{"title": e["title"], "description": e["description"]}
-                      for e in manifest[-20:]],
+            title=meta["title"],
+            author=meta["author"],
+            episodes=[
+                {"title": e["title"], "description": e["description"]} for e in manifest[-20:]
+            ],
         )
         self.name_prompt.setPlainText(prompt)
         self._loaded_manifest = manifest
@@ -297,9 +312,9 @@ class AddShowDialog(QDialog):
         v.addStretch(1)
 
         v.addLayout(self._backlog_row("url"))
-        self.url_add_btn_row = self._button_row(on_add=self._add_from_url,
-                                                add_enabled=False,
-                                                store_add_on="url")
+        self.url_add_btn_row = self._button_row(
+            on_add=self._add_from_url, add_enabled=False, store_add_on="url"
+        )
         v.addLayout(self.url_add_btn_row)
         return page
 
@@ -340,9 +355,7 @@ class AddShowDialog(QDialog):
         self.url_card_title.setText(meta.get("title") or "(untitled)")
         self.url_card_publisher.setText(meta.get("author") or "")
         latest = manifest[-1]["pubDate"][:10] if manifest else "—"
-        self.url_card_meta.setText(
-            f"{len(manifest)} episode(s) · latest: {latest}"
-        )
+        self.url_card_meta.setText(f"{len(manifest)} episode(s) · latest: {latest}")
         warnings = []
         if not health.ok:
             warnings.append(f"Feed health: {health.reason}")
@@ -364,9 +377,12 @@ class AddShowDialog(QDialog):
         title = meta.get("title") or "show"
         slug = title.lower().replace(" ", "-")
         prompt = suggest_whisper_prompt(
-            title=title, author=meta.get("author", ""),
-            episodes=[{"title": e["title"], "description": e["description"]}
-                      for e in self._loaded_manifest[-20:]],
+            title=title,
+            author=meta.get("author", ""),
+            episodes=[
+                {"title": e["title"], "description": e["description"]}
+                for e in self._loaded_manifest[-20:]
+            ],
         )
         show = {
             "slug": slug,
@@ -390,8 +406,7 @@ class AddShowDialog(QDialog):
         v.addWidget(QLabel("Paste an Apple Podcasts link:"))
         row = QHBoxLayout()
         self.apple_input = QLineEdit()
-        self.apple_input.setPlaceholderText(
-            "https://podcasts.apple.com/…/id1234567890")
+        self.apple_input.setPlaceholderText("https://podcasts.apple.com/…/id1234567890")
         self.apple_input.editingFinished.connect(self._detect_apple)
         row.addWidget(self.apple_input, 1)
         detect_btn = QPushButton("Detect RSS")
@@ -500,9 +515,12 @@ class AddShowDialog(QDialog):
         title = meta.get("title") or "show"
         slug = title.lower().replace(" ", "-")
         prompt = suggest_whisper_prompt(
-            title=title, author=meta.get("author", ""),
-            episodes=[{"title": e["title"], "description": e["description"]}
-                      for e in self._loaded_manifest[-20:]],
+            title=title,
+            author=meta.get("author", ""),
+            episodes=[
+                {"title": e["title"], "description": e["description"]}
+                for e in self._loaded_manifest[-20:]
+            ],
         )
         show = {
             "slug": slug,
@@ -552,8 +570,9 @@ class AddShowDialog(QDialog):
         btn = grp.checkedButton()
         return btn.text() if btn else "Last 5"
 
-    def _button_row(self, *, on_add, add_enabled: bool = True,
-                    store_add_on: Optional[str] = None) -> QHBoxLayout:
+    def _button_row(
+        self, *, on_add, add_enabled: bool = True, store_add_on: Optional[str] = None
+    ) -> QHBoxLayout:
         row = QHBoxLayout()
         row.addStretch(1)
         cancel = QPushButton("Cancel")
@@ -578,8 +597,7 @@ class AddShowDialog(QDialog):
             QMessageBox.warning(self, "Missing", "Slug required.")
             return
         if any(s.slug == slug for s in self.updated_watchlist.shows):
-            QMessageBox.warning(self, "Exists",
-                                f"{slug!r} is already in the watchlist.")
+            QMessageBox.warning(self, "Exists", f"{slug!r} is already in the watchlist.")
             return
         rss = (show.get("rss") or "").strip()
         if not rss:
@@ -599,8 +617,12 @@ class AddShowDialog(QDialog):
         manifest = show.get("manifest") or []
         for ep in manifest:
             self.ctx.state.upsert_episode(
-                show_slug=slug, guid=ep["guid"], title=ep["title"],
-                pub_date=ep["pubDate"], mp3_url=ep["mp3_url"])
+                show_slug=slug,
+                guid=ep["guid"],
+                title=ep["title"],
+                pub_date=ep["pubDate"],
+                mp3_url=ep["mp3_url"],
+            )
 
         mode = show.get("backlog") or "Last 5"
         if mode == "All":
@@ -608,11 +630,14 @@ class AddShowDialog(QDialog):
         elif mode.startswith("Last "):
             n = int(mode.split()[1])
             with self.ctx.state._conn() as c:
-                c.execute("""
+                c.execute(
+                    """
                     UPDATE episodes SET status='done'
                     WHERE show_slug=? AND guid NOT IN (
                         SELECT guid FROM episodes WHERE show_slug=?
                         ORDER BY pub_date DESC LIMIT ?
-                    )""", (slug, slug, n))
+                    )""",
+                    (slug, slug, n),
+                )
 
         self.accept()

@@ -3,7 +3,6 @@ from pathlib import Path
 
 from core.version import VERSION
 
-
 REPO = Path(__file__).resolve().parent.parent
 
 
@@ -17,15 +16,15 @@ def test_setup_bundle_versions_match():
     core/version.py the single source of truth across release bumps."""
     for name in ("setup.py", "setup-full.py", "setup-full-universal.py"):
         text = (REPO / name).read_text(encoding="utf-8")
-        assert "from core.version import VERSION" in text, (
-            f"{name} must import VERSION from core.version"
-        )
-        assert '"CFBundleVersion": VERSION' in text, (
-            f"{name} must use the VERSION identifier for CFBundleVersion"
-        )
-        assert '"CFBundleShortVersionString": VERSION' in text, (
-            f"{name} must use the VERSION identifier for CFBundleShortVersionString"
-        )
+        assert (
+            "from core.version import VERSION" in text
+        ), f"{name} must import VERSION from core.version"
+        assert (
+            '"CFBundleVersion": VERSION' in text
+        ), f"{name} must use the VERSION identifier for CFBundleVersion"
+        assert (
+            '"CFBundleShortVersionString": VERSION' in text
+        ), f"{name} must use the VERSION identifier for CFBundleShortVersionString"
 
 
 def test_pyproject_version_matches():

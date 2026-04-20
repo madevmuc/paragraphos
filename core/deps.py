@@ -25,10 +25,14 @@ class DepStatus:
 
     def missing(self) -> list[str]:
         out = []
-        if not self.brew: out.append("Homebrew")
-        if not self.whisper_cli: out.append("whisper-cpp")
-        if not self.ffmpeg: out.append("ffmpeg")
-        if not self.model: out.append(f"{DEFAULT_MODEL}")
+        if not self.brew:
+            out.append("Homebrew")
+        if not self.whisper_cli:
+            out.append("whisper-cpp")
+        if not self.ffmpeg:
+            out.append("ffmpeg")
+        if not self.model:
+            out.append(f"{DEFAULT_MODEL}")
         return out
 
 
@@ -53,15 +57,15 @@ def check() -> DepStatus:
 
 def install_brew_command() -> str:
     """The one-liner from brew.sh — user runs in Terminal, must sudo once."""
-    return ('/bin/bash -c "$(curl -fsSL '
-            'https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"')
+    return (
+        '/bin/bash -c "$(curl -fsSL '
+        'https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
+    )
 
 
 def install_whisper_cpp() -> subprocess.CompletedProcess:
-    return subprocess.run(["brew", "install", "whisper-cpp"],
-                          capture_output=True, text=True)
+    return subprocess.run(["brew", "install", "whisper-cpp"], capture_output=True, text=True)
 
 
 def install_ffmpeg() -> subprocess.CompletedProcess:
-    return subprocess.run(["brew", "install", "ffmpeg"],
-                          capture_output=True, text=True)
+    return subprocess.run(["brew", "install", "ffmpeg"], capture_output=True, text=True)

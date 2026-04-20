@@ -6,8 +6,15 @@ from datetime import datetime, timedelta
 from typing import Callable
 
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtWidgets import (QFrame, QGridLayout, QHBoxLayout, QLabel,
-                             QPushButton, QVBoxLayout, QWidget)
+from PyQt6.QtWidgets import (
+    QFrame,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from ui.widgets import Pill, ProgressRing
 
@@ -36,8 +43,7 @@ def human_finish_framing(now: datetime, finish: datetime) -> str:
 class QueueHero(QWidget):
     """Composite card: ProgressRing on the left, stats grid on the right."""
 
-    def __init__(self, ctx, on_pause: Callable[[], None],
-                 on_stop: Callable[[], None], parent=None):
+    def __init__(self, ctx, on_pause: Callable[[], None], on_stop: Callable[[], None], parent=None):
         super().__init__(parent)
         self.ctx = ctx
         self._on_pause = on_pause
@@ -47,10 +53,13 @@ class QueueHero(QWidget):
         outer.setObjectName("QueueHeroCard")
         outer.setStyleSheet(
             "QFrame#QueueHeroCard { border: 1.5px solid palette(mid); "
-            "border-radius: 10px; padding: 14px; }")
-        wrap = QVBoxLayout(self); wrap.setContentsMargins(0, 0, 0, 0)
+            "border-radius: 10px; padding: 14px; }"
+        )
+        wrap = QVBoxLayout(self)
+        wrap.setContentsMargins(0, 0, 0, 0)
         wrap.addWidget(outer)
-        grid = QGridLayout(outer); grid.setHorizontalSpacing(18)
+        grid = QGridLayout(outer)
+        grid.setHorizontalSpacing(18)
 
         self.ring = ProgressRing(size=110)
         grid.addWidget(self.ring, 0, 0, 2, 1, Qt.AlignmentFlag.AlignCenter)
@@ -74,8 +83,12 @@ class QueueHero(QWidget):
         stats = QGridLayout()
         stats.setHorizontalSpacing(14)
         self.stat_widgets = {}
-        labels_map = {"started": "STARTED", "elapsed": "ELAPSED",
-                      "per_ep": "PER EP.", "finish": "FINISH \u2248"}
+        labels_map = {
+            "started": "STARTED",
+            "elapsed": "ELAPSED",
+            "per_ep": "PER EP.",
+            "finish": "FINISH \u2248",
+        }
         for col, key in enumerate(("started", "elapsed", "per_ep", "finish")):
             mini = QLabel(labels_map[key])
             mini.setProperty("class", "mini-label")
@@ -118,8 +131,7 @@ class QueueHero(QWidget):
             self.stat_widgets[key][0].setText(value)
             self.stat_widgets[key][1].setText(sub)
 
-        set_stat("started", started.strftime("%H:%M"),
-                 started.strftime("%a \u00b7 %b %d, %Y"))
+        set_stat("started", started.strftime("%H:%M"), started.strftime("%a \u00b7 %b %d, %Y"))
         set_stat("elapsed", _fmt(elapsed))
         if avg:
             suffix = "" if q.avg_sec_per_episode else "(est.)"
@@ -133,7 +145,9 @@ class QueueHero(QWidget):
             show = q.last_episode_show or ""
             title = q.last_episode_title or ""
             if show or title:
-                self.ep_title.setText(f"{show} \u2014 {title}" if show and title else (show or title))
+                self.ep_title.setText(
+                    f"{show} \u2014 {title}" if show and title else (show or title)
+                )
             else:
                 self.ep_title.setText("")
         else:

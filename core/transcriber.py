@@ -53,19 +53,26 @@ def _banner(pub_date_str: str) -> str:
     age_days = (date.today() - d).days
     banner = f"> [!info] Episode vom {d.isoformat()} (vor {age_days} Tagen)\n"
     if age_days > 365 * STALE_YEARS:
-        banner += (f"> [!warning] ⚠ Stale: Folge ist älter als "
-                   f"{STALE_YEARS} Jahr(e) — zeitkritische Aussagen prüfen.\n")
+        banner += (
+            f"> [!warning] ⚠ Stale: Folge ist älter als "
+            f"{STALE_YEARS} Jahr(e) — zeitkritische Aussagen prüfen.\n"
+        )
     return banner + "\n"
 
 
-def transcribe_episode(*, mp3_path: Path, output_dir: Path, slug: str,
-                       metadata: Mapping[str, str],
-                       whisper_prompt: str = "",
-                       language: str = LANGUAGE,
-                       whisper_bin: str = WHISPER_BIN,
-                       model_path: Path = MODEL_PATH,
-                       fast_mode: bool = False,
-                       processors: int = 1) -> TranscribeResult:
+def transcribe_episode(
+    *,
+    mp3_path: Path,
+    output_dir: Path,
+    slug: str,
+    metadata: Mapping[str, str],
+    whisper_prompt: str = "",
+    language: str = LANGUAGE,
+    whisper_bin: str = WHISPER_BIN,
+    model_path: Path = MODEL_PATH,
+    fast_mode: bool = False,
+    processors: int = 1,
+) -> TranscribeResult:
     """Run whisper-cli once and produce <output_dir>/<slug>.md and .srt.
 
     `fast_mode` toggles the 2-3× speedup decoder flags (beam=1, best-of=1,
@@ -77,12 +84,18 @@ def transcribe_episode(*, mp3_path: Path, output_dir: Path, slug: str,
         stem = Path(td) / slug
         cmd = [
             whisper_bin,
-            "-m", str(model_path),
-            "-f", str(mp3_path),
-            "-l", language,
-            "-t", THREADS,
-            "-of", str(stem),
-            "-otxt", "-osrt",
+            "-m",
+            str(model_path),
+            "-f",
+            str(mp3_path),
+            "-l",
+            language,
+            "-t",
+            THREADS,
+            "-of",
+            str(stem),
+            "-otxt",
+            "-osrt",
         ]
         if fast_mode:
             cmd += ["-bs", "1", "-bo", "1", "-ac", "0", "--no-fallback"]
@@ -92,7 +105,9 @@ def transcribe_episode(*, mp3_path: Path, output_dir: Path, slug: str,
             cmd += ["--prompt", whisper_prompt]
         try:
             result = subprocess.run(
-                cmd, capture_output=True, text=True,
+                cmd,
+                capture_output=True,
+                text=True,
                 timeout=WHISPER_TIMEOUT_SEC,
             )
         except subprocess.TimeoutExpired as te:
@@ -102,14 +117,16 @@ def transcribe_episode(*, mp3_path: Path, output_dir: Path, slug: str,
             raise TranscriptionError(
                 f"whisper-cli timed out after {WHISPER_TIMEOUT_SEC}s  "
                 f"mp3={mp3_path.name}  slug={slug!r}\n"
-                f"  partial stderr: {(te.stderr or b'')[-300:]!r}") from te
+                f"  partial stderr: {(te.stderr or b'')[-300:]!r}"
+            ) from te
         if result.returncode != 0:
             raise TranscriptionError(
                 f"whisper-cli exit {result.returncode}  "
                 f"mp3={mp3_path.name}  model={model_path.name}  "
                 f"slug={slug!r}\n"
                 f"  stderr (last 400): {(result.stderr or '')[-400:]!r}\n"
-                f"  stdout (last 200): {(result.stdout or '')[-200:]!r}")
+                f"  stdout (last 200): {(result.stdout or '')[-200:]!r}"
+            )
 
         # whisper-cli APPENDS '.txt'/'.srt' to the -of prefix — it does NOT
         # replace a suffix. Path.with_suffix() would truncate at the last
@@ -121,8 +138,9 @@ def transcribe_episode(*, mp3_path: Path, output_dir: Path, slug: str,
             # Give future debugging a head start: list everything whisper
             # DID write so the user (or another agent) can diff expected
             # vs actual path immediately.
-            actually_written = sorted(
-                p.name for p in stem.parent.iterdir()) if stem.parent.exists() else []
+            actually_written = (
+                sorted(p.name for p in stem.parent.iterdir()) if stem.parent.exists() else []
+            )
             raise TranscriptionError(
                 f"whisper-cli exited 0 but expected outputs missing.\n"
                 f"  expected:\n"
@@ -131,7 +149,8 @@ def transcribe_episode(*, mp3_path: Path, output_dir: Path, slug: str,
                 f"  temp dir contents: {actually_written}\n"
                 f"  stdout (last 300): {(result.stdout or '')[-300:]!r}\n"
                 f"  stderr (last 300): {(result.stderr or '')[-300:]!r}\n"
-                f"  mp3={mp3_path.name}  slug={slug!r}")
+                f"  mp3={mp3_path.name}  slug={slug!r}"
+            )
 
         text = txt_path.read_text(encoding="utf-8").strip()
         words = len(text.split())
@@ -140,7 +159,8 @@ def transcribe_episode(*, mp3_path: Path, output_dir: Path, slug: str,
                 f"suspected whisper hallucination / silence: only {words} "
                 f"words in transcript (guard threshold = {MIN_WPM_GUARD}).\n"
                 f"  mp3={mp3_path.name}  slug={slug!r}\n"
-                f"  first 200 chars: {text[:200]!r}")
+                f"  first 200 chars: {text[:200]!r}"
+            )
 
         md_path = output_dir / f"{slug}.md"
         srt_dest = output_dir / f"{slug}.srt"

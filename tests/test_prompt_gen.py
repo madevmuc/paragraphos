@@ -3,10 +3,14 @@ from core.prompt_gen import suggest_whisper_prompt
 
 def test_extracts_author_and_capitalized_nouns():
     episodes = [
-        {"title": "KfW-Förderung und Grunderwerbsteuer erklärt",
-         "description": "Tobias Schulte spricht mit Marco Lücke über Kapitalanlage und Mietspiegel."},
-        {"title": "Grunderwerbsteuer senken — aber wie?",
-         "description": "Marco Lücke erklärt die Bruttomietrendite und den Kaufpreisfaktor."},
+        {
+            "title": "KfW-Förderung und Grunderwerbsteuer erklärt",
+            "description": "Tobias Schulte spricht mit Marco Lücke über Kapitalanlage und Mietspiegel.",
+        },
+        {
+            "title": "Grunderwerbsteuer senken — aber wie?",
+            "description": "Marco Lücke erklärt die Bruttomietrendite und den Kaufpreisfaktor.",
+        },
     ]
     prompt = suggest_whisper_prompt(
         title="Immocation Podcast",

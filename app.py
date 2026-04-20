@@ -17,10 +17,18 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from PyQt6.QtCore import QEvent, QObject, QTimer, pyqtSignal
-from PyQt6.QtGui import QFileOpenEvent, QIcon, QPixmap, QPainter, QColor, QFont
-from PyQt6.QtWidgets import (QAbstractSpinBox, QApplication, QComboBox,
-                             QFileDialog, QLineEdit, QMessageBox,
-                             QPlainTextEdit, QSystemTrayIcon, QTextEdit)
+from PyQt6.QtGui import QColor, QFileOpenEvent, QFont, QIcon, QPainter, QPixmap
+from PyQt6.QtWidgets import (
+    QAbstractSpinBox,
+    QApplication,
+    QComboBox,
+    QFileDialog,
+    QLineEdit,
+    QMessageBox,
+    QPlainTextEdit,
+    QSystemTrayIcon,
+    QTextEdit,
+)
 
 from core.logger import setup_logging  # noqa: E402
 from core.paths import migrate_from_legacy, user_data_dir  # noqa: E402
@@ -31,14 +39,15 @@ from ui.first_run_wizard import show_wizard_if_needed  # noqa: E402
 from ui.main_window import MainWindow  # noqa: E402
 from ui.worker_thread import CheckAllThread  # noqa: E402
 
-
 # One-time migration: if the repo source tree has legacy data, copy it to the
 # user's Application Support dir. After that, user_data_dir() is canonical.
 _LEGACY = Path(__file__).resolve().parent / "data"
 _migrated = migrate_from_legacy(_LEGACY)
 if _migrated:
-    print(f"migrated user data to ~/Library/Application Support/Paragraphos/: "
-          f"{_migrated}", flush=True)
+    print(
+        f"migrated user data to ~/Library/Application Support/Paragraphos/: " f"{_migrated}",
+        flush=True,
+    )
 DATA_DIR = user_data_dir()
 
 
@@ -77,6 +86,7 @@ class ParagraphosApp(QObject):
         # Non-blocking update check against GitHub releases. Runs in a
         # daemon thread; surfaces a one-shot tray notification if newer.
         from core.updater import check_for_update
+
         check_for_update(
             local_version=_LOCAL_VERSION,
             on_update_available=lambda tag, url: self.tray.showMessage(
@@ -89,6 +99,7 @@ class ParagraphosApp(QObject):
         if not QSystemTrayIcon.isSystemTrayAvailable():
             print("ERROR: system tray not available on this system.", flush=True)
         from ui.widgets import IconRenderer
+
         self._icon_renderer = IconRenderer()
         self.tray = QSystemTrayIcon(self._icon_renderer.render())
         self.tray.setToolTip("Paragraphos")
@@ -96,9 +107,11 @@ class ParagraphosApp(QObject):
 
         self._rebuild_tray_menu(running=False)
         self.tray.show()
-        print(f"paragraphos ready — tray visible={self.tray.isVisible()}, "
-              f"system-tray-available={QSystemTrayIcon.isSystemTrayAvailable()}",
-              flush=True)
+        print(
+            f"paragraphos ready — tray visible={self.tray.isVisible()}, "
+            f"system-tray-available={QSystemTrayIcon.isSystemTrayAvailable()}",
+            flush=True,
+        )
 
         # Open the window FIRST, then catch-up, so the Stop button is wired
         # via ShowsTab.start_check() instead of running headless.
@@ -109,8 +122,10 @@ class ParagraphosApp(QObject):
         # Scheduler — runs in the APScheduler BackgroundScheduler (thread).
         # The cron job calls _run_check; Qt signals marshal back to the GUI thread.
         from core.scheduler import build_scheduler
-        self._sched = build_scheduler(self.ctx.settings.daily_check_time,
-                                      self._run_check_on_gui_thread)
+
+        self._sched = build_scheduler(
+            self.ctx.settings.daily_check_time, self._run_check_on_gui_thread
+        )
         self._sched.start()
 
         if self.ctx.settings.catch_up_missed and should_catch_up(
@@ -120,16 +135,26 @@ class ParagraphosApp(QObject):
             # Fire AFTER the window opens (300ms) so ShowsTab owns the thread.
             QTimer.singleShot(2500, self._run_check)
 
-    def _rebuild_tray_menu(self, *, running: bool, done: int = 0,
-                           total: int = 0, current_title: str = "",
-                           eta_sec: int | None = None) -> None:
+    def _rebuild_tray_menu(
+        self,
+        *,
+        running: bool,
+        done: int = 0,
+        total: int = 0,
+        current_title: str = "",
+        eta_sec: int | None = None,
+    ) -> None:
         """Rebuild the tray context menu, swapping between idle and a
         rich status block while a queue run is active. Keeps a strong
         reference on `self` so the QMenu is not GC'd while shown."""
         from ui.menu_bar import build_tray_menu
+
         self._tray_menu = build_tray_menu(
-            running=running, done=done, total=total,
-            current_title=current_title, eta_sec=eta_sec,
+            running=running,
+            done=done,
+            total=total,
+            current_title=current_title,
+            eta_sec=eta_sec,
             on_open=self.open_window,
             on_check_now=self._run_check,
             on_import_opml=self._import_opml,
@@ -178,19 +203,26 @@ class ParagraphosApp(QObject):
         self._thread.episode_done.connect(self._on_episode_done)
         self._thread.finished_all.connect(self._on_check_done)
 
-    def _on_episode_done(self, slug: str, guid: str, action: str,
-                         done_idx: int, total: int,
-                         show_title: str, ep_title: str) -> None:
+    def _on_episode_done(
+        self,
+        slug: str,
+        guid: str,
+        action: str,
+        done_idx: int,
+        total: int,
+        show_title: str,
+        ep_title: str,
+    ) -> None:
         # Live tray icon — renders current fraction while a run is active.
-        self.tray.setIcon(self._icon_renderer.render(
-            done_idx, total, running=True))
+        self.tray.setIcon(self._icon_renderer.render(done_idx, total, running=True))
         # Rich status block in the tray context menu — rebuilt on every
         # episode_done tick so the fraction / ETA / Now line stay live.
         q = self.ctx.queue
-        eta = (int(q.effective_avg_sec * (total - done_idx))
-               if q.effective_avg_sec else None)
+        eta = int(q.effective_avg_sec * (total - done_idx)) if q.effective_avg_sec else None
         self._rebuild_tray_menu(
-            running=True, done=done_idx, total=total,
+            running=True,
+            done=done_idx,
+            total=total,
             current_title=f"{show_title} — {ep_title}",
             eta_sec=eta,
         )
@@ -232,6 +264,7 @@ class ParagraphosApp(QObject):
         """
         if self._is_queue_busy():
             from PyQt6.QtWidgets import QMessageBox
+
             q = self.ctx.queue
             box = QMessageBox(
                 QMessageBox.Icon.Warning,
@@ -261,8 +294,7 @@ class ParagraphosApp(QObject):
         # when q.running is False (e.g. app somehow lost thread state).
         with self.ctx.state._conn() as c:
             row = c.execute(
-                "SELECT COUNT(*) FROM episodes "
-                "WHERE status IN ('downloading','transcribing')"
+                "SELECT COUNT(*) FROM episodes " "WHERE status IN ('downloading','transcribing')"
             ).fetchone()
         return (row[0] or 0) > 0
 
@@ -280,20 +312,22 @@ class ParagraphosApp(QObject):
             failed = int(t.get("failed", 0))
             if done + failed > 0:
                 parts = []
-                if done: parts.append(f"{done} new")
-                if failed: parts.append(f"{failed} failed")
-                if skipped: parts.append(f"{skipped} skipped")
+                if done:
+                    parts.append(f"{done} new")
+                if failed:
+                    parts.append(f"{failed} failed")
+                if skipped:
+                    parts.append(f"{skipped} skipped")
                 self.tray.showMessage(
                     "Paragraphos — run complete",
-                    " · ".join(parts) + "\n"
-                    + f"First: {t.get('_first_ep_title') or '—'}")
+                    " · ".join(parts) + "\n" + f"First: {t.get('_first_ep_title') or '—'}",
+                )
         self._run_tally = {}
         # Revert tray context menu to the idle shape.
         self._rebuild_tray_menu(running=False)
         # Briefly show ✓ on the tray, then revert to idle 'P'.
         self.tray.setIcon(self._icon_renderer.render(override_text="✓"))
-        QTimer.singleShot(5000, lambda: self.tray.setIcon(
-            self._icon_renderer.render()))
+        QTimer.singleShot(5000, lambda: self.tray.setIcon(self._icon_renderer.render()))
         if self._window:
             self._window.shows_tab.refresh()
 
@@ -310,10 +344,12 @@ class ParagraphosApp(QObject):
         from core.models import Show
         from core.opml import parse_opml
         from core.rss import build_manifest, feed_metadata
+
         try:
             entries = parse_opml(path)
         except Exception as e:
-            self.tray.showMessage("OPML import failed", str(e)); return
+            self.tray.showMessage("OPML import failed", str(e))
+            return
         existing = {s.slug for s in self.ctx.watchlist.shows}
         added = 0
         for entry in entries:
@@ -325,19 +361,25 @@ class ParagraphosApp(QObject):
             slug = (meta["title"] or entry["title"]).lower().replace(" ", "-")
             if slug in existing:
                 continue
-            self.ctx.watchlist.shows.append(Show(
-                slug=slug, title=meta["title"] or entry["title"],
-                rss=entry["xmlUrl"], whisper_prompt="",
-            ))
+            self.ctx.watchlist.shows.append(
+                Show(
+                    slug=slug,
+                    title=meta["title"] or entry["title"],
+                    rss=entry["xmlUrl"],
+                    whisper_prompt="",
+                )
+            )
             for ep in manifest:
                 self.ctx.state.upsert_episode(
-                    show_slug=slug, guid=ep["guid"], title=ep["title"],
-                    pub_date=ep["pubDate"], mp3_url=ep["mp3_url"])
+                    show_slug=slug,
+                    guid=ep["guid"],
+                    title=ep["title"],
+                    pub_date=ep["pubDate"],
+                    mp3_url=ep["mp3_url"],
+                )
             added += 1
         self.ctx.watchlist.save(self.ctx.data_dir / "watchlist.yaml")
-        self.tray.showMessage(
-            "OPML imported",
-            f"Added {added} show(s) from {path.name}")
+        self.tray.showMessage("OPML imported", f"Added {added} show(s) from {path.name}")
         if self._window:
             self._window.shows_tab.refresh()
 
@@ -347,13 +389,15 @@ class ParagraphosApp(QObject):
         from core.rss import build_manifest, feed_metadata
 
         path, _filter = QFileDialog.getOpenFileName(
-            None, "Select OPML file", str(Path.home()), "OPML (*.opml *.xml)")
+            None, "Select OPML file", str(Path.home()), "OPML (*.opml *.xml)"
+        )
         if not path:
             return
         try:
             entries = parse_opml(Path(path))
         except Exception as e:
-            QMessageBox.warning(None, "OPML error", str(e)); return
+            QMessageBox.warning(None, "OPML error", str(e))
+            return
 
         existing = {s.slug for s in self.ctx.watchlist.shows}
         added, errors = 0, []
@@ -362,17 +406,27 @@ class ParagraphosApp(QObject):
                 meta = feed_metadata(entry["xmlUrl"])
                 manifest = build_manifest(entry["xmlUrl"], timeout=60)
             except Exception as e:
-                errors.append(f"{entry['title']}: {e}"); continue
+                errors.append(f"{entry['title']}: {e}")
+                continue
             slug = (meta["title"] or entry["title"]).lower().replace(" ", "-")
-            if slug in existing: continue
-            self.ctx.watchlist.shows.append(Show(
-                slug=slug, title=meta["title"] or entry["title"],
-                rss=entry["xmlUrl"], whisper_prompt="",
-            ))
+            if slug in existing:
+                continue
+            self.ctx.watchlist.shows.append(
+                Show(
+                    slug=slug,
+                    title=meta["title"] or entry["title"],
+                    rss=entry["xmlUrl"],
+                    whisper_prompt="",
+                )
+            )
             for ep in manifest:
                 self.ctx.state.upsert_episode(
-                    show_slug=slug, guid=ep["guid"], title=ep["title"],
-                    pub_date=ep["pubDate"], mp3_url=ep["mp3_url"])
+                    show_slug=slug,
+                    guid=ep["guid"],
+                    title=ep["title"],
+                    pub_date=ep["pubDate"],
+                    mp3_url=ep["mp3_url"],
+                )
             added += 1
         self.ctx.watchlist.save(self.ctx.data_dir / "watchlist.yaml")
         summary = f"Imported {added} new show(s)."
@@ -445,6 +499,7 @@ def main() -> int:
     qapp.setQuitOnLastWindowClosed(False)
     # Install the Phase 6 design tokens + QSS globally.
     from ui.widgets import apply_app_qss
+
     apply_app_qss(qapp)
     _focus_filter = _FocusClearFilter()
     qapp.installEventFilter(_focus_filter)
@@ -456,6 +511,7 @@ def main() -> int:
     qapp.file_opened.connect(app.on_file_dropped)
     qapp.quit_requested.connect(app.quit_with_confirm)
     from core.http import close_client
+
     qapp.aboutToQuit.connect(close_client)
     ParagraphosApp.instance = app  # keep reference
     return qapp.exec()

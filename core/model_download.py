@@ -29,6 +29,7 @@ def is_installed(name: str) -> bool:
 
 def download_model(name: str, on_progress: Callable[[int, int], None] | None = None) -> Path:
     from core.security import safe_url, verify_model
+
     if name not in AVAILABLE:
         raise ValueError(f"unknown model {name!r}")
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
@@ -51,8 +52,10 @@ def download_model(name: str, on_progress: Callable[[int, int], None] | None = N
     try:
         verify_model(tmp, name)
     except ValueError:
-        try: tmp.unlink()
-        except OSError: pass
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
         raise
     tmp.replace(dst)
     return dst
@@ -64,10 +67,12 @@ def download_model_async(name: str, on_done: Callable[[bool, str], None]) -> Non
     UI code should marshal on_done back to the GUI thread via QTimer.singleShot
     or a Qt signal if it touches widgets.
     """
+
     def run():
         try:
             download_model(name)
             on_done(True, "")
         except Exception as e:
             on_done(False, str(e))
+
     threading.Thread(target=run, daemon=True).start()

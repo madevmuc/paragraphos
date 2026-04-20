@@ -23,10 +23,15 @@ def test_is_newer_tolerates_extra_metadata():
 
 def test_check_for_update_uses_configured_repo(monkeypatch):
     from core import updater
+
     calls = []
+
     class FakeResp:
         status_code = 200
-        def json(self): return {"tag_name": "v1.1.0", "html_url": "x"}
+
+        def json(self):
+            return {"tag_name": "v1.1.0", "html_url": "x"}
+
     def fake_get(url, **kw):
         calls.append(url)
         return FakeResp()
@@ -38,6 +43,7 @@ def test_check_for_update_uses_configured_repo(monkeypatch):
     monkeypatch.setattr(updater, "get_client", lambda: FakeClient())
 
     import threading
+
     notified = threading.Event()
     updater.check_for_update(
         local_version="1.0.0",

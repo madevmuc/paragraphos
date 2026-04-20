@@ -14,24 +14,20 @@ from __future__ import annotations
 TOKENS = {
     # Spacing scale — the only allowed values
     "space": {"xs": 4, "sm": 6, "md": 8, "lg": 10, "xl": 12, "xxl": 14, "huge": 18},
-
     # Radii
-    "radius_sm": 5,   # pills, inputs
-    "radius_md": 9,   # cards, dialogs
-
+    "radius_sm": 5,  # pills, inputs
+    "radius_md": 9,  # cards, dialogs
     # Font sizes
-    "font_tiny": 10,    # uppercase mini-labels
-    "font_small": 11,   # muted hints
-    "font_body": 12,    # table cells, caption
-    "font_base": 13,    # standard body
-    "font_heading": 14, # section headers, dialog titles
-
+    "font_tiny": 10,  # uppercase mini-labels
+    "font_small": 11,  # muted hints
+    "font_body": 12,  # table cells, caption
+    "font_base": 13,  # standard body
+    "font_heading": 14,  # section headers, dialog titles
     # Colors — only place hard-coded hex lives in the codebase
     "accent": "#b47a3a",
     "accent_tint": "rgba(180, 122, 58, 0.12)",
     "danger": "#b04040",
     "ok": "#4a7a44",
-
     # Mono font family for numbers, slugs, timestamps, paths
     "mono_family": "Menlo, Monaco, 'SF Mono', monospace",
 }

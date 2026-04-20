@@ -4,9 +4,10 @@ from core.scheduler import build_scheduler, should_catch_up
 
 
 def test_catch_up_needed_if_no_last_check():
-    assert should_catch_up(
-        None, "09:00", now=datetime(2026, 4, 20, 12, 0, tzinfo=timezone.utc)
-    ) is True
+    assert (
+        should_catch_up(None, "09:00", now=datetime(2026, 4, 20, 12, 0, tzinfo=timezone.utc))
+        is True
+    )
 
 
 def test_no_catch_up_if_checked_today_after_slot():

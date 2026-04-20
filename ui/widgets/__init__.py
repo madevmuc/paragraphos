@@ -22,12 +22,18 @@ def __getattr__(name):
     # creating an import cycle with queue_hero, which imports from ui.widgets.
     if name == "QueueHero":
         from ui.widgets.queue_hero import QueueHero
+
         return QueueHero
     raise AttributeError(name)
 
 
 __all__ = [
-    "TOKENS", "apply_app_qss",
-    "Pill", "Sidebar", "FilterPopover", "ProgressRing", "IconRenderer",
+    "TOKENS",
+    "apply_app_qss",
+    "Pill",
+    "Sidebar",
+    "FilterPopover",
+    "ProgressRing",
+    "IconRenderer",
     "QueueHero",
 ]

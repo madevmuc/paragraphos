@@ -17,7 +17,6 @@ import hashlib
 import ipaddress
 import socket
 from pathlib import Path
-from typing import Iterable, Optional
 from urllib.parse import urlparse
 
 # --------------------------------------------------------------------------- #
@@ -51,8 +50,14 @@ def _is_private_ip(host: str) -> bool:
             ip = ipaddress.ip_address(addr)
         except ValueError:
             continue
-        if (ip.is_loopback or ip.is_private or ip.is_link_local
-                or ip.is_multicast or ip.is_reserved or ip.is_unspecified):
+        if (
+            ip.is_loopback
+            or ip.is_private
+            or ip.is_link_local
+            or ip.is_multicast
+            or ip.is_reserved
+            or ip.is_unspecified
+        ):
             return True
     return False
 
@@ -71,13 +76,11 @@ def safe_url(url: str, *, allow_private: bool = False) -> str:
         raise UnsafeURLError("empty URL")
     parsed = urlparse(url)
     if parsed.scheme.lower() not in ALLOWED_SCHEMES:
-        raise UnsafeURLError(
-            f"refused scheme {parsed.scheme!r} — only http/https allowed")
+        raise UnsafeURLError(f"refused scheme {parsed.scheme!r} — only http/https allowed")
     if not parsed.hostname:
         raise UnsafeURLError("URL has no host")
     if not allow_private and _is_private_ip(parsed.hostname):
-        raise UnsafeURLError(
-            f"refused private-network host {parsed.hostname!r} (SSRF guard)")
+        raise UnsafeURLError(f"refused private-network host {parsed.hostname!r} (SSRF guard)")
     return url
 
 
@@ -89,6 +92,7 @@ def is_allowed_audio_content_type(ct: str) -> bool:
 # --------------------------------------------------------------------------- #
 # Path traversal
 # --------------------------------------------------------------------------- #
+
 
 class PathEscapeError(ValueError):
     """Raised when a target path would escape an allowed root directory."""
@@ -108,8 +112,7 @@ def safe_path_within(root: Path, target: Path) -> Path:
     try:
         target.relative_to(root)
     except ValueError as e:
-        raise PathEscapeError(
-            f"{target} is outside {root}") from e
+        raise PathEscapeError(f"{target} is outside {root}") from e
     return target
 
 
@@ -145,11 +148,13 @@ def _model_hashes_path() -> Path:
     """Where the TOFU pin file lives. Lazy import of paths.user_data_dir to
     avoid importing the full UI stack just to compute a hash location."""
     from core.paths import user_data_dir
+
     return user_data_dir() / "model_hashes.yaml"
 
 
 def _load_pinned_hashes() -> dict[str, str]:
     import yaml
+
     p = _model_hashes_path()
     if not p.exists():
         return {}
@@ -162,6 +167,7 @@ def _load_pinned_hashes() -> dict[str, str]:
 
 def _save_pinned_hashes(pins: dict[str, str]) -> None:
     import yaml
+
     p = _model_hashes_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(yaml.safe_dump(pins, sort_keys=True), encoding="utf-8")
@@ -189,7 +195,8 @@ def verify_model(path: Path, model_name: str) -> None:
             f"  actual (on disk):  {actual}\n"
             f"If you trust the new file, delete the entry from\n"
             f"  {_model_hashes_path()}\n"
-            f"and retry the download.")
+            f"and retry the download."
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -197,9 +204,9 @@ def verify_model(path: Path, model_name: str) -> None:
 # --------------------------------------------------------------------------- #
 
 # Be generous — podcasts can be 300 MB+, but cap the worst case.
-MAX_MP3_BYTES = 2 * 1024 * 1024 * 1024   # 2 GB
-MAX_FEED_BYTES = 50 * 1024 * 1024        # 50 MB
-MAX_HTML_BYTES = 10 * 1024 * 1024        # 10 MB
+MAX_MP3_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB
+MAX_FEED_BYTES = 50 * 1024 * 1024  # 50 MB
+MAX_HTML_BYTES = 10 * 1024 * 1024  # 10 MB
 
 
 class DownloadTooLargeError(ValueError):
