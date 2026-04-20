@@ -1,5 +1,58 @@
 # Paragraphos Changelog
 
+## v0.7.0 — 2026-04-20 (Phase 6 design foundation)
+
+- `ui/widgets/`: `_tokens.py`, `pill.py`, `sidebar.py`,
+  `filter_popover.py`, `progress_ring.py`, `tray_icon_renderer.py`.
+  Single stylesheet installed via `apply_app_qss()`.
+- Tray icon now renders a live `done/total` fraction during a run, ✓
+  for 5 s on completion, then idle `P`.
+- Remaining screens (sidebar-nav swap, Shows filter toolbar, Queue
+  hero, Failed restyle, Settings hints, First-run restyle, Add dialog
+  3-mode, Show Details restyle, menu-bar rich block) deferred to
+  dedicated follow-up commits — the widget foundation is the
+  prerequisite that lets those ship independently.
+
+## v0.6.2 — 2026-04-20 (Phase 5 dev experience)
+
+- `pyproject.toml` (ruff + pytest markers), `.pre-commit-config.yaml`.
+- `.github/workflows/test.yml` + `build-release.yml`.
+- `tests/integration/` opt-in end-to-end regression harness.
+- `core/README.md`, `ui/README.md`, `docs/ARCHITECTURE.md`.
+
+## v0.6.1 — 2026-04-20 (Phase 4 distribution)
+
+- `core/updater.py` — non-blocking GitHub-releases version check.
+- `scripts/build-dmg.sh` — hdiutil wrapper for a DMG.
+- `setup-full-universal.py` — arch=universal2 config for Intel Macs.
+
+## v0.6.0 — 2026-04-20 (Phase 3 UX polish)
+
+- Shows tab: search filter, sortable columns, ExtendedSelection.
+- Daily-summary notification mode: one tray message per run instead of
+  per-episode. Spot-check notification still fires once per show.
+- Notification frequency picker in Settings (per_episode / daily_summary
+  / off).
+
+## v0.5.2 — 2026-04-20 (Phase 2 features)
+
+- Per-show pause (right-click → Pause '<slug>'). Separate from the
+  global queue pause.
+- Failed tab: "Play MP3" button opens partial audio in the default
+  macOS audio app for spot-checking corrupt episodes.
+- `core/http.py` module-level `httpx.Client` scaffold for connection
+  pooling (to be wired into rss/downloader/scrape).
+
+## v0.5.1 — 2026-04-20 (Phase 1.5 performance)
+
+- `whisper_fast_mode` toggle: adds `-bs 1 -bo 1 -ac 0 --no-fallback`
+  for ~2-3× speedup on turbo.
+- `whisper_multiproc` (1-8): enables `whisper-cli -p N` audio-split
+  parallelism for long episodes.
+- SQLite PRAGMA `journal_mode=WAL` + `synchronous=NORMAL`.
+- `LibraryIndex` mtime cache: sub-second startup on 1000+ transcript
+  vaults.
+
 ## v0.5.0 — 2026-04-20 (Phase 1 reliability)
 
 Five reliability improvements from the ROADMAP:
