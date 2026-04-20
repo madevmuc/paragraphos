@@ -59,8 +59,25 @@ def _guard_disk(path: Path) -> None:
         raise DiskSpaceError(f"only {free // 1024**2} MB free at {path}")
 
 
-def process_episode(guid: str, ctx: PipelineContext,
-                    *, episode_number: str = "0000") -> PipelineResult:
+@dataclass(frozen=True)
+class DownloadOutcome:
+    """Result of the download phase.
+
+    If ``result`` is set, the episode is done (dedup skip) or failed before
+    transcription could start. Otherwise ``mp3_path`` / ``show_dir`` / ``slug``
+    carry the artefacts the transcribe phase needs.
+    """
+    guid: str
+    result: PipelineResult | None = None          # terminal (skipped/failed)
+    mp3_path: Path | None = None
+    show_dir: Path | None = None
+    slug: str | None = None
+    ep: dict | None = None
+
+
+def download_phase(guid: str, ctx: PipelineContext,
+                   *, episode_number: str = "0000") -> DownloadOutcome:
+    """Dedup + download. Terminal results are folded into DownloadOutcome.result."""
     ep = ctx.state.get_episode(guid)
     if ep is None:
         raise ValueError(f"unknown guid {guid}")
@@ -71,15 +88,17 @@ def process_episode(guid: str, ctx: PipelineContext,
     dup = ctx.library.check_dedup(guid=guid, filename_key=slug)
     if dup.matched:
         ctx.state.set_status(guid, EpisodeStatus.DONE)
-        return PipelineResult("skipped", guid, f"dedup/{dup.reason} → {dup.path}")
+        return DownloadOutcome(
+            guid=guid,
+            result=PipelineResult("skipped", guid,
+                                  f"dedup/{dup.reason} → {dup.path}"),
+        )
 
     # 2) Download
     from core.security import safe_path_within
     show_dir = ctx.output_root / ep["show_slug"]
     audio_dir = show_dir / "audio"
     mp3_path = audio_dir / f"{slug}.mp3"
-    # Defence in depth: refuse any path that escapes output_root, even
-    # though sanitize_filename already neutralises '..'. Belt + braces.
     safe_path_within(ctx.output_root, mp3_path)
     safe_path_within(ctx.output_root, show_dir / f"{slug}.md")
     try:
@@ -87,8 +106,11 @@ def process_episode(guid: str, ctx: PipelineContext,
         ctx.state.set_status(guid, EpisodeStatus.DOWNLOADING)
         download_mp3(ep["mp3_url"], mp3_path)
     except DiskSpaceError as e:
-        ctx.state.set_status(guid, EpisodeStatus.PENDING)  # keep pending; surface disk issue
-        return PipelineResult("failed", guid, f"disk: {e}")
+        ctx.state.set_status(guid, EpisodeStatus.PENDING)
+        return DownloadOutcome(
+            guid=guid,
+            result=PipelineResult("failed", guid, f"disk: {e}"),
+        )
     except Exception as e:
         err = (f"download failed [{type(e).__name__}]: {e}\n"
                f"  show={ep['show_slug']}  guid={guid}\n"
@@ -97,10 +119,28 @@ def process_episode(guid: str, ctx: PipelineContext,
         logger.error("download failed: %s (guid=%s)", ep["show_slug"], guid,
                      exc_info=True)
         ctx.state.set_status(guid, EpisodeStatus.FAILED, error_text=err)
-        return PipelineResult("failed", guid, err)
+        return DownloadOutcome(
+            guid=guid, result=PipelineResult("failed", guid, err),
+        )
     ctx.state.set_status(guid, EpisodeStatus.DOWNLOADED)
+    return DownloadOutcome(
+        guid=guid, mp3_path=mp3_path, show_dir=show_dir, slug=slug, ep=ep,
+    )
 
-    # 3) Transcribe
+
+def transcribe_phase(outcome: DownloadOutcome,
+                     ctx: PipelineContext) -> PipelineResult:
+    """Transcribe an already-downloaded episode + run retention."""
+    assert outcome.result is None and outcome.ep is not None
+    assert outcome.mp3_path is not None and outcome.show_dir is not None
+    assert outcome.slug is not None
+
+    guid = outcome.guid
+    ep = outcome.ep
+    mp3_path = outcome.mp3_path
+    show_dir = outcome.show_dir
+    slug = outcome.slug
+
     ctx.state.set_status(guid, EpisodeStatus.TRANSCRIBING)
     from pathlib import Path as _P
     model_path = _P.home() / ".config/open-wispr/models" / f"ggml-{ctx.model_name}.bin"
@@ -120,13 +160,12 @@ def process_episode(guid: str, ctx: PipelineContext,
         ctx.state.set_status(guid, EpisodeStatus.FAILED, error_text=err)
         return PipelineResult("failed", guid, err)
     ctx.library.add(result.md_path)
-    # Record word count + duration-from-srt for global stats.
     from core.stats import _duration_from_srt
     ctx.state.record_completion(guid, result.word_count,
                                  _duration_from_srt(result.srt_path))
     ctx.state.set_status(guid, EpisodeStatus.DONE)
 
-    # 4) Retention
+    # Retention
     if ctx.delete_mp3_after:
         try:
             mp3_path.unlink()
@@ -134,3 +173,12 @@ def process_episode(guid: str, ctx: PipelineContext,
             pass
 
     return PipelineResult("transcribed", guid, str(result.md_path))
+
+
+def process_episode(guid: str, ctx: PipelineContext,
+                    *, episode_number: str = "0000") -> PipelineResult:
+    """Serial dedup → download → transcribe → retention (kept for CLI/tests)."""
+    outcome = download_phase(guid, ctx, episode_number=episode_number)
+    if outcome.result is not None:
+        return outcome.result
+    return transcribe_phase(outcome, ctx)
