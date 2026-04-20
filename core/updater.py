@@ -15,7 +15,7 @@ import logging
 import threading
 from typing import Callable, Optional
 
-import httpx
+from core.http import get_client
 
 logger = logging.getLogger(__name__)
 
@@ -57,9 +57,9 @@ def check_for_update(local_version: str,
     releases_api = f"https://api.github.com/repos/{repo_slug}/releases/latest"
     def run() -> None:
         try:
-            r = httpx.get(releases_api, timeout=timeout,
-                          headers={"Accept": "application/vnd.github+json",
-                                   "User-Agent": "paragraphos/updater"})
+            r = get_client().get(releases_api, timeout=timeout,
+                                 headers={"Accept": "application/vnd.github+json",
+                                          "User-Agent": "paragraphos/updater"})
             if r.status_code != 200:
                 return
             data = r.json()

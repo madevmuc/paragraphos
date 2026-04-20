@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional
 import feedparser
 import httpx
 
+from core.http import get_client
 from core.security import MAX_FEED_BYTES, safe_url
 
 USER_AGENT = (
@@ -42,8 +43,8 @@ class FeedHealth:
     @classmethod
     def check(cls, url: str, *, timeout: float = 10.0) -> "FeedHealth":
         try:
-            r = httpx.head(url, headers={"User-Agent": USER_AGENT},
-                           follow_redirects=True, timeout=timeout)
+            r = get_client().head(url, headers={"User-Agent": USER_AGENT},
+                                  follow_redirects=True, timeout=timeout)
         except httpx.HTTPError as e:
             return cls(False, f"network: {e}")
         if r.status_code >= 400:
@@ -116,8 +117,8 @@ def build_manifest_with_url(feed_url: str, *, timeout: float = 30.0
     daily check doesn't re-do the redirect handshake.
     """
     safe_url(feed_url)
-    r = httpx.get(feed_url, headers={"User-Agent": USER_AGENT},
-                  follow_redirects=True, timeout=timeout)
+    r = get_client().get(feed_url, headers={"User-Agent": USER_AGENT},
+                         follow_redirects=True, timeout=timeout)
     r.raise_for_status()
     if len(r.content) > MAX_FEED_BYTES:
         raise ValueError(f"feed too large: {len(r.content)} bytes")
@@ -146,8 +147,8 @@ def build_manifest_with_url(feed_url: str, *, timeout: float = 30.0
 
 def feed_metadata(feed_url: str, *, timeout: float = 30.0) -> Dict[str, str]:
     """Return channel-level metadata (title, author, description)."""
-    r = httpx.get(feed_url, headers={"User-Agent": USER_AGENT},
-                  follow_redirects=True, timeout=timeout)
+    r = get_client().get(feed_url, headers={"User-Agent": USER_AGENT},
+                         follow_redirects=True, timeout=timeout)
     r.raise_for_status()
     parsed = feedparser.parse(r.content)
     ch = parsed.feed

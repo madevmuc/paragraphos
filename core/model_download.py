@@ -6,7 +6,7 @@ import threading
 from pathlib import Path
 from typing import Callable
 
-import httpx
+from core.http import get_client
 
 MODEL_DIR = Path.home() / ".config" / "open-wispr" / "models"
 BASE_URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/"
@@ -37,7 +37,7 @@ def download_model(name: str, on_progress: Callable[[int, int], None] | None = N
     dst = _target_path(name)
     tmp = dst.with_suffix(".bin.part")
     written = 0
-    with httpx.stream("GET", url, follow_redirects=True, timeout=600) as r:
+    with get_client().stream("GET", url, follow_redirects=True, timeout=600) as r:
         r.raise_for_status()
         total = int(r.headers.get("content-length", "0") or 0)
         with tmp.open("wb") as f:

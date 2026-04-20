@@ -30,7 +30,12 @@ def test_check_for_update_uses_configured_repo(monkeypatch):
     def fake_get(url, **kw):
         calls.append(url)
         return FakeResp()
-    monkeypatch.setattr(updater.httpx, "get", fake_get)
+
+    class FakeClient:
+        def get(self, url, **kw):
+            return fake_get(url, **kw)
+
+    monkeypatch.setattr(updater, "get_client", lambda: FakeClient())
 
     import threading
     notified = threading.Event()

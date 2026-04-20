@@ -9,6 +9,7 @@ from pathlib import Path
 
 import httpx
 
+from core.http import get_client
 from core.security import (DownloadTooLargeError, MAX_MP3_BYTES,
                            is_allowed_audio_content_type, safe_url)
 
@@ -47,8 +48,8 @@ class DownloadResult:
 
 
 def _expected_size(url: str, timeout: float = 10.0) -> int:
-    r = httpx.head(url, headers={"User-Agent": USER_AGENT},
-                   follow_redirects=True, timeout=timeout)
+    r = get_client().head(url, headers={"User-Agent": USER_AGENT},
+                          follow_redirects=True, timeout=timeout)
     r.raise_for_status()
     return int(r.headers.get("content-length", "0") or 0)
 
@@ -101,8 +102,8 @@ def _download_once(url: str, dest: Path, *, chunk: int,
 
     tmp = dest.with_suffix(dest.suffix + ".part")
     written = 0
-    with httpx.stream("GET", url, headers={"User-Agent": USER_AGENT},
-                      follow_redirects=True, timeout=timeout) as r:
+    with get_client().stream("GET", url, headers={"User-Agent": USER_AGENT},
+                             follow_redirects=True, timeout=timeout) as r:
         r.raise_for_status()
         # Content-Type sniff — reject obvious non-audio (HTML, JSON, etc.).
         ct = r.headers.get("content-type", "")

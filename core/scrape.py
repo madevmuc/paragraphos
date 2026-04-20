@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 import httpx
 from bs4 import BeautifulSoup
 
+from core.http import get_client
 from core.security import MAX_HTML_BYTES, safe_url
 
 USER_AGENT = "paragraphos/0.3"
@@ -107,8 +108,8 @@ def scrape_episode(url: str, *, timeout: float = 10.0) -> ScrapedEpisode:
     safe_url(url)
     # Direct-MP3 detection first — cheap HEAD request.
     try:
-        head = httpx.head(url, headers={"User-Agent": USER_AGENT},
-                          follow_redirects=True, timeout=timeout)
+        head = get_client().head(url, headers={"User-Agent": USER_AGENT},
+                                 follow_redirects=True, timeout=timeout)
         if head.status_code < 400 and _is_audio(head.headers.get("content-type", "")):
             name = urlparse(url).path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
             return ScrapedEpisode(mp3_url=url, title=name or "audio",
@@ -116,8 +117,8 @@ def scrape_episode(url: str, *, timeout: float = 10.0) -> ScrapedEpisode:
     except httpx.HTTPError:
         pass  # fall through
 
-    r = httpx.get(url, headers={"User-Agent": USER_AGENT},
-                  follow_redirects=True, timeout=timeout)
+    r = get_client().get(url, headers={"User-Agent": USER_AGENT},
+                         follow_redirects=True, timeout=timeout)
     r.raise_for_status()
     # Bound HTML size to protect against parser-bombs.
     if len(r.content) > MAX_HTML_BYTES:
