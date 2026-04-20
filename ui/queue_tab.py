@@ -74,6 +74,11 @@ class QueueTab(QWidget):
         self._tick_timer.timeout.connect(self._tick)
         self._tick_timer.start(1000)
 
+        # Table rebuild throttle: coalesce refresh requests so we rebuild
+        # at most once per 3 s even when episodes finish in bursts.
+        self._last_table_refresh = 0.0
+        self._refresh_pending = False
+
         self.refresh()
 
     def _tick(self):
@@ -137,6 +142,22 @@ class QueueTab(QWidget):
     # ── rendering ─────────────────────────────────────────────
 
     def refresh(self) -> None:
+        import time
+        now = time.monotonic()
+        self._tick_header()
+        if now - self._last_table_refresh < 3.0:
+            if not self._refresh_pending:
+                self._refresh_pending = True
+                delay_ms = int((3.0 - (now - self._last_table_refresh)) * 1000)
+                QTimer.singleShot(max(delay_ms, 0), self._deferred_refresh)
+            return
+        self._last_table_refresh = now
+        self._refresh_table()
+
+    def _deferred_refresh(self) -> None:
+        import time
+        self._refresh_pending = False
+        self._last_table_refresh = time.monotonic()
         self._refresh_table()
         self._tick_header()
 
