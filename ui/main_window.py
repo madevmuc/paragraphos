@@ -1,4 +1,4 @@
-"""Main window: tabs (Shows/Failed/Settings) + log dock + wiki-compile banner."""
+"""Main window: sidebar nav + stacked pages + log dock + wiki-compile banner."""
 
 from __future__ import annotations
 
@@ -6,7 +6,15 @@ from pathlib import Path
 
 from PyQt6.QtCore import QDateTime, QLocale, Qt, QTimer
 from PyQt6.QtGui import QKeySequence, QShortcut
-from PyQt6.QtWidgets import QLabel, QMainWindow, QStatusBar, QTabWidget, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QStackedWidget,
+    QStatusBar,
+    QVBoxLayout,
+    QWidget,
+)
 
 from ui.app_context import AppContext
 from ui.failed_tab import FailedTab
@@ -15,6 +23,7 @@ from ui.menu_bar import build_menu_bar
 from ui.queue_tab import QueueTab
 from ui.settings_pane import SettingsPane
 from ui.shows_tab import ShowsTab
+from ui.widgets import Sidebar
 
 from core.paths import user_data_dir  # noqa: E402
 DATA_DIR = user_data_dir()
@@ -57,25 +66,45 @@ class MainWindow(QMainWindow):
         self.ctx = AppContext.load(DATA_DIR)
 
         central = QWidget()
-        layout = QVBoxLayout(central)
+        outer = QVBoxLayout(central)
+        outer.setContentsMargins(0, 0, 0, 0)
         self.banner = QLabel()
         self._apply_banner_style()
         self.banner.setVisible(False)
-        layout.addWidget(self.banner)
+        outer.addWidget(self.banner)
 
-        self.tabs = QTabWidget()
+        body = QWidget()
+        root = QHBoxLayout(body)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # Sidebar
+        self.sidebar = Sidebar()
+        self.sidebar.add_group("Library")
+        for key, label in (("shows", "Shows"), ("queue", "Queue"), ("failed", "Failed")):
+            self.sidebar.add_item(key, label)
+        self.sidebar.add_group("System")
+        for key, label in (("settings", "Settings"), ("logs", "Logs"), ("about", "About")):
+            self.sidebar.add_item(key, label)
+        self.sidebar.finish()
+        self.sidebar.set_active("shows")
+        self.sidebar.navigate.connect(self._on_nav)
+        root.addWidget(self.sidebar)
+
+        # Stacked pages on the right
+        self.stack = QStackedWidget()
         self.shows_tab = ShowsTab(self.ctx)
         self.queue_tab = QueueTab(self.ctx)
         self.failed_tab = FailedTab(self.ctx)
         self.settings_pane = SettingsPane(self.ctx)
-        self.tabs.addTab(self.shows_tab, "Shows")
-        self.tabs.addTab(self.queue_tab, "Queue")
-        self.tabs.addTab(self.failed_tab, "Failed")
-        self.tabs.addTab(self.settings_pane, "Settings")
         # Let ShowsTab forward queue signals to the queue tab.
         self.shows_tab.queue_listener = self.queue_tab  # type: ignore[attr-defined]
-        self.tabs.currentChanged.connect(self._on_tab_changed)
-        layout.addWidget(self.tabs)
+        for w in (self.shows_tab, self.queue_tab, self.failed_tab, self.settings_pane):
+            self.stack.addWidget(w)
+        self._nav_index = {"shows": 0, "queue": 1, "failed": 2, "settings": 3}
+        root.addWidget(self.stack, stretch=1)
+
+        outer.addWidget(body, stretch=1)
         self.setCentralWidget(central)
 
         self.log_dock = LogDock(self)
@@ -87,7 +116,7 @@ class MainWindow(QMainWindow):
         # Window-scoped shortcuts (menu items also register these, but explicit
         # QShortcuts guarantee they work even when no menu-item is focused).
         for key, fn in (
-            (QKeySequence.StandardKey.Preferences, lambda: self.tabs.setCurrentIndex(3)),
+            (QKeySequence.StandardKey.Preferences, lambda: self._on_nav("settings")),
             ("Ctrl+R", self.shows_tab.start_check),
             ("Ctrl+.", self.shows_tab._stop),
             ("Ctrl+L", lambda: self.log_dock.setVisible(not self.log_dock.isVisible())),
@@ -109,6 +138,13 @@ class MainWindow(QMainWindow):
         self._refresh_banner()
         self.resize(1100, 720)
 
+        # Sidebar counts: once at startup, then periodically so they stay
+        # fresh after checks finish, retries, etc.
+        self._update_sidebar_counts()
+        self._counts_timer = QTimer(self)
+        self._counts_timer.timeout.connect(self._update_sidebar_counts)
+        self._counts_timer.start(2000)
+
     def _apply_banner_style(self) -> None:
         """Choose banner colors that work in both light and dark macOS modes."""
         palette_color = self.palette().window().color()
@@ -123,11 +159,38 @@ class MainWindow(QMainWindow):
                 "background:#fff7d0; color:#3a2d00; padding:8px 12px; "
                 "border:1px solid #e0c870; border-radius:4px;")
 
-    def _on_tab_changed(self, idx: int) -> None:
-        w = self.tabs.widget(idx)
-        if hasattr(w, "refresh"):
-            w.refresh()
-        self._refresh_banner()
+    def _on_nav(self, key: str) -> None:
+        if key == "logs":
+            import subprocess
+            subprocess.run(["open", str(self.ctx.data_dir / "logs")])
+            return
+        if key == "about":
+            from ui.about_dialog import AboutDialog
+            AboutDialog(self).exec()
+            return
+        idx = self._nav_index.get(key)
+        if idx is not None:
+            self.stack.setCurrentIndex(idx)
+            self.sidebar.set_active(key)
+            w = self.stack.widget(idx)
+            if hasattr(w, "refresh"):
+                w.refresh()
+            self._refresh_banner()
+
+    def _update_sidebar_counts(self) -> None:
+        try:
+            with self.ctx.state._conn() as c:
+                pending = c.execute(
+                    "SELECT COUNT(*) FROM episodes WHERE status='pending'"
+                ).fetchone()[0]
+                failed = c.execute(
+                    "SELECT COUNT(*) FROM episodes WHERE status='failed'"
+                ).fetchone()[0]
+        except Exception:
+            pending = failed = 0
+        self.sidebar.set_count("shows", len(self.ctx.watchlist.shows))
+        self.sidebar.set_count("queue", pending)
+        self.sidebar.set_count("failed", failed)
 
     def _refresh_status_bar(self) -> None:
         from datetime import datetime, timedelta

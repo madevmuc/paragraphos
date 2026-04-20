@@ -110,7 +110,8 @@ def build_menu_bar(window) -> QMenuBar:
 # ── helpers ───────────────────────────────────────────────────────
 
 def _focus_tab(window, idx: int) -> None:
-    window.tabs.setCurrentIndex(idx)
+    key = {0: "shows", 1: "queue", 2: "failed", 3: "settings"}.get(idx, "shows")
+    window._on_nav(key)
 
 
 def _import_opml(window) -> None:
