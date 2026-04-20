@@ -88,8 +88,14 @@ def process_episode(guid: str, ctx: PipelineContext,
         ctx.state.set_status(guid, EpisodeStatus.PENDING)  # keep pending; surface disk issue
         return PipelineResult("failed", guid, f"disk: {e}")
     except Exception as e:
-        ctx.state.set_status(guid, EpisodeStatus.FAILED, error_text=f"download: {e}")
-        return PipelineResult("failed", guid, f"download: {e}")
+        err = (f"download failed [{type(e).__name__}]: {e}\n"
+               f"  show={ep['show_slug']}  guid={guid}\n"
+               f"  url={ep['mp3_url']}\n"
+               f"  dest={mp3_path}")
+        logger.error("download failed: %s (guid=%s)", ep["show_slug"], guid,
+                     exc_info=True)
+        ctx.state.set_status(guid, EpisodeStatus.FAILED, error_text=err)
+        return PipelineResult("failed", guid, err)
     ctx.state.set_status(guid, EpisodeStatus.DOWNLOADED)
 
     # 3) Transcribe
@@ -103,8 +109,13 @@ def process_episode(guid: str, ctx: PipelineContext,
             language=ctx.language, model_path=model_path,
         )
     except TranscriptionError as e:
-        ctx.state.set_status(guid, EpisodeStatus.FAILED, error_text=f"transcribe: {e}")
-        return PipelineResult("failed", guid, f"transcribe: {e}")
+        err = (f"transcribe failed: {e}\n"
+               f"  show={ep['show_slug']}  guid={guid}\n"
+               f"  mp3={mp3_path}")
+        logger.error("transcribe failed: %s (guid=%s)", ep["show_slug"], guid,
+                     exc_info=True)
+        ctx.state.set_status(guid, EpisodeStatus.FAILED, error_text=err)
+        return PipelineResult("failed", guid, err)
     ctx.library.add(result.md_path)
     # Record word count + duration-from-srt for global stats.
     from core.stats import _duration_from_srt

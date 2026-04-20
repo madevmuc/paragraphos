@@ -1,5 +1,32 @@
 # Paragraphos Changelog
 
+## v0.4.4 — 2026-04-20 (better errors)
+
+Every failure path now carries enough context to debug without a
+reproducer. The dotted-slug bug that cost hours today would have been
+obvious in seconds from this output.
+
+- **whisper-cli non-zero exit**: error includes mp3 filename, model,
+  slug, last 400 chars of stderr, last 200 chars of stdout.
+- **whisper-cli exited 0 but no output files**: error lists the paths
+  we expected, the actual contents of the temp dir (so mismatches jump
+  out), plus stdout/stderr tails, mp3 name and slug.
+- **Hallucination / silence guard**: error includes the observed word
+  count, threshold, mp3 name, slug, and first 200 chars of the produced
+  text (so you can tell apart silence, foreign-language misdetection,
+  and whisper-loop hallucination at a glance).
+- **Download failures** (pipeline): show exception type + message,
+  show slug, guid, source URL, destination path.
+- **Transcribe failures** (pipeline): show multi-line propagated error
+  plus show/guid/mp3 path.
+- **Log dock rendering**: failures now span multiple indented lines
+  instead of being truncated at 100 chars — the previous truncation
+  literally hid the filename that would have revealed the dot bug.
+- **Root-logger errors**: download + transcribe failures are also
+  logged to `~/Library/Application Support/Paragraphos/logs/` via
+  `logger.error(..., exc_info=True)` so future issues leave a traceable
+  trail.
+
 ## v0.4.3 — 2026-04-20 (transcriber path bug)
 
 **Fix:** whisper-cli output lookup was using `Path.with_suffix(".txt")` on

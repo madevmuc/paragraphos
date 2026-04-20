@@ -109,7 +109,15 @@ class CheckAllThread(QThread):
             self.progress.emit(f"  → {ep['title'][:80]}")
             r = process_episode(ep["guid"], pctx, episode_number=ep_num)
             done_idx += 1
-            self.progress.emit(f"    [{r.action}] {r.detail[:100]}")
+            # Show full multi-line detail on failure — the old single-line
+            # truncation hid the specific cause (paths, stderr, etc.) that
+            # actually helps debug.
+            if r.action == "failed":
+                self.progress.emit(f"    [{r.action}]")
+                for line in r.detail.splitlines():
+                    self.progress.emit(f"        {line}")
+            else:
+                self.progress.emit(f"    [{r.action}] {r.detail[:160]}")
             self.episode_done.emit(show.slug, ep["guid"], r.action,
                                    done_idx, total, show.title, ep["title"])
         self.finished_all.emit()

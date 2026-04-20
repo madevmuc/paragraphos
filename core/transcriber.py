@@ -78,23 +78,42 @@ def transcribe_episode(*, mp3_path: Path, output_dir: Path, slug: str,
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
             raise TranscriptionError(
-                f"whisper-cli exit {result.returncode}: {result.stderr[:400]}")
+                f"whisper-cli exit {result.returncode}  "
+                f"mp3={mp3_path.name}  model={model_path.name}  "
+                f"slug={slug!r}\n"
+                f"  stderr (last 400): {(result.stderr or '')[-400:]!r}\n"
+                f"  stdout (last 200): {(result.stdout or '')[-200:]!r}")
 
         # whisper-cli APPENDS '.txt'/'.srt' to the -of prefix — it does NOT
         # replace a suffix. Path.with_suffix() would truncate at the last
         # dot in the slug (e.g. 'Nachhaltigkeit & Co. müssen' → 'Co.txt'),
-        # so we'd read the wrong filename and falsely raise "produced no
-        # output files". Construct paths by string append instead.
+        # so we'd read the wrong filename. Construct paths by string append.
         txt_path = stem.parent / (stem.name + ".txt")
         srt_src = stem.parent / (stem.name + ".srt")
         if not txt_path.exists() or not srt_src.exists():
-            raise TranscriptionError("whisper-cli produced no output files")
+            # Give future debugging a head start: list everything whisper
+            # DID write so the user (or another agent) can diff expected
+            # vs actual path immediately.
+            actually_written = sorted(
+                p.name for p in stem.parent.iterdir()) if stem.parent.exists() else []
+            raise TranscriptionError(
+                f"whisper-cli exited 0 but expected outputs missing.\n"
+                f"  expected:\n"
+                f"    {txt_path}\n"
+                f"    {srt_src}\n"
+                f"  temp dir contents: {actually_written}\n"
+                f"  stdout (last 300): {(result.stdout or '')[-300:]!r}\n"
+                f"  stderr (last 300): {(result.stderr or '')[-300:]!r}\n"
+                f"  mp3={mp3_path.name}  slug={slug!r}")
 
         text = txt_path.read_text(encoding="utf-8").strip()
         words = len(text.split())
         if words < MIN_WPM_GUARD:
             raise TranscriptionError(
-                f"suspected whisper hallucination: only {words} words")
+                f"suspected whisper hallucination / silence: only {words} "
+                f"words in transcript (guard threshold = {MIN_WPM_GUARD}).\n"
+                f"  mp3={mp3_path.name}  slug={slug!r}\n"
+                f"  first 200 chars: {text[:200]!r}")
 
         md_path = output_dir / f"{slug}.md"
         srt_dest = output_dir / f"{slug}.srt"
