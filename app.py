@@ -39,6 +39,8 @@ if _migrated:
     print(f"migrated user data to ~/Library/Application Support/Paragraphos/: "
           f"{_migrated}", flush=True)
 DATA_DIR = user_data_dir()
+# Kept in sync with setup.py / setup-full.py CFBundleShortVersionString.
+_LOCAL_VERSION = "0.5.0"
 
 
 def _build_icon() -> QIcon:
@@ -72,6 +74,17 @@ class ParagraphosApp(QObject):
         setup_logging(DATA_DIR, retention_days=self.ctx.settings.log_retention_days)
         self._thread: CheckAllThread | None = None
         self._run_tally: dict[str, object] = {}
+
+        # Non-blocking update check against GitHub releases. Runs in a
+        # daemon thread; surfaces a one-shot tray notification if newer.
+        from core.updater import check_for_update
+        check_for_update(
+            local_version=_LOCAL_VERSION,
+            on_update_available=lambda tag, url: self.tray.showMessage(
+                "Paragraphos update available",
+                f"{tag} is out — you have v{_LOCAL_VERSION}. Click to open the release page.",
+            ),
+        )
 
         if not QSystemTrayIcon.isSystemTrayAvailable():
             print("ERROR: system tray not available on this system.", flush=True)
