@@ -1,0 +1,264 @@
+"""Shows tab — watchlist management + Check Now."""
+
+from __future__ import annotations
+
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QAction
+from PyQt6.QtWidgets import (QHBoxLayout, QHeaderView, QLabel, QMenu,
+                             QMessageBox, QPushButton, QTableWidget,
+                             QTableWidgetItem, QVBoxLayout, QWidget)
+
+from core.state import EpisodeStatus
+from ui.app_context import AppContext
+
+
+class ShowsTab(QWidget):
+    def __init__(self, ctx: AppContext):
+        super().__init__()
+        self.ctx = ctx
+        self._thread = None
+        self.log_sink = None  # set by MainWindow to route progress to LogDock
+        self.queue_listener = None  # set by MainWindow — receives queue signals
+
+        layout = QVBoxLayout(self)
+        self.global_stats_label = QLabel()
+        self.global_stats_label.setStyleSheet(
+            "padding:8px 12px; background:palette(alternate-base); border-radius:4px;")
+        self.global_stats_label.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(self.global_stats_label)
+        self.table = QTableWidget(0, 7)
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.doubleClicked.connect(self._open_details)
+        self.table.setHorizontalHeaderLabels(
+            ["Slug", "Title", "On", "Total", "Done", "Pending", "Feed"])
+        self.table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeMode.Stretch)
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._context_menu)
+        layout.addWidget(self.table)
+
+        btns = QHBoxLayout()
+        self.add_btn = QPushButton("Add Podcast…"); self.add_btn.clicked.connect(self._add)
+        self.curated_btn = QPushButton("Add Episodes…"); self.curated_btn.clicked.connect(self._curated)
+        self.check_btn = QPushButton("Start / Check Now"); self.check_btn.clicked.connect(self._check)
+        self.pause_btn = QPushButton("Pause"); self.pause_btn.clicked.connect(self._pause)
+        self.stop_btn = QPushButton("Stop"); self.stop_btn.setEnabled(False)
+        self.stop_btn.clicked.connect(self._stop)
+        self.refresh_btn = QPushButton("Refresh"); self.refresh_btn.clicked.connect(self.refresh)
+        self.health_btn = QPushButton("Check feeds"); self.health_btn.clicked.connect(self._check_feed_health)
+        self.rescan_btn = QPushButton("Rescan library"); self.rescan_btn.clicked.connect(self._rescan_library)
+        self.rescan_btn.setToolTip("Count words + durations for all existing transcripts (one-time)")
+        for b in (self.add_btn, self.curated_btn, self.check_btn, self.pause_btn,
+                  self.stop_btn, self.refresh_btn, self.health_btn, self.rescan_btn):
+            btns.addWidget(b)
+        btns.addStretch()
+        layout.addLayout(btns)
+
+        self.refresh()
+
+    def _open_details(self, index) -> None:
+        row = index.row()
+        if row < 0:
+            return
+        slug = self.table.item(row, 0).text()
+        from ui.show_details_dialog import ShowDetailsDialog
+        dlg = ShowDetailsDialog(self.ctx, slug, self)
+        if dlg.exec():
+            self.refresh()
+
+    def _update_global_stats(self) -> None:
+        from core.stats import compute_global_stats, format_duration
+        g = compute_global_stats(self.ctx.state)
+        dur_str = format_duration(g.total_seconds)
+        self.global_stats_label.setText(
+            f"<b>Library</b>  —  {g.transcripts} transcripts · "
+            f"{dur_str} of audio · "
+            f"{g.total_words:,}".replace(",", ".") +
+            f" words · {g.episodes_pending} pending · {g.episodes_failed} failed"
+        )
+
+    def refresh(self) -> None:
+        self._update_global_stats()
+        self.table.setRowCount(0)
+        for show in self.ctx.watchlist.shows:
+            with self.ctx.state._conn() as c:
+                total = c.execute(
+                    "SELECT COUNT(*) FROM episodes WHERE show_slug=?",
+                    (show.slug,)).fetchone()[0]
+                done = c.execute(
+                    "SELECT COUNT(*) FROM episodes WHERE show_slug=? AND status='done'",
+                    (show.slug,)).fetchone()[0]
+                pend = c.execute(
+                    "SELECT COUNT(*) FROM episodes WHERE show_slug=? AND status='pending'",
+                    (show.slug,)).fetchone()[0]
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            self.table.setItem(row, 0, QTableWidgetItem(show.slug))
+            self.table.setItem(row, 1, QTableWidgetItem(show.title))
+            self.table.setItem(row, 2, QTableWidgetItem("✓" if show.enabled else ""))
+            self.table.setItem(row, 3, QTableWidgetItem(str(total)))
+            self.table.setItem(row, 4, QTableWidgetItem(str(done)))
+            self.table.setItem(row, 5, QTableWidgetItem(str(pend)))
+            # Feed badge starts as "?"; filled in async-style on demand via "Check feeds" button.
+            self.table.setItem(row, 6, QTableWidgetItem("?"))
+
+    def _context_menu(self, pos):
+        row = self.table.rowAt(pos.y())
+        if row < 0: return
+        slug = self.table.item(row, 0).text()
+        menu = QMenu(self)
+        check_only = QAction(f"Check '{slug}' now", self)
+        check_only.triggered.connect(lambda: self._check(only_slug=slug))
+        stale_all = QAction(f"Mark all '{slug}' episodes stale", self)
+        stale_all.triggered.connect(lambda: self._mark_stale(slug))
+        toggle = QAction(f"Toggle enabled", self)
+        toggle.triggered.connect(lambda: self._toggle(slug))
+        menu.addAction(check_only)
+        menu.addAction(stale_all)
+        menu.addAction(toggle)
+        menu.exec(self.table.viewport().mapToGlobal(pos))
+
+    def _add(self):
+        from ui.add_show_dialog import AddShowDialog
+        dlg = AddShowDialog(self.ctx, self)
+        if dlg.exec():
+            self.ctx.watchlist = dlg.updated_watchlist
+            self.refresh()
+
+    def _curated(self):
+        from ui.add_episodes_dialog import AddEpisodesDialog
+        dlg = AddEpisodesDialog(self.ctx, self)
+        dlg.exec()
+        self.refresh()
+
+    def _check(self, only_slug: str | None = None):
+        self.start_check(only_slug=only_slug or None)
+
+    def start_check(self, *, only_slug: str | None = None) -> bool:
+        """Public entry: start a check and update button state.
+        Returns False if another check is already running."""
+        from ui.worker_thread import CheckAllThread
+        if self._thread and self._thread.isRunning():
+            return False
+        self._thread = CheckAllThread(self.ctx, self.ctx.settings,
+                                      only_slug=only_slug)
+        self._thread.progress.connect(self._log)
+        self._thread.queue_sized.connect(self._on_queue_sized)
+        self._thread.episode_done.connect(self._on_ep_done)
+        self._thread.finished_all.connect(self._check_done)
+        if self.queue_listener is not None:
+            self._thread.queue_sized.connect(self.queue_listener.on_queue_sized)
+            self._thread.episode_done.connect(self.queue_listener.on_episode_done)
+            self._thread.finished_all.connect(self.queue_listener.on_finished_all)
+        self.stop_btn.setEnabled(True)
+        self.check_btn.setEnabled(False)
+        from datetime import datetime
+        self.ctx.queue.running = True
+        self.ctx.queue.started_at = datetime.now()
+        self.ctx.queue.total = 0
+        self.ctx.queue.done = 0
+        self.ctx.queue.avg_sec_per_episode = 0.0
+        self._ep_durations: list[float] = []
+        self._last_ep_start = datetime.now()
+        self._thread.start()
+        return True
+
+    def _on_queue_sized(self, total: int) -> None:
+        self.ctx.queue.total = total
+
+    def _on_ep_done(self, slug, guid, action, done_idx, total,
+                    show_title, ep_title):
+        from datetime import datetime
+        self.ctx.queue.done = done_idx
+        self.ctx.queue.total = total
+        self.ctx.queue.last_episode_show = show_title
+        self.ctx.queue.last_episode_title = ep_title
+        now = datetime.now()
+        if self._last_ep_start:
+            self._ep_durations.append((now - self._last_ep_start).total_seconds())
+            self._ep_durations = self._ep_durations[-10:]
+            self.ctx.queue.avg_sec_per_episode = sum(self._ep_durations) / len(self._ep_durations)
+        self._last_ep_start = now
+
+    def attach_external_thread(self, thread) -> None:
+        """Called when someone (e.g. the tray-app) started a CheckAllThread
+        before the window existed — wire up the buttons so Stop works."""
+        self._thread = thread
+        if thread.isRunning():
+            self.stop_btn.setEnabled(True)
+            self.check_btn.setEnabled(False)
+            thread.progress.connect(self._log)
+            thread.finished_all.connect(self._check_done)
+            if self.queue_listener is not None:
+                thread.queue_sized.connect(self.queue_listener.on_queue_sized)
+                thread.episode_done.connect(self.queue_listener.on_episode_done)
+                thread.finished_all.connect(self.queue_listener.on_finished_all)
+
+    def _stop(self):
+        if self._thread:
+            self._thread.request_stop()
+            self._log("stop requested — current episode will finish, "
+                      "then queue halts.")
+        self.stop_btn.setEnabled(False)
+
+    def _pause(self):
+        self.ctx.state.set_meta("queue_paused", "1")
+        if self._thread and self._thread.isRunning():
+            self._thread.request_stop()
+        self._log("queue paused — Resume to continue (survives restart).")
+
+    def _resume(self):
+        self.ctx.state.set_meta("queue_paused", "0")
+        self._log("queue resumed — starting check…")
+        self.start_check()
+
+    def _check_done(self):
+        self.stop_btn.setEnabled(False)
+        self.check_btn.setEnabled(True)
+        self.ctx.queue.running = False
+        self.refresh()
+        from datetime import datetime, timezone
+        self.ctx.state.set_meta("last_successful_check",
+                                datetime.now(timezone.utc).isoformat())
+
+    def _log(self, msg: str) -> None:
+        if self.log_sink is not None:
+            self.log_sink(msg)
+        else:
+            print(msg)
+
+    def _mark_stale(self, slug: str) -> None:
+        with self.ctx.state._conn() as c:
+            c.execute("UPDATE episodes SET status='pending' WHERE show_slug=?",
+                      (slug,))
+        self.refresh()
+
+    def _rescan_library(self) -> None:
+        from core.stats import rescan_library_counts
+        from pathlib import Path
+        count = rescan_library_counts(
+            self.ctx.state,
+            Path(self.ctx.settings.output_root).expanduser(),
+        )
+        self._log(f"rescan complete — {count} transcript(s) re-counted")
+        self.refresh()
+
+    def _check_feed_health(self) -> None:
+        """Synchronous feed-health sweep. Slow for 16 feeds (~5–10 s) but
+        runs on-demand and blocks only the button click."""
+        from core.rss import FeedHealth
+        for row in range(self.table.rowCount()):
+            slug = self.table.item(row, 0).text()
+            show = next((s for s in self.ctx.watchlist.shows if s.slug == slug), None)
+            if not show:
+                continue
+            health = FeedHealth.check(show.rss, timeout=8)
+            self.table.setItem(row, 6, QTableWidgetItem(
+                "✅" if health.ok else f"⚠ {health.reason}"))
+
+    def _toggle(self, slug: str) -> None:
+        for show in self.ctx.watchlist.shows:
+            if show.slug == slug:
+                show.enabled = not show.enabled
+        self.ctx.watchlist.save(self.ctx.data_dir / "watchlist.yaml")
+        self.refresh()

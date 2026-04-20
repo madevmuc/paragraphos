@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+  <body>
+    <outline text="Podcasts">
+      <outline type="rss" text="Immocation" title="Immocation" xmlUrl="https://immocation.podigee.io/feed/mp3"/>
+      <outline type="rss" text="1 A Lage" title="1 A Lage" xmlUrl="https://1alage.podigee.io/feed/mp3"/>
+    </outline>
+  </body>
+</opml>

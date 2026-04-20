@@ -1,0 +1,173 @@
+"""Global + per-show statistics."""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
+
+
+def _parse_duration(s: Optional[str]) -> int:
+    """RSS duration may be 'SSSS', 'MM:SS', or 'HH:MM:SS'. Returns seconds."""
+    if not s:
+        return 0
+    parts = str(s).strip().split(":")
+    try:
+        if len(parts) == 1:
+            return int(parts[0])
+        if len(parts) == 2:
+            return int(parts[0]) * 60 + int(parts[1])
+        if len(parts) == 3:
+            return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+    except ValueError:
+        return 0
+    return 0
+
+
+@dataclass(frozen=True)
+class GlobalStats:
+    transcripts: int
+    total_seconds: int
+    total_words: int
+    episodes_total: int
+    episodes_done: int
+    episodes_pending: int
+    episodes_failed: int
+
+
+def compute_global_stats(state) -> GlobalStats:
+    with state._conn() as c:
+        totals = dict(c.execute(
+            "SELECT status, COUNT(*) FROM episodes GROUP BY status").fetchall())
+        transcripts = totals.get("done", 0)
+        words_row = c.execute(
+            "SELECT COALESCE(SUM(word_count), 0) FROM episodes WHERE status='done'"
+        ).fetchone()
+        total_words = int(words_row[0] or 0)
+        dur_row = c.execute(
+            "SELECT COALESCE(SUM(duration_sec), 0) FROM episodes WHERE status='done'"
+        ).fetchone()
+        total_seconds = int(dur_row[0] or 0)
+        total = sum(totals.values())
+    return GlobalStats(
+        transcripts=transcripts,
+        total_seconds=total_seconds,
+        total_words=total_words,
+        episodes_total=total,
+        episodes_done=totals.get("done", 0),
+        episodes_pending=totals.get("pending", 0),
+        episodes_failed=totals.get("failed", 0),
+    )
+
+
+@dataclass(frozen=True)
+class ShowStats:
+    slug: str
+    total: int
+    done: int
+    pending: int
+    failed: int
+    avg_words: int
+    avg_duration_sec: int
+    total_seconds: int
+    total_words: int
+    last_completed: Optional[str]
+
+
+def compute_show_stats(state, slug: str) -> ShowStats:
+    with state._conn() as c:
+        row = c.execute("""
+            SELECT
+                COUNT(*) AS total,
+                SUM(CASE WHEN status='done' THEN 1 ELSE 0 END) AS done,
+                SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) AS pending,
+                SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed,
+                COALESCE(AVG(CASE WHEN status='done' THEN word_count END), 0) AS avg_words,
+                COALESCE(AVG(CASE WHEN status='done' THEN duration_sec END), 0) AS avg_dur,
+                COALESCE(SUM(CASE WHEN status='done' THEN duration_sec END), 0) AS total_dur,
+                COALESCE(SUM(CASE WHEN status='done' THEN word_count END), 0) AS total_words,
+                MAX(CASE WHEN status='done' THEN completed_at END) AS last_done
+            FROM episodes WHERE show_slug = ?
+        """, (slug,)).fetchone()
+    if row is None:
+        return ShowStats(slug, 0, 0, 0, 0, 0, 0, 0, 0, None)
+    return ShowStats(
+        slug=slug,
+        total=row["total"] or 0,
+        done=row["done"] or 0,
+        pending=row["pending"] or 0,
+        failed=row["failed"] or 0,
+        avg_words=int(row["avg_words"] or 0),
+        avg_duration_sec=int(row["avg_dur"] or 0),
+        total_seconds=int(row["total_dur"] or 0),
+        total_words=int(row["total_words"] or 0),
+        last_completed=row["last_done"],
+    )
+
+
+_FM_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
+
+
+def rescan_library_counts(state, output_root: Path) -> int:
+    """Walk output_root, count words in each .md, update state.episodes.word_count
+    and duration_sec (from .srt last timestamp). Returns count updated."""
+    output_root = Path(output_root)
+    if not output_root.exists():
+        return 0
+    updated = 0
+    for md in output_root.rglob("*.md"):
+        if md.name == "index.md":
+            continue
+        text = md.read_text(encoding="utf-8", errors="ignore")
+        m = _FM_RE.match(text)
+        if not m:
+            continue
+        # Crude frontmatter scan: look for "guid:" line.
+        import yaml
+        try:
+            fm = yaml.safe_load(m.group(1)) or {}
+        except yaml.YAMLError:
+            continue
+        guid = fm.get("guid")
+        if not guid:
+            continue
+        body = text[m.end():]
+        words = len(body.split())
+        dur = _duration_from_srt(md.with_suffix(".srt"))
+        state.record_completion(guid, words, dur)
+        updated += 1
+    return updated
+
+
+_SRT_TIME = re.compile(r"(\d+):(\d+):(\d+),\d+\s+-->\s+(\d+):(\d+):(\d+),")
+
+
+def _duration_from_srt(path: Path) -> Optional[int]:
+    if not path.exists():
+        return None
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return None
+    last_end = 0
+    for m in _SRT_TIME.finditer(text):
+        eh, em_, es = int(m.group(4)), int(m.group(5)), int(m.group(6))
+        last_end = max(last_end, eh * 3600 + em_ * 60 + es)
+    return last_end or None
+
+
+def format_duration(seconds: int) -> str:
+    if seconds <= 0:
+        return "0m"
+    days = seconds // 86400
+    hours = (seconds % 86400) // 3600
+    mins = (seconds % 3600) // 60
+    parts: list[str] = []
+    if days:
+        parts.append(f"{days}d")
+    if hours:
+        parts.append(f"{hours}h")
+    if mins or not parts:
+        parts.append(f"{mins}m")
+    return " ".join(parts)
