@@ -10,6 +10,8 @@ Save / remove / mark-stale logic is preserved from the previous revision
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (QCheckBox, QComboBox, QDialog, QFrame,
@@ -327,7 +329,32 @@ class ShowDetailsDialog(QDialog):
             "Re-transcribe this episode",
             lambda g=guid: self._retranscribe(g),
         )
+        md_path = self._md_path_for(guid)
+        if md_path is not None:
+            bak = md_path.with_suffix(".md.bak")
+            if bak.exists() and md_path.exists():
+                menu.addAction(
+                    "View diff",
+                    lambda b=bak, cur=md_path: self._open_diff(b, cur),
+                )
         menu.exec(tbl.viewport().mapToGlobal(pos))
+
+    def _md_path_for(self, guid: str) -> Path | None:
+        """Mirror `ui.retranscribe` path derivation so diff sees the same file."""
+        from core.pipeline import build_slug
+        ep = self.ctx.state.get_episode(guid)
+        if ep is None:
+            return None
+        try:
+            output_root = Path(self.ctx.settings.output_root).expanduser()
+        except Exception:
+            return None
+        slug = build_slug(ep.get("pub_date") or "", ep.get("title") or "", "0000")
+        return output_root / ep["show_slug"] / f"{slug}.md"
+
+    def _open_diff(self, old: Path, new: Path) -> None:
+        from ui.transcript_diff_dialog import TranscriptDiffDialog
+        TranscriptDiffDialog(old, new, parent=self).exec()
 
     def _retranscribe(self, guid: str) -> None:
         retranscribe_episode(self.ctx, guid)
