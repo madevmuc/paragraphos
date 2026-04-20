@@ -9,6 +9,8 @@ from PyQt6.QtWidgets import (QHBoxLayout, QHeaderView, QLabel, QPushButton,
                              QTableWidget, QTableWidgetItem, QVBoxLayout,
                              QWidget)
 
+from ui.widgets.queue_hero import QueueHero
+
 
 class QueueTab(QWidget):
     """Shows current queue + progress header with started/elapsed/ETA.
@@ -28,6 +30,15 @@ class QueueTab(QWidget):
         self._last_ep_start: datetime | None = None
 
         v = QVBoxLayout(self)
+
+        # Big-visible hero dashboard shown only while a run is active.
+        self.hero = QueueHero(
+            ctx,
+            on_pause=self._pause,
+            on_stop=self._stop,
+            parent=self,
+        )
+        v.addWidget(self.hero)
 
         # Header — status summary
         self.header = QLabel()
