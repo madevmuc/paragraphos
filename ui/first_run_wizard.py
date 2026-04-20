@@ -11,43 +11,93 @@ import subprocess
 import threading
 from pathlib import Path
 
-from PyQt6.QtCore import QTimer, pyqtSignal
-from PyQt6.QtWidgets import (QApplication, QDialog, QHBoxLayout, QLabel,
-                             QProgressBar, QPushButton, QVBoxLayout, QWidget)
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtWidgets import (QApplication, QDialog, QFrame, QHBoxLayout,
+                             QLabel, QProgressBar, QPushButton, QVBoxLayout,
+                             QWidget)
 
 from core import deps
 from core.model_download import AVAILABLE as MODEL_FILES
 from core.model_download import download_model
+from ui.widgets import Pill
+
+
+def _make_divider(parent: QWidget) -> QFrame:
+    f = QFrame(parent)
+    f.setFrameShape(QFrame.Shape.HLine)
+    f.setFixedHeight(1)
+    f.setStyleSheet("background-color: palette(mid);")
+    return f
 
 
 class StepRow(QWidget):
+    """One dep row: label (flex) | sub-copy | Pill status | optional action button."""
+
     def __init__(self, title: str):
         super().__init__()
-        h = QHBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 6, 0, 6)
+        outer.setSpacing(2)
+
+        top = QHBoxLayout()
+        top.setContentsMargins(0, 0, 0, 0)
         self.label = QLabel(title)
-        self.status = QLabel("⏳ checking…")
+        self.label.setStyleSheet("font-weight: 500; font-size: 13px;")
+        self.pill = Pill("checking…", kind="idle")
         self.action_btn = QPushButton()
         self.action_btn.setVisible(False)
-        h.addWidget(self.label)
-        h.addWidget(self.status, stretch=1)
-        h.addWidget(self.action_btn)
+        top.addWidget(self.label, stretch=1)
+        top.addWidget(self.pill)
+        top.addWidget(self.action_btn)
+        outer.addLayout(top)
 
-    def set_ok(self, text: str = "✓ installed"):
-        self.status.setText(text)
-        self.status.setStyleSheet("color:#5a8a4a;")
+        self.subcopy = QLabel("")
+        self.subcopy.setStyleSheet(
+            "color: palette(mid); font-size: 11px;")
+        self.subcopy.setVisible(False)
+        self.subcopy.setWordWrap(True)
+        outer.addWidget(self.subcopy)
+
+    # ---- state helpers ---------------------------------------------------
+    def _set_sub(self, text: str = "") -> None:
+        if text:
+            self.subcopy.setText(text)
+            self.subcopy.setVisible(True)
+        else:
+            self.subcopy.clear()
+            self.subcopy.setVisible(False)
+
+    def set_ok(self, text: str = "ok") -> None:
+        self.pill.setText(text)
+        self.pill.set_kind("ok")
+        self._set_sub("")
         self.action_btn.setVisible(False)
 
-    def set_missing(self, action_text: str, on_click):
-        self.status.setText("not installed")
-        self.status.setStyleSheet("color:#a06030;")
+    def set_missing(self, action_text: str, on_click, reason: str = "not installed") -> None:
+        self.pill.setText("fail")
+        self.pill.set_kind("fail")
+        self._set_sub(reason)
+        # Disconnect any prior handlers so re-wiring across refresh() doesn't stack.
+        try:
+            self.action_btn.clicked.disconnect()
+        except TypeError:
+            pass
         self.action_btn.setText(action_text)
         self.action_btn.clicked.connect(on_click)
+        self.action_btn.setEnabled(True)
         self.action_btn.setVisible(True)
 
-    def set_running(self, text: str = "running…"):
-        self.status.setText(text)
-        self.status.setStyleSheet("color:#606090;")
+    def set_running(self, text: str = "running…", sub: str = "") -> None:
+        self.pill.setText(text)
+        self.pill.set_kind("running")
+        self._set_sub(sub)
         self.action_btn.setEnabled(False)
+
+    def set_idle(self, sub: str = "") -> None:
+        self.pill.setText("checking…")
+        self.pill.set_kind("idle")
+        self._set_sub(sub)
+        self.action_btn.setVisible(False)
 
 
 class FirstRunWizard(QDialog):
@@ -57,57 +107,88 @@ class FirstRunWizard(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Paragraphos — First-run setup")
         self.setModal(True)
-        self.resize(640, 420)
+        self.resize(640, 460)
 
         v = QVBoxLayout(self)
-        v.addWidget(QLabel(
-            "<h3>Welcome to Paragraphos</h3>"
-            "Paragraphos runs everything locally — no cloud services. We need a "
-            "few tools on your Mac before the first run:"))
+        v.setSpacing(8)
+
+        heading = QLabel("<h3 style='margin:0'>Welcome to Paragraphos</h3>")
+        v.addWidget(heading)
+        sub = QLabel(
+            "Everything runs locally. We need a few tools on your Mac before "
+            "the first run.")
+        sub.setStyleSheet("color: palette(mid); font-size: 11px;")
+        sub.setWordWrap(True)
+        v.addWidget(sub)
+
+        v.addWidget(_make_divider(self))
 
         self.brew_row = StepRow("Homebrew (package manager)")
         self.whisper_row = StepRow("whisper-cpp (transcription engine)")
         self.ffmpeg_row = StepRow("ffmpeg (audio decoding)")
         self.model_row = StepRow("whisper large-v3-turbo model (~1.5 GB)")
-        for r in (self.brew_row, self.whisper_row, self.ffmpeg_row, self.model_row):
+
+        rows = (self.brew_row, self.whisper_row, self.ffmpeg_row, self.model_row)
+        for i, r in enumerate(rows):
             v.addWidget(r)
+            if i < len(rows) - 1:
+                v.addWidget(_make_divider(self))
+
+        v.addWidget(_make_divider(self))
 
         self.progress = QProgressBar()
         self.progress.setVisible(False)
         v.addWidget(self.progress)
 
+        v.addStretch()
+
+        footer = QHBoxLayout()
+        footer.addStretch()
         self.close_btn = QPushButton("Continue to Paragraphos")
+        self.close_btn.setDefault(True)
         self.close_btn.clicked.connect(self.accept)
         self.close_btn.setEnabled(False)
-        v.addStretch()
-        v.addWidget(self.close_btn)
+        footer.addWidget(self.close_btn)
+        v.addLayout(footer)
 
         self.progress_sig.connect(self._on_progress)
         QTimer.singleShot(0, self._refresh)
 
+    # ---- refresh --------------------------------------------------------
     def _refresh(self):
         status = deps.check()
         if status.brew:
             self.brew_row.set_ok()
         else:
-            self.brew_row.set_missing("Install Homebrew…", self._install_brew)
+            self.brew_row.set_missing(
+                "Install Homebrew…", self._install_brew,
+                reason="Homebrew is not installed on this Mac.")
         if status.whisper_cli:
             self.whisper_row.set_ok()
         elif status.brew:
-            self.whisper_row.set_missing("brew install", self._install_whisper)
+            self.whisper_row.set_missing(
+                "brew install", self._install_whisper,
+                reason="whisper-cpp binary not found at /opt/homebrew/bin/whisper-cli.")
         else:
-            self.whisper_row.status.setText("waiting for Homebrew")
+            self.whisper_row.set_idle("waiting for Homebrew")
         if status.ffmpeg:
             self.ffmpeg_row.set_ok()
         elif status.brew:
-            self.ffmpeg_row.set_missing("brew install", self._install_ffmpeg)
+            self.ffmpeg_row.set_missing(
+                "brew install", self._install_ffmpeg,
+                reason="ffmpeg binary not found.")
         else:
-            self.ffmpeg_row.status.setText("waiting for Homebrew")
+            self.ffmpeg_row.set_idle("waiting for Homebrew")
         if status.model:
             self.model_row.set_ok()
         else:
-            self.model_row.set_missing("Download…", self._download_model)
-        self.close_btn.setEnabled(status.all_ok)
+            self.model_row.set_missing(
+                "Download…", self._download_model,
+                reason="large-v3-turbo model not downloaded yet (~1.5 GB).")
+        # Gate Continue on the full four-check set.
+        all_ok = (status.brew and status.whisper_cli
+                  and status.ffmpeg and status.model)
+        self.close_btn.setEnabled(all_ok)
 
     def _install_brew(self):
         """Homebrew's installer needs an interactive Terminal (sudo). Open
@@ -125,7 +206,7 @@ class FirstRunWizard(QDialog):
         self._refresh()
 
     def _install_whisper(self):
-        self.whisper_row.set_running("brew install whisper-cpp…")
+        self.whisper_row.set_running("installing…", sub="brew install whisper-cpp…")
 
         def run():
             p = deps.install_whisper_cpp()
@@ -134,7 +215,7 @@ class FirstRunWizard(QDialog):
         threading.Thread(target=run, daemon=True).start()
 
     def _install_ffmpeg(self):
-        self.ffmpeg_row.set_running("brew install ffmpeg…")
+        self.ffmpeg_row.set_running("installing…", sub="brew install ffmpeg…")
 
         def run():
             p = deps.install_ffmpeg()
@@ -146,12 +227,13 @@ class FirstRunWizard(QDialog):
         if ok:
             row.set_ok()
         else:
-            row.status.setText(f"✖ {err[:80]}")
-            row.status.setStyleSheet("color:#a04040;")
+            row.pill.setText("fail")
+            row.pill.set_kind("fail")
+            row._set_sub(err[:160] if err else "install failed")
         self._refresh()
 
     def _download_model(self):
-        self.model_row.set_running("downloading…")
+        self.model_row.set_running("downloading…", sub="fetching model file…")
         self.progress.setVisible(True)
         self.progress.setRange(0, 100)
 
@@ -170,7 +252,7 @@ class FirstRunWizard(QDialog):
     def _on_progress(self, kind: str, done: int, total: int):
         if total:
             self.progress.setValue(int(done * 100 / total))
-        self.model_row.status.setText(f"downloading… {done // (1024*1024)} MB")
+        self.model_row._set_sub(f"downloading… {done // (1024*1024)} MB")
 
 
 def show_wizard_if_needed(app) -> bool:
