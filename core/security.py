@@ -117,20 +117,17 @@ def safe_path_within(root: Path, target: Path) -> Path:
 # Model integrity
 # --------------------------------------------------------------------------- #
 
-# Canonical SHA256 digests of the GGML models we distribute via
-# model_download.py. Sourced from huggingface.co/ggerganov/whisper.cpp
-# (verify at https://huggingface.co/ggerganov/whisper.cpp/blob/main/<file>).
-# If a digest is None we accept the download unverified — better than
-# rejecting a genuine but newly-published model. Fill in as they stabilize.
-MODEL_SHA256: dict[str, Optional[str]] = {
-    # Values pinned from HF on 2026-04-20. Update when huggingface publishes
-    # a new revision.
-    "base":            "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe",
-    "small":           "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b",
-    "medium":          "6c14d5adee5f86394037b4e4e8b59f1673b6cee10e3cf0b11bbdbee79c156208",
-    "large-v3":        "64d182b440b98d5203c4f9bd541544d84c605196c4f7b845dfa11fb23594d1e2",
-    "large-v3-turbo":  "01bf15bedffe9f39d65c1b6ff9b687ea91f59f0e4eaf9175ab0f0cce2b4312dc",
-}
+# Model digests follow a Trust-On-First-Use (TOFU) policy.
+#
+# On the first successful download of a given model, we record the file's
+# SHA256 to ~/Library/Application Support/Paragraphos/model_hashes.yaml.
+# Every subsequent verification compares against that pinned value. If
+# huggingface.co starts serving a different binary (model updated, CDN
+# compromise, MITM), we raise loudly — the user decides whether to trust
+# the new hash by deleting the pin.
+#
+# No hard-coded digests: earlier pinned values were made-up placeholders
+# that would have caused every non-default model download to fail.
 
 
 def sha256_of(path: Path, chunk: int = 1 << 20) -> str:
@@ -144,17 +141,55 @@ def sha256_of(path: Path, chunk: int = 1 << 20) -> str:
     return h.hexdigest()
 
 
+def _model_hashes_path() -> Path:
+    """Where the TOFU pin file lives. Lazy import of paths.user_data_dir to
+    avoid importing the full UI stack just to compute a hash location."""
+    from core.paths import user_data_dir
+    return user_data_dir() / "model_hashes.yaml"
+
+
+def _load_pinned_hashes() -> dict[str, str]:
+    import yaml
+    p = _model_hashes_path()
+    if not p.exists():
+        return {}
+    try:
+        data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError:
+        return {}
+    return {str(k): str(v) for k, v in data.items() if isinstance(v, str)}
+
+
+def _save_pinned_hashes(pins: dict[str, str]) -> None:
+    import yaml
+    p = _model_hashes_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(yaml.safe_dump(pins, sort_keys=True), encoding="utf-8")
+
+
 def verify_model(path: Path, model_name: str) -> None:
-    """Raise ValueError if the file's SHA256 doesn't match the pinned digest."""
-    expected = MODEL_SHA256.get(model_name)
-    if expected is None:
-        # Unknown model — skip (don't block), but log upstream.
-        return
+    """Trust-On-First-Use integrity check.
+
+    - First time we see a given `model_name`: record its SHA256.
+    - Subsequent calls: compare against the pin; raise ValueError on
+      mismatch (the user decides whether to trust the new file by
+      deleting the pin from model_hashes.yaml).
+    """
     actual = sha256_of(path)
+    pins = _load_pinned_hashes()
+    expected = pins.get(model_name)
+    if expected is None:
+        pins[model_name] = actual
+        _save_pinned_hashes(pins)
+        return
     if actual != expected:
         raise ValueError(
-            f"model {model_name!r} failed SHA256 check: "
-            f"expected {expected}, got {actual}")
+            f"model {model_name!r} SHA256 changed:\n"
+            f"  expected (pinned): {expected}\n"
+            f"  actual (on disk):  {actual}\n"
+            f"If you trust the new file, delete the entry from\n"
+            f"  {_model_hashes_path()}\n"
+            f"and retry the download.")
 
 
 # --------------------------------------------------------------------------- #

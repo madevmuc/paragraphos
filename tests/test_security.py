@@ -85,16 +85,31 @@ def test_sha256_of(tmp_path: Path):
         "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
 
 
-def test_verify_model_unknown_name_passes(tmp_path: Path):
+def test_verify_model_first_use_pins_hash(tmp_path: Path, monkeypatch):
+    from core import security
+    pin_file = tmp_path / "pins.yaml"
+    monkeypatch.setattr(security, "_model_hashes_path", lambda: pin_file)
     p = tmp_path / "x.bin"; p.write_bytes(b"foo")
-    # No exception — unknown models skip the check.
-    verify_model(p, "totally-unknown-model")
+    verify_model(p, "new-model")  # first time — pins the sha
+    assert pin_file.exists()
+    assert "new-model" in security._load_pinned_hashes()
+
+
+def test_verify_model_second_use_matches(tmp_path: Path, monkeypatch):
+    from core import security
+    pin_file = tmp_path / "pins.yaml"
+    monkeypatch.setattr(security, "_model_hashes_path", lambda: pin_file)
+    p = tmp_path / "x.bin"; p.write_bytes(b"foo")
+    verify_model(p, "m")  # pins
+    verify_model(p, "m")  # matches — no error
 
 
 def test_verify_model_mismatch_raises(tmp_path: Path, monkeypatch):
     from core import security
-    monkeypatch.setitem(security.MODEL_SHA256, "fake-model",
-                        "0" * 64)
+    pin_file = tmp_path / "pins.yaml"
+    monkeypatch.setattr(security, "_model_hashes_path", lambda: pin_file)
     p = tmp_path / "x.bin"; p.write_bytes(b"foo")
-    with pytest.raises(ValueError, match="failed SHA256"):
-        verify_model(p, "fake-model")
+    verify_model(p, "m")  # pins sha256(b"foo")
+    p.write_bytes(b"bar")  # file swapped on disk
+    with pytest.raises(ValueError, match="SHA256 changed"):
+        verify_model(p, "m")
