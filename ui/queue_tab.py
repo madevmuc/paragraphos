@@ -5,10 +5,11 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtWidgets import (QHBoxLayout, QHeaderView, QLabel, QPushButton,
-                             QTableWidget, QTableWidgetItem, QVBoxLayout,
-                             QWidget)
+from PyQt6.QtWidgets import (QHBoxLayout, QHeaderView, QLabel, QMenu,
+                             QPushButton, QTableWidget, QTableWidgetItem,
+                             QVBoxLayout, QWidget)
 
+from ui.retranscribe import retranscribe_episode
 from ui.widgets.queue_hero import QueueHero
 
 
@@ -53,6 +54,8 @@ class QueueTab(QWidget):
             ["Show", "Pub Date", "Ep#", "Title", "Status"])
         self.table.horizontalHeader().setSectionResizeMode(
             3, QHeaderView.ResizeMode.Stretch)
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._on_context_menu)
         v.addWidget(self.table)
 
         h = QHBoxLayout()
@@ -217,11 +220,38 @@ class QueueTab(QWidget):
         for r in rows:
             row = self.table.rowCount()
             self.table.insertRow(row)
-            self.table.setItem(row, 0, QTableWidgetItem(r["show_slug"]))
+            show_item = QTableWidgetItem(r["show_slug"])
+            # Stash the guid on the first-column item so the context menu
+            # can retrieve it via UserRole data.
+            show_item.setData(Qt.ItemDataRole.UserRole, r["guid"])
+            self.table.setItem(row, 0, show_item)
             self.table.setItem(row, 1, QTableWidgetItem(r["pub_date"]))
             self.table.setItem(row, 2, QTableWidgetItem(""))  # episode_number not in state
             self.table.setItem(row, 3, QTableWidgetItem(r["title"]))
             self.table.setItem(row, 4, QTableWidgetItem(r["status"]))
+
+    # ── context menu ──────────────────────────────────────────
+
+    def _on_context_menu(self, pos) -> None:
+        index = self.table.indexAt(pos)
+        if not index.isValid():
+            return
+        item = self.table.item(index.row(), 0)
+        if item is None:
+            return
+        guid = item.data(Qt.ItemDataRole.UserRole)
+        if not guid:
+            return
+        menu = QMenu(self)
+        menu.addAction(
+            "Re-transcribe this episode",
+            lambda g=guid: self._retranscribe(g),
+        )
+        menu.exec(self.table.viewport().mapToGlobal(pos))
+
+    def _retranscribe(self, guid: str) -> None:
+        retranscribe_episode(self.ctx, guid)
+        self.refresh()
 
 
 def _fmt_duration(sec: float) -> str:

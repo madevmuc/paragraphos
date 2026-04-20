@@ -132,6 +132,11 @@ class StateStore:
             ).fetchall()
             return [dict(r) for r in rows]
 
+    def set_priority(self, guid: str, priority: int) -> None:
+        with self._conn() as c:
+            c.execute("UPDATE episodes SET priority=? WHERE guid=?",
+                      (priority, guid))
+
     def set_status(self, guid: str, status: EpisodeStatus,
                    *, error_text: Optional[str] = None) -> None:
         now = datetime.now(timezone.utc).isoformat()

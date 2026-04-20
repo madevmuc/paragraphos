@@ -14,11 +14,13 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (QCheckBox, QComboBox, QDialog, QFrame,
                              QGridLayout, QGroupBox, QHBoxLayout, QHeaderView,
-                             QLabel, QLineEdit, QMessageBox, QPlainTextEdit,
-                             QPushButton, QSizePolicy, QTableWidget,
-                             QTableWidgetItem, QVBoxLayout, QWidget)
+                             QLabel, QLineEdit, QMenu, QMessageBox,
+                             QPlainTextEdit, QPushButton, QSizePolicy,
+                             QTableWidget, QTableWidgetItem, QVBoxLayout,
+                             QWidget)
 
 from core.stats import compute_show_stats
+from ui.retranscribe import retranscribe_episode
 from ui.widgets.pill import Pill
 
 # Episode-status → Pill-kind mapping. `done` is the canonical success
@@ -274,7 +276,7 @@ class ShowDetailsDialog(QDialog):
 
         with self.ctx.state._conn() as c:
             rows = c.execute(
-                "SELECT pub_date, title, status "
+                "SELECT guid, pub_date, title, status "
                 "FROM episodes WHERE show_slug=? "
                 "ORDER BY pub_date DESC LIMIT 10",
                 (self.slug,),
@@ -284,6 +286,8 @@ class ShowDetailsDialog(QDialog):
         for i, r in enumerate(rows):
             date_item = QTableWidgetItem((r["pub_date"] or "")[:10])
             date_item.setFont(QFont("Menlo"))
+            # Stash guid on the date cell — retrievable from the context menu.
+            date_item.setData(Qt.ItemDataRole.UserRole, r["guid"])
             tbl.setItem(i, 0, date_item)
             tbl.setItem(i, 1, QTableWidgetItem(r["title"] or ""))
             status = (r["status"] or "").lower()
@@ -300,7 +304,35 @@ class ShowDetailsDialog(QDialog):
         # Size so ~10 rows are visible within the 440-tall dialog.
         tbl.setMinimumHeight(140)
         tbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+        # Right-click on a row → "Re-transcribe this episode".
+        self._episodes_tbl = tbl
+        tbl.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        tbl.customContextMenuRequested.connect(self._on_episode_context_menu)
         return tbl
+
+    def _on_episode_context_menu(self, pos) -> None:
+        tbl = self._episodes_tbl
+        index = tbl.indexAt(pos)
+        if not index.isValid():
+            return
+        date_item = tbl.item(index.row(), 0)
+        if date_item is None:
+            return
+        guid = date_item.data(Qt.ItemDataRole.UserRole)
+        if not guid:
+            return
+        menu = QMenu(self)
+        menu.addAction(
+            "Re-transcribe this episode",
+            lambda g=guid: self._retranscribe(g),
+        )
+        menu.exec(tbl.viewport().mapToGlobal(pos))
+
+    def _retranscribe(self, guid: str) -> None:
+        retranscribe_episode(self.ctx, guid)
+        # Refresh backlog label so the user sees the bump take effect.
+        self.backlog_lbl.setText(self._fmt_backlog())
 
     # ── footer ───────────────────────────────────────────────
 
