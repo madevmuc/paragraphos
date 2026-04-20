@@ -19,3 +19,26 @@ def test_is_newer():
 
 def test_is_newer_tolerates_extra_metadata():
     assert is_newer("v0.6.0-beta", "0.5.0")
+
+
+def test_check_for_update_uses_configured_repo(monkeypatch):
+    from core import updater
+    calls = []
+    class FakeResp:
+        status_code = 200
+        def json(self): return {"tag_name": "v1.1.0", "html_url": "x"}
+    def fake_get(url, **kw):
+        calls.append(url)
+        return FakeResp()
+    monkeypatch.setattr(updater.httpx, "get", fake_get)
+
+    import threading
+    notified = threading.Event()
+    updater.check_for_update(
+        local_version="1.0.0",
+        on_update_available=lambda t, u: notified.set(),
+        repo="alice/paragraphos-fork",
+        timeout=1.0,
+    )
+    notified.wait(timeout=2.0)
+    assert any("alice/paragraphos-fork" in u for u in calls)

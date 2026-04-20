@@ -70,6 +70,7 @@ class Settings(BaseModel):
     # raw/.last_compiled, the Shows tab shows a 'N transcripts since last
     # compile' banner. Empty string disables the banner.
     knowledge_hub_root: str = "~/dev/knowledge-hub"
+    github_repo: str = "m4ma/paragraphos"  # override if you forked
 
     @field_validator("daily_check_time")
     @classmethod

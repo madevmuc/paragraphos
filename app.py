@@ -83,6 +83,7 @@ class ParagraphosApp(QObject):
                 "Paragraphos update available",
                 f"{tag} is out — you have v{_LOCAL_VERSION}. Click to open the release page.",
             ),
+            repo=self.ctx.settings.github_repo,
         )
 
         if not QSystemTrayIcon.isSystemTrayAvailable():

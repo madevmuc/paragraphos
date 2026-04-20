@@ -20,8 +20,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 # Override in tests or when someone forks the repo.
-GITHUB_REPO = "m4ma/paragraphos"
-RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+DEFAULT_GITHUB_REPO = "m4ma/paragraphos"
 
 
 def _parse_semver(tag: str) -> tuple[int, int, int]:
@@ -49,13 +48,16 @@ def is_newer(remote: str, local: str) -> bool:
 
 def check_for_update(local_version: str,
                      on_update_available: Callable[[str, str], None],
-                     *, timeout: float = 8.0) -> None:
+                     *, repo: Optional[str] = None,
+                     timeout: float = 8.0) -> None:
     """Fire-and-forget: starts a daemon thread, calls
     on_update_available(remote_tag, url) if a newer version is out.
     Silent on network errors."""
+    repo_slug = repo or DEFAULT_GITHUB_REPO
+    releases_api = f"https://api.github.com/repos/{repo_slug}/releases/latest"
     def run() -> None:
         try:
-            r = httpx.get(RELEASES_API, timeout=timeout,
+            r = httpx.get(releases_api, timeout=timeout,
                           headers={"Accept": "application/vnd.github+json",
                                    "User-Agent": "paragraphos/updater"})
             if r.status_code != 200:
