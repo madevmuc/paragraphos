@@ -17,9 +17,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from PyQt6.QtCore import QEvent, QObject, QTimer, pyqtSignal
-from PyQt6.QtGui import QAction, QFileOpenEvent, QIcon, QPixmap, QPainter, QColor, QFont
+from PyQt6.QtGui import QFileOpenEvent, QIcon, QPixmap, QPainter, QColor, QFont
 from PyQt6.QtWidgets import (QAbstractSpinBox, QApplication, QComboBox,
-                             QFileDialog, QLineEdit, QMenu, QMessageBox,
+                             QFileDialog, QLineEdit, QMessageBox,
                              QPlainTextEdit, QSystemTrayIcon, QTextEdit)
 
 from core.logger import setup_logging  # noqa: E402
@@ -94,18 +94,7 @@ class ParagraphosApp(QObject):
         self.tray.setToolTip("Paragraphos")
         self.tray.activated.connect(self._on_tray_activated)
 
-        menu = QMenu()
-        open_a = QAction("Open", menu); open_a.triggered.connect(self.open_window)
-        check_a = QAction("Check Now", menu); check_a.triggered.connect(self._run_check)
-        opml_a = QAction("Import OPML…", menu); opml_a.triggered.connect(self._import_opml)
-        quit_a = QAction("Quit", menu); quit_a.triggered.connect(self.quit_with_confirm)
-        for a in (open_a, check_a):
-            menu.addAction(a)
-        menu.addSeparator()
-        menu.addAction(opml_a)
-        menu.addSeparator()
-        menu.addAction(quit_a)
-        self.tray.setContextMenu(menu)
+        self._rebuild_tray_menu(running=False)
         self.tray.show()
         print(f"paragraphos ready — tray visible={self.tray.isVisible()}, "
               f"system-tray-available={QSystemTrayIcon.isSystemTrayAvailable()}",
@@ -130,6 +119,23 @@ class ParagraphosApp(QObject):
         ):
             # Fire AFTER the window opens (300ms) so ShowsTab owns the thread.
             QTimer.singleShot(2500, self._run_check)
+
+    def _rebuild_tray_menu(self, *, running: bool, done: int = 0,
+                           total: int = 0, current_title: str = "",
+                           eta_sec: int | None = None) -> None:
+        """Rebuild the tray context menu, swapping between idle and a
+        rich status block while a queue run is active. Keeps a strong
+        reference on `self` so the QMenu is not GC'd while shown."""
+        from ui.menu_bar import build_tray_menu
+        self._tray_menu = build_tray_menu(
+            running=running, done=done, total=total,
+            current_title=current_title, eta_sec=eta_sec,
+            on_open=self.open_window,
+            on_check_now=self._run_check,
+            on_import_opml=self._import_opml,
+            on_quit=self.quit_with_confirm,
+        )
+        self.tray.setContextMenu(self._tray_menu)
 
     def _on_tray_activated(self, reason):
         # Single-click on macOS tray opens the window; Qt's default context menu
@@ -178,6 +184,16 @@ class ParagraphosApp(QObject):
         # Live tray icon — renders current fraction while a run is active.
         self.tray.setIcon(self._icon_renderer.render(
             done_idx, total, running=True))
+        # Rich status block in the tray context menu — rebuilt on every
+        # episode_done tick so the fraction / ETA / Now line stay live.
+        q = self.ctx.queue
+        eta = (int(q.effective_avg_sec * (total - done_idx))
+               if q.effective_avg_sec else None)
+        self._rebuild_tray_menu(
+            running=True, done=done_idx, total=total,
+            current_title=f"{show_title} — {ep_title}",
+            eta_sec=eta,
+        )
         # Tally into the rolling run-summary — used by daily_summary mode.
         self._run_tally.setdefault(action, 0)
         self._run_tally[action] += 1
@@ -272,6 +288,8 @@ class ParagraphosApp(QObject):
                     " · ".join(parts) + "\n"
                     + f"First: {t.get('_first_ep_title') or '—'}")
         self._run_tally = {}
+        # Revert tray context menu to the idle shape.
+        self._rebuild_tray_menu(running=False)
         # Briefly show ✓ on the tray, then revert to idle 'P'.
         self.tray.setIcon(self._icon_renderer.render(override_text="✓"))
         QTimer.singleShot(5000, lambda: self.tray.setIcon(

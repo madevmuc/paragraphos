@@ -10,7 +10,19 @@ import webbrowser
 from pathlib import Path
 
 from PyQt6.QtGui import QAction, QKeySequence
-from PyQt6.QtWidgets import QApplication, QMenuBar
+from PyQt6.QtWidgets import (
+    QApplication,
+    QHBoxLayout,
+    QLabel,
+    QMenu,
+    QMenuBar,
+    QProgressBar,
+    QVBoxLayout,
+    QWidget,
+    QWidgetAction,
+)
+
+from ui.widgets.pill import Pill
 
 
 def build_menu_bar(window) -> QMenuBar:
@@ -259,3 +271,102 @@ def _open_log_folder(window) -> None:
     logs = window.ctx.data_dir / "logs"
     logs.mkdir(exist_ok=True)
     subprocess.run(["open", str(logs)])
+
+
+# ── tray context menu ─────────────────────────────────────────────
+#
+# Builder for the QSystemTrayIcon context menu. When a queue run is
+# active, the top of the menu gets a rich status block (pill, fraction,
+# ETA, thin progress bar, "Now: …" line) rendered via a QWidgetAction.
+# When idle, the menu is the plain Open / Check Now / Import OPML /
+# Quit shape (kept close to what `app.py` used to build inline).
+
+def _fmt_eta(sec: int | None) -> str:
+    if sec is None or sec <= 0:
+        return ""
+    if sec < 60:
+        return f"{int(sec)}s"
+    mins = int(sec // 60)
+    if mins < 60:
+        return f"{mins}m"
+    hrs = mins // 60
+    rem = mins % 60
+    return f"{hrs}h {rem}m" if rem else f"{hrs}h"
+
+
+def _build_status_block(done: int, total: int, current_title: str,
+                        eta_sec: int | None) -> QWidget:
+    w = QWidget()
+    w.setFixedWidth(280)
+    v = QVBoxLayout(w)
+    v.setContentsMargins(10, 8, 10, 8)
+    v.setSpacing(4)
+
+    # Row 1: pill · fraction · stretch · ETA
+    h1 = QHBoxLayout()
+    h1.setSpacing(6)
+    h1.addWidget(Pill("running", kind="running"))
+    frac_lbl = QLabel(f"{done}/{total}")
+    frac_lbl.setStyleSheet("font-weight: 600;")
+    h1.addWidget(frac_lbl)
+    h1.addStretch()
+    eta_text = f"ETA {_fmt_eta(eta_sec)}" if eta_sec else ""
+    eta_lbl = QLabel(eta_text)
+    eta_lbl.setStyleSheet("color: palette(mid);")
+    h1.addWidget(eta_lbl)
+    v.addLayout(h1)
+
+    # Row 2: thin progress bar styled with accent token.
+    pb = QProgressBar()
+    pb.setRange(0, max(total, 1))
+    pb.setValue(max(0, min(done, total)))
+    pb.setTextVisible(False)
+    pb.setFixedHeight(6)
+    pb.setStyleSheet(
+        "QProgressBar { border: none; background: rgba(0,0,0,25); "
+        "border-radius: 3px; } "
+        "QProgressBar::chunk { background: #b47a3a; border-radius: 3px; }"
+    )
+    v.addWidget(pb)
+
+    # Row 3: "Now: <truncated title>"
+    trunc = (current_title[:67] + "…") if len(current_title) > 70 else current_title
+    nw = QLabel(f"Now: {trunc}" if trunc else "Now: —")
+    nw.setStyleSheet("color: palette(mid); font-size: 11px;")
+    v.addWidget(nw)
+    return w
+
+
+def build_tray_menu(*, running: bool, done: int = 0, total: int = 0,
+                    current_title: str = "", eta_sec: int | None = None,
+                    on_open=None, on_check_now=None, on_import_opml=None,
+                    on_quit=None) -> QMenu:
+    """Build the QSystemTrayIcon context menu.
+
+    When `running=True` and `total>0`, the top of the menu is a
+    QWidgetAction with a rich status block (pill / fraction / ETA /
+    progress bar / Now title). Otherwise the menu is the plain idle
+    shape. All callbacks are optional; missing ones render the action
+    disabled.
+    """
+    menu = QMenu()
+    if running and total > 0:
+        wa = QWidgetAction(menu)
+        wa.setDefaultWidget(_build_status_block(done, total, current_title, eta_sec))
+        menu.addAction(wa)
+        menu.addSeparator()
+
+    def _add(label: str, cb) -> None:
+        act = menu.addAction(label)
+        if cb is None:
+            act.setEnabled(False)
+        else:
+            act.triggered.connect(cb)
+
+    _add("Open", on_open)
+    _add("Check Now", on_check_now)
+    menu.addSeparator()
+    _add("Import OPML…", on_import_opml)
+    menu.addSeparator()
+    _add("Quit", on_quit)
+    return menu
