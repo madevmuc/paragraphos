@@ -436,6 +436,8 @@ def main() -> int:
     app = ParagraphosApp()
     qapp.file_opened.connect(app.on_file_dropped)
     qapp.quit_requested.connect(app.quit_with_confirm)
+    from core.http import close_client
+    qapp.aboutToQuit.connect(close_client)
     ParagraphosApp.instance = app  # keep reference
     return qapp.exec()
 
