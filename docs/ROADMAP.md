@@ -1,5 +1,10 @@
 # Paragraphos Roadmap — v0.5 → v1.0
 
+> **Status:** v1.0 shipped 2026-04-21 — this roadmap is now historical.
+> See `docs/plans/2026-04-20-ship-v1.md` for the execution plan that
+> closed it out, and `CHANGELOG.md` for the v1.0.0 entry. Future work
+> is tracked in GitHub issues.
+
 > **For Claude:** REQUIRED SUB-SKILL: `superpowers:executing-plans`.
 
 **Scope:** everything from the 2026-04-20 improvement brainstorm **except**:
