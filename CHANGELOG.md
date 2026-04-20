@@ -1,5 +1,68 @@
 # Paragraphos Changelog
 
+## v1.0.0 — 2026-04-21 (ship v1.0)
+
+First public release. Closes every deferred item from the Phase 0–6 roadmap.
+
+### Foundations
+- `core/version.py` as the single source of truth for the app version;
+  every `setup*.py`, `pyproject.toml`, About dialog, DMG script, and
+  test asserts against this symbol.
+- `Settings.github_repo` makes the update-check endpoint configurable
+  for forks.
+- `core/http.py` threaded through downloader/rss/scrape/model_download/
+  updater: one thread-safe, HTTP/2-gated `httpx.Client` for the whole
+  app, closed on `QApplication.aboutToQuit`.
+- Spot-check tray notification now respects `notify_mode="off"`.
+- Integration suite gets a 5-s silent MP3 fixture and graceful skip
+  when the ggml-base model isn't installed locally.
+
+### Design refresh (Phase 6 screens)
+- Sidebar + `QStackedWidget` replaces the top `QTabWidget`. Live
+  Shows/Queue/Failed counts.
+- Shows tab filter toolbar with a popover, `QSettings`-persisted state,
+  active-filter count `Pill`, and `Pill`-based Feed column that
+  actually filters on feed health now.
+- Queue hero dashboard with `ProgressRing` + human-framed finish time
+  ("before lunch", "this afternoon", "tomorrow morning").
+- Failed tab restyle — humanised error reasons + per-row ⋯ action menu
+  (Retry · Mark resolved · Show log · Copy error · Skip forever).
+- Settings inline hints per field with `"info"` (muted/italic) and
+  `"good"` (green/check) kinds; Hardware recommendation split into
+  seeder value + hint label.
+- First-run wizard restyle: pills per check, line-soft dividers, muted
+  sub-copy, Continue disabled until all four deps are ok.
+- Add Podcast: 3-mode segmented dialog (By name · By URL · Paste Apple
+  link) with off-thread feed fetch.
+- Show Details restyle — 620×440 with artwork header, recent-episodes
+  table with status pills, Advanced disclosure for title / whisper
+  prompt / language.
+- Tray menu rebuilds per `episode_done` with a rich `QWidgetAction`
+  status block (pill · fraction · ETA · progress bar · current ep).
+
+### Performance
+- Concurrent RSS refresh via `ThreadPoolExecutor`, capped at
+  `settings.rss_concurrency`.
+- Parallel download + transcribe — two-thread pipeline sharing a
+  bounded `queue.Queue` for backpressure and per-host download cap.
+- RSS conditional GET (ETag / If-Modified-Since): 304 short-circuits
+  the parse step for unchanged feeds.
+- Queue table rebuild throttled to 3 s with coalesced refresh requests.
+
+### Features
+- Re-transcribe a single episode from Queue or Show Details:
+  status → pending, priority → 10, existing `.md` → `.md.bak` for
+  diffing later.
+- Bulk actions in Shows tab: Disable / Enable / Mark stale / Delete
+  (with confirm) across multi-selected rows.
+- Transcript diff dialog (`difflib.HtmlDiff`) available wherever a
+  `.md.bak` sibling exists.
+
+### Housekeeping
+- Ruff auto-fixes + formatter pass across the codebase.
+- Real F821 fix in first-run wizard model-download fallback and
+  unused-var cleanup in `tests/test_state.py`.
+
 ## v0.7.0 — 2026-04-20 (Phase 6 design foundation)
 
 - `ui/widgets/`: `_tokens.py`, `pill.py`, `sidebar.py`,
