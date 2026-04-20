@@ -1,9 +1,12 @@
-"""Bridge: expose existing per-show whisper_prompts from scripts/transcribe.py.
+"""Expose curated whisper_prompts for the built-in real-estate shows.
 
-When Paragraphos runs inside a bundled .app on a different Mac (or anywhere that
-doesn't have the knowledge-hub repo at ../transcribe.py), SHOWS_PROMPTS is an
-empty dict — the CLI `import-feeds` then just creates shows with empty
-prompts, and the user fills them via the Show Details dialog.
+Precedence (first hit wins):
+
+1. `data/default_prompts.yaml` inside the Paragraphos repo — the snapshot
+   that travels with the repo after extraction from knowledge-hub.
+2. Legacy `../transcribe.py` in the same source tree — kept for continuity
+   while Paragraphos code still lives under knowledge-hub.
+3. Empty dict — bundled `.app` installs on any other machine.
 """
 
 from __future__ import annotations
@@ -12,10 +15,22 @@ import importlib.util
 import sys
 from pathlib import Path
 
-_LEGACY = Path(__file__).resolve().parent.parent / "transcribe.py"
+import yaml
+
 SHOWS_PROMPTS: dict[str, str] = {}
 
-if _LEGACY.exists():
+_HERE = Path(__file__).resolve().parent
+_YAML = _HERE / "data" / "default_prompts.yaml"
+_LEGACY = _HERE.parent / "transcribe.py"
+
+if _YAML.exists():
+    try:
+        data = yaml.safe_load(_YAML.read_text(encoding="utf-8")) or {}
+        if isinstance(data, dict):
+            SHOWS_PROMPTS = {str(k): str(v) for k, v in data.items()}
+    except yaml.YAMLError:
+        SHOWS_PROMPTS = {}
+elif _LEGACY.exists():
     try:
         _spec = importlib.util.spec_from_file_location("_legacy_transcribe", _LEGACY)
         _mod = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]

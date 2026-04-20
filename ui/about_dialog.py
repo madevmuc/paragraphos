@@ -8,8 +8,8 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (QDialog, QLabel, QPushButton, QScrollArea,
                              QTabWidget, QTextBrowser, QVBoxLayout, QWidget)
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-CHANGELOG_PATH = REPO_ROOT / "scripts" / "paragraphos" / "CHANGELOG.md"
+# CHANGELOG.md sits at the Paragraphos repo root, one level above `ui/`.
+CHANGELOG_PATH = Path(__file__).resolve().parent.parent / "CHANGELOG.md"
 
 
 # (name, version-rough, license-SPDX, project URL)

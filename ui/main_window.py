@@ -43,8 +43,11 @@ def _fmt_dt_locale(dt) -> str:
     if "yyyy" not in date_fmt:
         date_fmt = date_fmt.replace("yy", "yyyy")
     return loc.toString(qdt, f"ddd, {date_fmt} HH:mm")
-REPO_ROOT = Path(__file__).resolve().parents[3]
-LAST_COMPILED = REPO_ROOT / "raw" / ".last_compiled"
+def _last_compiled_path(ctx) -> Path:
+    """Path to the knowledge-hub's compile marker, driven by settings so the
+    banner works after Paragraphos is extracted into its own repo."""
+    root = Path(ctx.settings.knowledge_hub_root).expanduser()
+    return root / "raw" / ".last_compiled"
 
 
 class MainWindow(QMainWindow):
@@ -167,8 +170,9 @@ class MainWindow(QMainWindow):
             self.banner.setVisible(False)
             return
         last_compiled_mtime = 0.0
-        if LAST_COMPILED.exists():
-            last_compiled_mtime = LAST_COMPILED.stat().st_mtime
+        lc = _last_compiled_path(self.ctx)
+        if lc.exists():
+            last_compiled_mtime = lc.stat().st_mtime
         new_count = 0
         for md in output_root.rglob("*.md"):
             if md.name == "index.md":

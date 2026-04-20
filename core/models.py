@@ -55,6 +55,11 @@ class Settings(BaseModel):
     export_root: str = "~/Downloads"
     whisper_model: str = "large-v3-turbo"
     log_retention_days: int = 90
+    # Optional external knowledge-base root (e.g. an Obsidian vault /
+    # knowledge-hub repo). When set AND the directory contains
+    # raw/.last_compiled, the Shows tab shows a 'N transcripts since last
+    # compile' banner. Empty string disables the banner.
+    knowledge_hub_root: str = "~/dev/knowledge-hub"
 
     @field_validator("daily_check_time")
     @classmethod

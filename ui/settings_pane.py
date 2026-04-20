@@ -76,6 +76,13 @@ class SettingsPane(QWidget):
         self.obsidian_name = QLineEdit(self.ctx.settings.obsidian_vault_name)
         self.obsidian_name.textChanged.connect(self._schedule_save)
         f1.addRow("Obsidian vault name", self.obsidian_name)
+
+        self.kb_root = QLineEdit(self.ctx.settings.knowledge_hub_root)
+        self.kb_root.textChanged.connect(self._schedule_save)
+        kb_row = QHBoxLayout(); kb_row.addWidget(self.kb_root)
+        kb_pick = QPushButton("Browse…"); kb_pick.clicked.connect(self._pick_kb_root)
+        kb_row.addWidget(kb_pick)
+        f1.addRow("Knowledge-hub root (optional)", kb_row)
         root.addLayout(f1)
 
         # ── Schedule & monitoring ──────────────────────────────
@@ -197,6 +204,12 @@ class SettingsPane(QWidget):
         d = QFileDialog.getExistingDirectory(self, "Pick output root", start)
         if d: self.output.setText(d)
 
+    def _pick_kb_root(self):
+        start = str(Path(self.kb_root.text() or "~").expanduser())
+        d = QFileDialog.getExistingDirectory(self, "Pick knowledge-hub root", start)
+        if d:
+            self.kb_root.setText(d)
+
     def _pick_obsidian(self):
         start = str(Path(self.obsidian_path.text()).expanduser())
         d = QFileDialog.getExistingDirectory(self, "Pick Obsidian vault", start)
@@ -261,6 +274,7 @@ class SettingsPane(QWidget):
         s.parallel_transcribe = self.parallel.value()
         s.obsidian_vault_path = self.obsidian_path.text()
         s.obsidian_vault_name = self.obsidian_name.text()
+        s.knowledge_hub_root = self.kb_root.text()
         s.export_root = self.export_root.text()
         s.whisper_model = self.model.currentText()
         s.log_retention_days = self.log_retention.value()
