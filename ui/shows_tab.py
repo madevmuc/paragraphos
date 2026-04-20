@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QSettings, Qt
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (QHBoxLayout, QHeaderView, QLabel, QMenu,
                              QMessageBox, QPushButton, QTableWidget,
@@ -10,6 +10,9 @@ from PyQt6.QtWidgets import (QHBoxLayout, QHeaderView, QLabel, QMenu,
 
 from core.state import EpisodeStatus
 from ui.app_context import AppContext
+from ui.widgets import FilterPopover, Pill
+
+FEED_COL = 6
 
 
 class ShowsTab(QWidget):
@@ -26,14 +29,26 @@ class ShowsTab(QWidget):
             "padding:8px 12px; background:palette(alternate-base); border-radius:4px;")
         self.global_stats_label.setTextFormat(Qt.TextFormat.RichText)
         layout.addWidget(self.global_stats_label)
-        # Filter / search toolbar
+
+        # Filter toolbar — summary label on the left, filter button + count
+        # pill on the right. The legacy standalone QLineEdit search was
+        # folded into FilterPopover's "search" field.
         filter_row = QHBoxLayout()
-        from PyQt6.QtWidgets import QLineEdit
-        self.search = QLineEdit()
-        self.search.setPlaceholderText("Filter shows by title or slug…")
-        self.search.textChanged.connect(self._apply_filter)
-        filter_row.addWidget(self.search)
+        self._summary = QLabel()
+        self._summary.setProperty("class", "muted")
+        filter_row.addWidget(self._summary)
+        filter_row.addStretch()
+        self._filter_count_pill = Pill("0", kind="ok")
+        self._filter_count_pill.hide()
+        self._filter_btn = QPushButton("▾ Filter")
+        self._filter_btn.clicked.connect(self._open_filter_popover)
+        filter_row.addWidget(self._filter_count_pill)
+        filter_row.addWidget(self._filter_btn)
         layout.addLayout(filter_row)
+
+        _qs = QSettings("m4ma", "Paragraphos")
+        self._active_filters = _qs.value("shows/filters", {}, type=dict) or {}
+        self._feed_pills: dict[str, Pill] = {}
 
         self.table = QTableWidget(0, 7)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -93,7 +108,13 @@ class ShowsTab(QWidget):
     def refresh(self) -> None:
         self._update_global_stats()
         self.table.setRowCount(0)
+        self._feed_pills.clear()
+        total_shows = len(self.ctx.watchlist.shows)
+        visible = 0
         for show in self.ctx.watchlist.shows:
+            if not self._show_matches_filters(show):
+                continue
+            visible += 1
             with self.ctx.state._conn() as c:
                 total = c.execute(
                     "SELECT COUNT(*) FROM episodes WHERE show_slug=?",
@@ -127,8 +148,53 @@ class ShowsTab(QWidget):
             self.table.setItem(row, 3, QTableWidgetItem(str(total)))
             self.table.setItem(row, 4, QTableWidgetItem(str(done)))
             self.table.setItem(row, 5, QTableWidgetItem(str(pend)))
-            # Feed badge starts as "?"; filled in async-style on demand via "Check feeds" button.
-            self.table.setItem(row, 6, QTableWidgetItem("?"))
+            # Feed column hosts a Pill widget (starts idle "?"); filled in
+            # on demand by _check_feed_health.
+            pill_container = QWidget()
+            h = QHBoxLayout(pill_container)
+            h.setContentsMargins(2, 2, 2, 2)
+            pill = Pill("?", kind="idle")
+            h.addWidget(pill)
+            self.table.setCellWidget(row, FEED_COL, pill_container)
+            self._feed_pills[show.slug] = pill
+
+        self._summary.setText(
+            f"Showing {visible} of {total_shows}"
+            + (" · filtered" if visible != total_shows else "")
+        )
+        n_active = sum(1 for v in self._active_filters.values() if v)
+        self._filter_count_pill.setText(str(n_active))
+        self._filter_count_pill.setVisible(n_active > 0)
+
+    def _show_matches_filters(self, show) -> bool:
+        f = self._active_filters
+        if f.get("enabled_only") and not show.enabled:
+            return False
+        needle = (f.get("search", "") or "").lower()
+        if needle and needle not in show.slug.lower() \
+                and needle not in show.title.lower():
+            return False
+        if f.get("has_pending") and not self._row_count(show.slug, "pending"):
+            return False
+        if f.get("has_failed") and not self._row_count(show.slug, "failed"):
+            return False
+        return True
+
+    def _row_count(self, slug: str, status: str) -> int:
+        with self.ctx.state._conn() as c:
+            return c.execute(
+                "SELECT COUNT(*) FROM episodes WHERE show_slug=? AND status=?",
+                (slug, status)).fetchone()[0]
+
+    def _open_filter_popover(self) -> None:
+        pop = FilterPopover(initial=self._active_filters, parent=self)
+        pop.applied.connect(self._on_filters_applied)
+        pop.show_at_button(self._filter_btn)
+
+    def _on_filters_applied(self, state: dict) -> None:
+        self._active_filters = state
+        QSettings("m4ma", "Paragraphos").setValue("shows/filters", state)
+        self.refresh()
 
     def _context_menu(self, pos):
         row = self.table.rowAt(pos.y())
@@ -151,14 +217,6 @@ class ShowsTab(QWidget):
         menu.addSeparator()
         menu.addAction(pause_act)
         menu.exec(self.table.viewport().mapToGlobal(pos))
-
-    def _apply_filter(self) -> None:
-        needle = self.search.text().lower().strip()
-        for r in range(self.table.rowCount()):
-            slug = (self.table.item(r, 0).text() or "").lower()
-            title = (self.table.item(r, 1).text() or "").lower()
-            visible = not needle or needle in slug or needle in title
-            self.table.setRowHidden(r, not visible)
 
     def _toggle_show_pause(self, slug: str) -> None:
         key = f"show_paused:{slug}"
@@ -308,8 +366,11 @@ class ShowsTab(QWidget):
             if not show:
                 continue
             health = FeedHealth.check(show.rss, timeout=8)
-            self.table.setItem(row, 6, QTableWidgetItem(
-                "✅" if health.ok else f"⚠ {health.reason}"))
+            pill = self._feed_pills.get(slug)
+            if pill is None:
+                continue
+            pill.set_kind("ok" if health.ok else "fail")
+            pill.setText("✅" if health.ok else f"⚠ {health.reason}")
 
     def _toggle(self, slug: str) -> None:
         for show in self.ctx.watchlist.shows:
