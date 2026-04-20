@@ -192,6 +192,63 @@ def historical_avg_transcribe_sec(state, *, sample_limit: int = 50) -> float:
     return sum(deltas) / len(deltas)
 
 
+_PROMPT_WORDRE = re.compile(r"[A-Za-zÄÖÜäöüß][A-Za-zÄÖÜäöüß\-]{2,}")
+
+
+def prompt_coverage(prompt: str, sample_texts: list[str]) -> float:
+    """Fraction of distinct ≥3-letter prompt tokens that appear in the
+    concatenated sample texts (case-insensitive).
+
+    Used to detect stale whisper_prompts: if an author lists domain
+    terms that the actual transcripts never contain, the prompt isn't
+    steering the model. Low coverage (< 0.2) is flagged as a badge
+    in the Shows tab.
+    """
+    if not prompt.strip() or not sample_texts:
+        return 0.0
+    tokens = {m.group(0).lower() for m in _PROMPT_WORDRE.finditer(prompt)}
+    if not tokens:
+        return 0.0
+    blob = " ".join(sample_texts).lower()
+    hit = sum(1 for t in tokens if t in blob)
+    return hit / len(tokens)
+
+
+def show_prompt_coverage(state, slug: str, prompt: str,
+                         sample_limit: int = 10) -> tuple[int, float]:
+    """Sample the last `sample_limit` DONE episodes of `slug` and return
+    `(n_sampled, coverage)`. Caller renders the badge when
+    n ≥ 5 and coverage < 0.2."""
+    with state._conn() as c:
+        rows = c.execute(
+            "SELECT transcript_path FROM episodes "
+            "WHERE show_slug=? AND status='done' "
+            "AND transcript_path IS NOT NULL "
+            "ORDER BY completed_at DESC LIMIT ?",
+            (slug, sample_limit),
+        ).fetchall()
+    if not rows:
+        return 0, 0.0
+    samples: list[str] = []
+    for r in rows:
+        p = Path(r["transcript_path"] or "")
+        if not p.exists():
+            continue
+        try:
+            text = p.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        # Skip frontmatter block so only the transcript body is sampled.
+        if text.startswith("---"):
+            end = text.find("\n---", 3)
+            if end != -1:
+                text = text[end + 4:]
+        samples.append(text)
+    if not samples:
+        return 0, 0.0
+    return len(samples), prompt_coverage(prompt, samples)
+
+
 def format_duration(seconds: int) -> str:
     if seconds <= 0:
         return "0m"

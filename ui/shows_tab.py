@@ -94,7 +94,22 @@ class ShowsTab(QWidget):
             row = self.table.rowCount()
             self.table.insertRow(row)
             self.table.setItem(row, 0, QTableWidgetItem(show.slug))
-            self.table.setItem(row, 1, QTableWidgetItem(show.title))
+            # Prompt-quality flag: if the last N transcripts ignore most
+            # of the prompt terms, add a ⚠ before the title. Cheap read —
+            # runs only on done rows, no network.
+            from core.stats import show_prompt_coverage
+            n, cov = show_prompt_coverage(self.ctx.state, show.slug,
+                                           show.whisper_prompt)
+            title_text = show.title
+            if n >= 5 and cov < 0.2:
+                title_text = f"⚠ {title_text}"
+            title_item = QTableWidgetItem(title_text)
+            if n >= 5 and cov < 0.2:
+                title_item.setToolTip(
+                    f"whisper_prompt coverage is low: only "
+                    f"{cov*100:.0f}% of prompt terms appear in the last "
+                    f"{n} transcripts. Consider updating the prompt.")
+            self.table.setItem(row, 1, title_item)
             self.table.setItem(row, 2, QTableWidgetItem("✓" if show.enabled else ""))
             self.table.setItem(row, 3, QTableWidgetItem(str(total)))
             self.table.setItem(row, 4, QTableWidgetItem(str(done)))

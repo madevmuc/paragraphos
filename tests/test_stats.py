@@ -77,3 +77,36 @@ def test_rescan_library_counts(tmp_path: Path):
     ep = db.get_episode("gg")
     assert ep["word_count"] == 500
     assert ep["duration_sec"] == 10 * 60 + 30
+
+
+def test_prompt_coverage_empty_inputs():
+    from core.stats import prompt_coverage
+    assert prompt_coverage("", ["blah"]) == 0.0
+    assert prompt_coverage("foo, bar", []) == 0.0
+
+
+def test_prompt_coverage_basic():
+    from core.stats import prompt_coverage
+    prompt = "KfW, Grunderwerbsteuer, Mietspiegel, Kapitalanlage"
+    transcripts = [
+        "Die KfW-Förderung und die Grunderwerbsteuer sind wichtig.",
+        "Wer Kapitalanlage sucht, sollte den Mietspiegel kennen.",
+    ]
+    # All 4 tokens appear
+    assert prompt_coverage(prompt, transcripts) == 1.0
+
+
+def test_prompt_coverage_partial():
+    from core.stats import prompt_coverage
+    prompt = "Alpha, Beta, Gamma, Delta, Epsilon"
+    transcripts = ["Alpha appears. Beta appears."]
+    # 2 of 5 = 0.4
+    assert abs(prompt_coverage(prompt, transcripts) - 0.4) < 0.01
+
+
+def test_prompt_coverage_low_triggers_flag_threshold():
+    from core.stats import prompt_coverage
+    prompt = "KfW, Grunderwerbsteuer, Mietspiegel, Kapitalanlage, Rendite, Zinsbindung"
+    # Entirely unrelated transcripts
+    transcripts = ["Ich ging heute in den Supermarkt und kaufte Brot."]
+    assert prompt_coverage(prompt, transcripts) < 0.2
