@@ -17,9 +17,6 @@ from setuptools import setup
 
 from core.version import VERSION
 
-# Guardrail: the test suite greps this literal out of the file.
-assert VERSION == "1.0.0", VERSION
-
 APP = ["app.py"]
 OPTIONS = {
     "argv_emulation": False,

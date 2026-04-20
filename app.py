@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (QAbstractSpinBox, QApplication, QComboBox,
 from core.logger import setup_logging  # noqa: E402
 from core.paths import migrate_from_legacy, user_data_dir  # noqa: E402
 from core.scheduler import should_catch_up  # noqa: E402
+from core.version import VERSION as _LOCAL_VERSION  # noqa: E402
 from ui.app_context import AppContext  # noqa: E402
 from ui.first_run_wizard import show_wizard_if_needed  # noqa: E402
 from ui.main_window import MainWindow  # noqa: E402
@@ -39,8 +40,6 @@ if _migrated:
     print(f"migrated user data to ~/Library/Application Support/Paragraphos/: "
           f"{_migrated}", flush=True)
 DATA_DIR = user_data_dir()
-# Kept in sync with setup.py / setup-full.py CFBundleShortVersionString.
-from core.version import VERSION as _LOCAL_VERSION  # noqa: E402
 
 
 def _build_icon() -> QIcon:
