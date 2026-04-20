@@ -55,6 +55,14 @@ class Settings(BaseModel):
     export_root: str = "~/Downloads"
     whisper_model: str = "large-v3-turbo"
     log_retention_days: int = 90
+    # Performance toggles (Phase 1.5)
+    whisper_fast_mode: bool = False  # beam=1/best=1/-ac 0, ~2-3× speedup, lower quality
+    whisper_multiproc: int = 1       # whisper-cli -p N file split (1 = off)
+    rss_concurrency: int = 8         # parallel feed fetches per check
+    download_concurrency: int = 4    # parallel MP3 downloads
+    download_concurrency_per_host: int = 2
+    use_etag_cache: bool = True      # RSS conditional GET
+    library_scan_cache: bool = True  # skip re-parse of unchanged .md at startup
     # Optional external knowledge-base root (e.g. an Obsidian vault /
     # knowledge-hub repo). When set AND the directory contains
     # raw/.last_compiled, the Shows tab shows a 'N transcripts since last

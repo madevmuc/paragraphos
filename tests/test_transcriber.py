@@ -137,3 +137,59 @@ def test_transcribe_whisper_timeout(tmp_path: Path):
                 metadata={"guid": "g", "title": "T", "show_slug": "d",
                           "pub_date": "2026-04-01", "mp3_url": "u"},
             )
+
+
+def test_fast_mode_adds_decoder_flags(tmp_path: Path):
+    """fast_mode=True should pass -bs 1 -bo 1 -ac 0 --no-fallback."""
+    mp3 = tmp_path / "ep.mp3"; mp3.write_bytes(b"x")
+    captured = {}
+    def fake(cmd, *a, **kw):
+        captured["cmd"] = list(cmd)
+        # Call the happy-path fake to still produce files
+        return _fake_whisper_ok(cmd, *a, **kw)
+    with patch("core.transcriber.subprocess.run", side_effect=fake):
+        transcribe_episode(
+            mp3_path=mp3, output_dir=tmp_path / "out", slug="s",
+            metadata={"guid": "g", "title": "T", "show_slug": "d",
+                      "pub_date": "2026-04-01", "mp3_url": "u"},
+            fast_mode=True,
+        )
+    cmd = captured["cmd"]
+    assert "-bs" in cmd and cmd[cmd.index("-bs") + 1] == "1"
+    assert "-bo" in cmd and cmd[cmd.index("-bo") + 1] == "1"
+    assert "--no-fallback" in cmd
+
+
+def test_processors_adds_p_flag(tmp_path: Path):
+    mp3 = tmp_path / "ep.mp3"; mp3.write_bytes(b"x")
+    captured = {}
+    def fake(cmd, *a, **kw):
+        captured["cmd"] = list(cmd)
+        return _fake_whisper_ok(cmd, *a, **kw)
+    with patch("core.transcriber.subprocess.run", side_effect=fake):
+        transcribe_episode(
+            mp3_path=mp3, output_dir=tmp_path / "out", slug="s",
+            metadata={"guid": "g", "title": "T", "show_slug": "d",
+                      "pub_date": "2026-04-01", "mp3_url": "u"},
+            processors=4,
+        )
+    cmd = captured["cmd"]
+    assert "-p" in cmd and cmd[cmd.index("-p") + 1] == "4"
+
+
+def test_default_mode_no_performance_flags(tmp_path: Path):
+    mp3 = tmp_path / "ep.mp3"; mp3.write_bytes(b"x")
+    captured = {}
+    def fake(cmd, *a, **kw):
+        captured["cmd"] = list(cmd)
+        return _fake_whisper_ok(cmd, *a, **kw)
+    with patch("core.transcriber.subprocess.run", side_effect=fake):
+        transcribe_episode(
+            mp3_path=mp3, output_dir=tmp_path / "out", slug="s",
+            metadata={"guid": "g", "title": "T", "show_slug": "d",
+                      "pub_date": "2026-04-01", "mp3_url": "u"},
+        )
+    cmd = captured["cmd"]
+    assert "-bs" not in cmd
+    assert "-p" not in cmd
+    assert "--no-fallback" not in cmd

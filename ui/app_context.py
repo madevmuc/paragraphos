@@ -49,7 +49,9 @@ class AppContext:
         state = StateStore(data_dir / "state.sqlite")
         state.init_schema()
         state.recover_in_flight()
-        library = LibraryIndex(Path(settings.output_root).expanduser())
+        cache_path = data_dir / "library_cache.json" if settings.library_scan_cache else None
+        library = LibraryIndex(Path(settings.output_root).expanduser(),
+                               cache_path=cache_path)
         library.scan()
         observer = start_watching(library)
         return cls(data_dir, settings, watchlist, state, library,
@@ -62,6 +64,10 @@ class AppContext:
                 self._observer.join(timeout=2)
             except Exception:
                 pass
-        self.library = LibraryIndex(Path(self.settings.output_root).expanduser())
+        cache_path = (self.data_dir / "library_cache.json"
+                      if self.settings.library_scan_cache else None)
+        self.library = LibraryIndex(
+            Path(self.settings.output_root).expanduser(),
+            cache_path=cache_path)
         self.library.scan()
         self._observer = start_watching(self.library)

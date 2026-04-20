@@ -33,6 +33,8 @@ class PipelineContext:
     delete_mp3_after: bool
     language: str = "de"
     model_name: str = "large-v3-turbo"
+    fast_mode: bool = False
+    processors: int = 1
 
 
 @dataclass(frozen=True)
@@ -107,6 +109,7 @@ def process_episode(guid: str, ctx: PipelineContext,
             mp3_path=mp3_path, output_dir=show_dir, slug=slug,
             metadata=ep, whisper_prompt=ctx.whisper_prompt,
             language=ctx.language, model_path=model_path,
+            fast_mode=ctx.fast_mode, processors=ctx.processors,
         )
     except TranscriptionError as e:
         err = (f"transcribe failed: {e}\n"

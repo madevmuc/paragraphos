@@ -63,8 +63,15 @@ def transcribe_episode(*, mp3_path: Path, output_dir: Path, slug: str,
                        whisper_prompt: str = "",
                        language: str = LANGUAGE,
                        whisper_bin: str = WHISPER_BIN,
-                       model_path: Path = MODEL_PATH) -> TranscribeResult:
-    """Run whisper-cli once and produce <output_dir>/<slug>.md and .srt."""
+                       model_path: Path = MODEL_PATH,
+                       fast_mode: bool = False,
+                       processors: int = 1) -> TranscribeResult:
+    """Run whisper-cli once and produce <output_dir>/<slug>.md and .srt.
+
+    `fast_mode` toggles the 2-3× speedup decoder flags (beam=1, best-of=1,
+    -ac 0, --no-fallback) at slight quality cost. `processors` enables
+    whisper-cli's `-p N` audio-split parallelism for long episodes.
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as td:
         stem = Path(td) / slug
@@ -77,6 +84,10 @@ def transcribe_episode(*, mp3_path: Path, output_dir: Path, slug: str,
             "-of", str(stem),
             "-otxt", "-osrt",
         ]
+        if fast_mode:
+            cmd += ["-bs", "1", "-bo", "1", "-ac", "0", "--no-fallback"]
+        if processors > 1:
+            cmd += ["-p", str(processors)]
         if whisper_prompt:
             cmd += ["--prompt", whisper_prompt]
         try:

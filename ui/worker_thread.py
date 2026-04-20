@@ -115,6 +115,8 @@ class CheckAllThread(QThread):
                 delete_mp3_after=self.settings.delete_mp3_after_transcribe,
                 language=show.language,
                 model_name=self.settings.whisper_model,
+                fast_mode=self.settings.whisper_fast_mode,
+                processors=self.settings.whisper_multiproc,
             )
             self.progress.emit(f"  → {ep['title'][:80]}")
             r = process_episode(ep["guid"], pctx, episode_number=ep_num)

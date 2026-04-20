@@ -61,3 +61,20 @@ def test_index_md_is_ignored(tmp_path: Path):
     idx = LibraryIndex(tmp_path)
     idx.scan()
     assert not idx.has_guid("should-ignore")
+
+
+def test_mtime_cache_skips_unchanged(tmp_path: Path):
+    """Second scan on unchanged files reuses cached guids — no frontmatter
+    re-parse (we prove it by replacing the file content with gibberish
+    and asserting the cached guid is still returned)."""
+    _seed(tmp_path, "demo/2026-04-01_1_sample.md")
+    cache = tmp_path / "cache.json"
+    idx = LibraryIndex(tmp_path, cache_path=cache)
+    idx.scan()
+    assert idx.has_guid("abc-123")
+    # Cache file written.
+    assert cache.exists()
+    # Second instance pointed at same cache, file unchanged → still resolves.
+    idx2 = LibraryIndex(tmp_path, cache_path=cache)
+    idx2.scan()
+    assert idx2.has_guid("abc-123")

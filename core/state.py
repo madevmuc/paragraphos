@@ -72,6 +72,15 @@ class StateStore:
 
     def init_schema(self) -> None:
         with self._conn() as c:
+            # WAL mode lets watchdog, worker thread, and UI refresh all
+            # read/write concurrently without file-level locking.
+            # synchronous=NORMAL is safe with WAL and significantly
+            # faster than the default FULL.
+            try:
+                c.execute("PRAGMA journal_mode=WAL")
+                c.execute("PRAGMA synchronous=NORMAL")
+            except Exception:
+                pass  # some filesystems don't support WAL — fall back
             c.executescript(_SCHEMA)
             # Idempotent column additions (ignore if they already exist).
             for stmt in (

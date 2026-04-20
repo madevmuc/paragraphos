@@ -36,27 +36,76 @@ class DedupResult:
 class LibraryIndex:
     """Scans `output_root` for existing transcripts, enables GUID + filename dedup."""
 
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, *, cache_path: Path | None = None):
         self.root = Path(root)
         self._by_guid: Dict[str, Path] = {}
         self._by_filename: Dict[str, Path] = {}
+        # Cache of (path, mtime_ns, guid) so repeat scans skip files that
+        # haven't changed since last index. ~2-5s → milliseconds on a
+        # vault of 1000+ transcripts.
+        self._mtime_cache: Dict[str, tuple[int, str]] = {}
+        self._cache_path = cache_path
 
     def scan(self) -> None:
         self._by_guid.clear()
         self._by_filename.clear()
+        self._load_cache()
         if not self.root.exists():
+            self._save_cache()
             return
         for md in self.root.rglob("*.md"):
             if md.name == "index.md":
                 continue
             self._index_one(md)
+        self._save_cache()
+
+    def _load_cache(self) -> None:
+        if self._cache_path is None or not self._cache_path.exists():
+            return
+        try:
+            import json
+            data = json.loads(self._cache_path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                self._mtime_cache = {
+                    str(k): (int(v[0]), str(v[1]))
+                    for k, v in data.items()
+                    if isinstance(v, (list, tuple)) and len(v) == 2
+                }
+        except Exception:
+            self._mtime_cache = {}
+
+    def _save_cache(self) -> None:
+        if self._cache_path is None:
+            return
+        try:
+            import json
+            self._cache_path.parent.mkdir(parents=True, exist_ok=True)
+            self._cache_path.write_text(json.dumps(
+                {k: [v[0], v[1]] for k, v in self._mtime_cache.items()},
+                ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
 
     def _index_one(self, path: Path) -> None:
+        key = str(path)
+        try:
+            mtime = path.stat().st_mtime_ns
+        except OSError:
+            mtime = 0
+        cached = self._mtime_cache.get(key)
+        if cached and cached[0] == mtime:
+            # File unchanged since last scan — reuse cached guid.
+            guid = cached[1]
+            if guid:
+                self._by_guid[guid] = path
+            self._by_filename[path.stem] = path
+            return
         fm = _read_frontmatter(path)
-        guid = fm.get("guid")
-        if isinstance(guid, str) and guid:
+        guid = fm.get("guid") if isinstance(fm.get("guid"), str) else ""
+        if guid:
             self._by_guid[guid] = path
         self._by_filename[path.stem] = path
+        self._mtime_cache[key] = (mtime, guid or "")
 
     def add(self, path: Path) -> None:
         self._index_one(path)

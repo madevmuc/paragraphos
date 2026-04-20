@@ -144,6 +144,22 @@ class SettingsPane(QWidget):
         self.bw.setValue(self.ctx.settings.bandwidth_limit_mbps)
         self.bw.valueChanged.connect(self._schedule_save)
         f4.addRow("Bandwidth limit (Mbps, 0=∞)", self.bw)
+
+        self.fast_mode = QCheckBox("Fast mode (less accurate, ~2–3× faster)")
+        self.fast_mode.setChecked(self.ctx.settings.whisper_fast_mode)
+        self.fast_mode.stateChanged.connect(self._schedule_save)
+        f4.addRow("Whisper speed", self.fast_mode)
+
+        self.multiproc = QSpinBox(); self.multiproc.setRange(1, 8)
+        self.multiproc.setValue(self.ctx.settings.whisper_multiproc)
+        self.multiproc.valueChanged.connect(self._schedule_save)
+        mp_row = QHBoxLayout(); mp_row.addWidget(self.multiproc)
+        mp_hint = QLabel("  whisper-cli -p N: splits audio across N cores "
+                         "(1 = disabled, 4 recommended for long episodes)")
+        mp_hint.setStyleSheet("color: #888; font-style: italic;")
+        mp_row.addWidget(mp_hint, stretch=1)
+        f4.addRow("Multi-processor split", mp_row)
+
         root.addLayout(f4)
 
         # ── Storage & retention ────────────────────────────────
@@ -277,6 +293,8 @@ class SettingsPane(QWidget):
         s.knowledge_hub_root = self.kb_root.text()
         s.export_root = self.export_root.text()
         s.whisper_model = self.model.currentText()
+        s.whisper_fast_mode = self.fast_mode.isChecked()
+        s.whisper_multiproc = self.multiproc.value()
         s.log_retention_days = self.log_retention.value()
         s.save(self.ctx.data_dir / "settings.yaml")
         from datetime import datetime
