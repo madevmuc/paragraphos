@@ -20,9 +20,16 @@ class QueueRunState:
     total: int = 0
     done: int = 0
     started_at: Optional[datetime] = None
-    avg_sec_per_episode: float = 0.0
+    avg_sec_per_episode: float = 0.0   # rolling live average (last 10 eps)
+    historical_avg_sec: float = 0.0     # fallback before 1st live episode
     last_episode_title: str = ""
     last_episode_show: str = ""
+
+    @property
+    def effective_avg_sec(self) -> float:
+        """Best available estimate per episode — live rolling avg if we have
+        one, historical DB average otherwise."""
+        return self.avg_sec_per_episode or self.historical_avg_sec
 
 
 @dataclass

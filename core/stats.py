@@ -157,6 +157,41 @@ def _duration_from_srt(path: Path) -> Optional[int]:
     return last_end or None
 
 
+def historical_avg_transcribe_sec(state, *, sample_limit: int = 50) -> float:
+    """Return the average wall-clock time an episode takes to transcribe,
+    measured from the most recent `sample_limit` completed episodes.
+
+    Returns 0.0 if there is no usable history. Used as a fallback ETA
+    before the live rolling average has data points.
+    """
+    with state._conn() as c:
+        rows = c.execute(
+            "SELECT attempted_at, completed_at FROM episodes "
+            "WHERE status='done' AND attempted_at IS NOT NULL "
+            "AND completed_at IS NOT NULL "
+            "ORDER BY completed_at DESC LIMIT ?",
+            (sample_limit,),
+        ).fetchall()
+    if not rows:
+        return 0.0
+    from datetime import datetime
+    deltas: list[float] = []
+    for r in rows:
+        try:
+            a = datetime.fromisoformat(r["attempted_at"])
+            b = datetime.fromisoformat(r["completed_at"])
+        except (TypeError, ValueError):
+            continue
+        d = (b - a).total_seconds()
+        # Skip implausible values: dedup-skips complete in ~0s; multi-hour
+        # entries are usually crashed jobs whose state was reset later.
+        if 5 <= d <= 3600:
+            deltas.append(d)
+    if not deltas:
+        return 0.0
+    return sum(deltas) / len(deltas)
+
+
 def format_duration(seconds: int) -> str:
     if seconds <= 0:
         return "0m"

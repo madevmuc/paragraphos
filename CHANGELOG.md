@@ -1,5 +1,32 @@
 # Paragraphos Changelog
 
+## v0.4.2 — 2026-04-20 (safe quit)
+
+- **Quit-confirmation dialog** when the queue is still running. Fires
+  from tray menu "Quit", Cmd+Q, Dock → Quit — all routed through
+  `quit_with_confirm()`. Default button is "Stay" to avoid accidental
+  data loss. "Quit anyway" is the destructive button.
+- Busy check also reads the DB directly — catches in-flight episodes
+  whose status is `downloading` or `transcribing` even if the thread
+  state briefly disagrees.
+- `ParagraphosQApplication` now intercepts `QEvent.Quit` so ⌘Q goes
+  through the confirm dialog instead of hard-killing subprocesses.
+
+## v0.4.1 — 2026-04-20 (ETA from t=0)
+
+- **Queue finish-time shown immediately on start**, not only after the
+  first live episode completes. At `start_check()` we compute a
+  historical average from the last 50 successful transcriptions in
+  `state.sqlite` and use that as the ETA seed.
+- Label distinguishes live vs. estimated: `ETA 1h 12m` (live rolling
+  average) vs. `ETA (est.) 2h 58m` (DB-derived). Same for Queue tab's
+  `avg/ep:` vs. `est/ep:`.
+- New `QueueRunState.effective_avg_sec` property returns live average
+  if available, historical fallback otherwise.
+- `core/stats.historical_avg_transcribe_sec()` averages the wall-clock
+  delta (attempted_at → completed_at) across the 50 most recent DONE
+  episodes, filtering out dedup-skips (<5 s) and crashed jobs (>1 h).
+
 ## v0.4 — 2026-04-20 (hardening)
 
 **Security — defences against malicious feeds, pages, and models.**

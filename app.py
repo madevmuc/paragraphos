@@ -82,7 +82,7 @@ class ParagraphosApp(QObject):
         open_a = QAction("Open", menu); open_a.triggered.connect(self.open_window)
         check_a = QAction("Check Now", menu); check_a.triggered.connect(self._run_check)
         opml_a = QAction("Import OPML…", menu); opml_a.triggered.connect(self._import_opml)
-        quit_a = QAction("Quit", menu); quit_a.triggered.connect(QApplication.quit)
+        quit_a = QAction("Quit", menu); quit_a.triggered.connect(self.quit_with_confirm)
         for a in (open_a, check_a):
             menu.addAction(a)
         menu.addSeparator()
@@ -178,6 +178,48 @@ class ParagraphosApp(QObject):
             ep_title[:120],
         )
 
+    def quit_with_confirm(self) -> bool:
+        """Show a confirm dialog if the queue is running / work would be lost.
+
+        Returns True if the app is actually quitting, False if the user
+        cancelled. Covers tray menu 'Quit' and Cmd+Q (via event filter).
+        """
+        if self._is_queue_busy():
+            from PyQt6.QtWidgets import QMessageBox
+            q = self.ctx.queue
+            box = QMessageBox(
+                QMessageBox.Icon.Warning,
+                "Queue still running",
+                f"Paragraphos is still working on {q.done}/{q.total} episodes. "
+                "Quitting now will interrupt the current download/transcription "
+                "— the partial MP3 survives (resumable), but a partial transcript "
+                "will be discarded and re-run next time.\n\n"
+                "Quit anyway?",
+                QMessageBox.StandardButton.NoButton,
+                self._window if self._window else None,
+            )
+            quit_btn = box.addButton("Quit", QMessageBox.ButtonRole.DestructiveRole)
+            box.addButton("Stay", QMessageBox.ButtonRole.RejectRole)
+            box.setDefaultButton(box.buttons()[-1])  # Stay is safer default
+            box.exec()
+            if box.clickedButton() is not quit_btn:
+                return False
+        QApplication.quit()
+        return True
+
+    def _is_queue_busy(self) -> bool:
+        q = self.ctx.queue
+        if q.running:
+            return True
+        # Check the DB too — an episode might be mid-download/transcribe even
+        # when q.running is False (e.g. app somehow lost thread state).
+        with self.ctx.state._conn() as c:
+            row = c.execute(
+                "SELECT COUNT(*) FROM episodes "
+                "WHERE status IN ('downloading','transcribing')"
+            ).fetchone()
+        return (row[0] or 0) > 0
+
     def _on_check_done(self) -> None:
         self.ctx.state.set_meta(
             "last_successful_check",
@@ -272,13 +314,25 @@ class ParagraphosApp(QObject):
 
 class ParagraphosQApplication(QApplication):
     """Intercepts macOS QFileOpenEvent so Finder → Dock drops of .opml files
-    land inside the running app instead of launching a new instance."""
+    land inside the running app instead of launching a new instance.
+
+    Also intercepts QuitEvent (⌘Q, app menu Quit) to route it through our
+    confirm-if-queue-running dialog. A weak reference to ParagraphosApp is set
+    from main() so we can delegate.
+    """
 
     file_opened = pyqtSignal(str)
+    quit_requested = pyqtSignal()
 
     def event(self, e):
-        if e.type() == QEvent.Type.FileOpen and isinstance(e, QFileOpenEvent):
+        t = e.type()
+        if t == QEvent.Type.FileOpen and isinstance(e, QFileOpenEvent):
             self.file_opened.emit(e.file())
+            return True
+        if t == QEvent.Type.Quit:
+            # Delegate to the app-owned handler. Quit-events arrive from
+            # Cmd+Q, Dock → Quit, and apple-quit — catch them all.
+            self.quit_requested.emit()
             return True
         return super().event(e)
 
@@ -328,6 +382,7 @@ def main() -> int:
         return 0
     app = ParagraphosApp()
     qapp.file_opened.connect(app.on_file_dropped)
+    qapp.quit_requested.connect(app.quit_with_confirm)
     ParagraphosApp.instance = app  # keep reference
     return qapp.exec()
 

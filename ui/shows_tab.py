@@ -153,11 +153,17 @@ class ShowsTab(QWidget):
         self.stop_btn.setEnabled(True)
         self.check_btn.setEnabled(False)
         from datetime import datetime
+        from core.stats import historical_avg_transcribe_sec
         self.ctx.queue.running = True
         self.ctx.queue.started_at = datetime.now()
         self.ctx.queue.total = 0
         self.ctx.queue.done = 0
         self.ctx.queue.avg_sec_per_episode = 0.0
+        # Historical DB-derived average lets us show an ETA and 'finish ≈'
+        # time immediately — long before the first live episode finishes
+        # (whisper takes ~5 min, and the user wants feedback now).
+        self.ctx.queue.historical_avg_sec = historical_avg_transcribe_sec(
+            self.ctx.state)
         self._ep_durations: list[float] = []
         self._last_ep_start = datetime.now()
         self._thread.start()

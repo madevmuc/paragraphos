@@ -145,11 +145,14 @@ class QueueTab(QWidget):
         if self._started_at is None or self._total == 0:
             return (f"<b>Queue</b> — pending: {pending_total} · "
                     f"done: {done_total} · failed: {failed} · "
-                    "<i>idle (click Check Now in Shows to start)</i>")
+                    "<i>idle (click Start on any tab to run)</i>")
 
         elapsed = datetime.now() - self._started_at
-        avg = (sum(self._episode_durations) / len(self._episode_durations)
-               if self._episode_durations else 0)
+        live_avg = (sum(self._episode_durations) / len(self._episode_durations)
+                    if self._episode_durations else 0)
+        # Fall back to shared state — its historical DB estimate is populated
+        # at start_check so "finish ≈" is shown from t=0.
+        avg = live_avg or self.ctx.queue.effective_avg_sec
         remaining = self._total - self._done
         eta_sec = avg * remaining if avg else 0
         finish_at = (datetime.now() + timedelta(seconds=eta_sec)
@@ -162,8 +165,10 @@ class QueueTab(QWidget):
             f"elapsed: {_fmt_duration(elapsed.total_seconds())}",
         ]
         if avg:
-            parts.append(f"avg/ep: {avg:.0f}s")
-            parts.append(f"ETA: {_fmt_duration(eta_sec)}")
+            per_ep_tag = "avg/ep" if live_avg else "est/ep"
+            eta_tag = "ETA" if live_avg else "ETA (est.)"
+            parts.append(f"{per_ep_tag}: {avg:.0f}s")
+            parts.append(f"{eta_tag}: {_fmt_duration(eta_sec)}")
             if finish_at:
                 parts.append(f"finish ≈ {_fmt_dt_locale(finish_at)}")
         return " · ".join(parts)

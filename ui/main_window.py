@@ -141,7 +141,8 @@ class MainWindow(QMainWindow):
             return
         elapsed = (datetime.now() - q.started_at).total_seconds() if q.started_at else 0
         remaining = q.total - q.done
-        eta_sec = q.avg_sec_per_episode * remaining if q.avg_sec_per_episode else 0
+        avg = q.effective_avg_sec
+        eta_sec = avg * remaining if avg else 0
         finish_at = (datetime.now() + timedelta(seconds=eta_sec)
                      if eta_sec else None)
         parts = [
@@ -151,8 +152,11 @@ class MainWindow(QMainWindow):
         if q.started_at:
             parts.append(f"started {_fmt_dt_locale(q.started_at)}")
             parts.append(f"elapsed {_fmt_elapsed(elapsed)}")
-        if q.avg_sec_per_episode:
-            parts.append(f"ETA {_fmt_elapsed(eta_sec)}")
+        if avg:
+            # Mark fallback estimates so the user knows "finish ≈" is based
+            # on historical averages when no live episode has finished yet.
+            tag = "ETA" if q.avg_sec_per_episode else "ETA (est.)"
+            parts.append(f"{tag} {_fmt_elapsed(eta_sec)}")
             if finish_at:
                 parts.append(f"finish ≈ {_fmt_dt_locale(finish_at)}")
         self.status_label.setText(" · ".join(parts))
