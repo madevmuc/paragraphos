@@ -1,5 +1,28 @@
 # Paragraphos Changelog
 
+## v0.5.0 — 2026-04-20 (Phase 1 reliability)
+
+Five reliability improvements from the ROADMAP:
+
+- **Whisper timeout** (Task 1.1) — `subprocess.run(timeout=600)` with a
+  clean `TranscriptionError` on hang. Corrupt MP3s no longer block the
+  queue indefinitely.
+- **Download retry with exponential backoff** (Task 1.2) — 3 attempts,
+  delays 1 / 5 / 20 s, retries on 5xx / 429 / timeouts / network errors.
+  Never retries 4xx (permanently gone).
+- **TOFU model SHA256** (Task 1.3) — trust-on-first-use replaces the
+  v0.4 placeholders that would have blocked every non-default model
+  download. First download pins the hash; subsequent mismatches raise
+  with clear remediation copy.
+- **Feed redirect auto-update** (Task 1.4) — canonical URL after 301
+  is saved to watchlist.yaml; subsequent daily checks hit the new URL
+  directly.
+- **Whisper prompt coverage feedback** (Task 1.5) — ⚠ tooltip on the
+  title when less than 20% of prompt terms appear in the last 10
+  transcripts. Non-blocking hint.
+
+99 tests green.
+
 ## v0.4.4 — 2026-04-20 (better errors)
 
 Every failure path now carries enough context to debug without a
