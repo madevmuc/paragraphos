@@ -88,7 +88,9 @@ class ParagraphosApp(QObject):
 
         if not QSystemTrayIcon.isSystemTrayAvailable():
             print("ERROR: system tray not available on this system.", flush=True)
-        self.tray = QSystemTrayIcon(_build_icon())
+        from ui.widgets import IconRenderer
+        self._icon_renderer = IconRenderer()
+        self.tray = QSystemTrayIcon(self._icon_renderer.render())
         self.tray.setToolTip("Paragraphos")
         self.tray.activated.connect(self._on_tray_activated)
 
@@ -173,6 +175,9 @@ class ParagraphosApp(QObject):
     def _on_episode_done(self, slug: str, guid: str, action: str,
                          done_idx: int, total: int,
                          show_title: str, ep_title: str) -> None:
+        # Live tray icon — renders current fraction while a run is active.
+        self.tray.setIcon(self._icon_renderer.render(
+            done_idx, total, running=True))
         # Tally into the rolling run-summary — used by daily_summary mode.
         self._run_tally.setdefault(action, 0)
         self._run_tally[action] += 1
@@ -266,6 +271,10 @@ class ParagraphosApp(QObject):
                     " · ".join(parts) + "\n"
                     + f"First: {t.get('_first_ep_title') or '—'}")
         self._run_tally = {}
+        # Briefly show ✓ on the tray, then revert to idle 'P'.
+        self.tray.setIcon(self._icon_renderer.render(override_text="✓"))
+        QTimer.singleShot(5000, lambda: self.tray.setIcon(
+            self._icon_renderer.render()))
         if self._window:
             self._window.shows_tab.refresh()
 
@@ -415,6 +424,9 @@ def _is_descendant(widget, ancestor) -> bool:
 def main() -> int:
     qapp = ParagraphosQApplication(sys.argv)
     qapp.setQuitOnLastWindowClosed(False)
+    # Install the Phase 6 design tokens + QSS globally.
+    from ui.widgets import apply_app_qss
+    apply_app_qss(qapp)
     _focus_filter = _FocusClearFilter()
     qapp.installEventFilter(_focus_filter)
     qapp._focus_filter = _focus_filter  # keep reference alive
