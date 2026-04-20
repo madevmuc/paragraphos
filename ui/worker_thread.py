@@ -15,7 +15,7 @@ from PyQt6.QtCore import QThread, pyqtSignal
 
 from core.models import Settings, Watchlist
 from core.pipeline import PipelineContext, process_episode
-from core.rss import build_manifest
+from core.rss import build_manifest_with_url
 from core.state import EpisodeStatus
 
 
@@ -60,12 +60,22 @@ class CheckAllThread(QThread):
                 self.progress.emit(f"skip {show.slug} (in backoff after repeated feed failures)")
                 continue
             try:
-                manifest = build_manifest(show.rss, timeout=60)
+                canonical, manifest = build_manifest_with_url(
+                    show.rss, timeout=60)
                 backoff.on_success(self.ctx.state, show.slug)
             except Exception as e:
                 fails = backoff.on_failure(self.ctx.state, show.slug)
                 self.progress.emit(f"feed error {show.slug} (fail #{fails}): {e}")
                 continue
+            # Persist redirects so the next daily check hits the final URL
+            # directly. Saves handshake latency and survives feeds moving
+            # platforms (podigee → buzzsprout etc.).
+            if canonical and canonical != show.rss:
+                self.progress.emit(
+                    f"feed moved: {show.rss} → {canonical} — updating watchlist")
+                show.rss = canonical
+                self.ctx.watchlist.save(
+                    self.ctx.data_dir / "watchlist.yaml")
             from core.stats import _parse_duration as _pd
             for ep in manifest:
                 self.ctx.state.upsert_episode(

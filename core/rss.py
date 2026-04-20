@@ -95,12 +95,25 @@ def _duration(entry: Any) -> str:
     return str(d)
 
 
-def build_manifest(feed_url: str, *, timeout: float = 30.0) -> List[Dict[str, Any]]:
+def build_manifest(feed_url: str, *, timeout: float = 30.0
+                   ) -> List[Dict[str, Any]]:
     """Fetch + parse a feed, return the canonical manifest list.
 
-    Network-fetches with our UA then hands text to feedparser. Using httpx up front
-    lets us follow redirects and surface real HTTP errors, rather than silently
-    receiving feedparser's empty-entries fallback.
+    Backwards-compatible signature — see `build_manifest_with_url`
+    for the variant that also returns the canonical URL after redirect.
+    """
+    _, episodes = build_manifest_with_url(feed_url, timeout=timeout)
+    return episodes
+
+
+def build_manifest_with_url(feed_url: str, *, timeout: float = 30.0
+                            ) -> tuple[str, List[Dict[str, Any]]]:
+    """Same as build_manifest but returns (canonical_url, episodes).
+
+    When the feed host issued a 301 Permanent Redirect (or a chain of
+    them), `canonical_url` is the final URL httpx landed on. Callers
+    that persist feed URLs should save the canonical one so the next
+    daily check doesn't re-do the redirect handshake.
     """
     safe_url(feed_url)
     r = httpx.get(feed_url, headers={"User-Agent": USER_AGENT},
@@ -108,6 +121,7 @@ def build_manifest(feed_url: str, *, timeout: float = 30.0) -> List[Dict[str, An
     r.raise_for_status()
     if len(r.content) > MAX_FEED_BYTES:
         raise ValueError(f"feed too large: {len(r.content)} bytes")
+    canonical = str(r.url)
     parsed = feedparser.parse(r.content)
 
     episodes: List[Dict[str, Any]] = []
@@ -127,7 +141,7 @@ def build_manifest(feed_url: str, *, timeout: float = 30.0) -> List[Dict[str, An
         })
 
     episodes.sort(key=lambda x: x["pubDate"])
-    return episodes
+    return canonical, episodes
 
 
 def feed_metadata(feed_url: str, *, timeout: float = 30.0) -> Dict[str, str]:
