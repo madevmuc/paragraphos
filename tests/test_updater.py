@@ -41,4 +41,6 @@ def test_check_for_update_uses_configured_repo(monkeypatch):
         timeout=1.0,
     )
     notified.wait(timeout=2.0)
+    assert notified.is_set()
+    assert len(calls) == 1
     assert any("alice/paragraphos-fork" in u for u in calls)
