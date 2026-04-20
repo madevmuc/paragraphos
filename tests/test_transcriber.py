@@ -120,3 +120,20 @@ def test_transcribe_nonzero_exit_raises(tmp_path: Path):
                 metadata={"guid": "g", "title": "T", "show_slug": "d",
                           "pub_date": "2026-04-01", "mp3_url": "u"},
             )
+
+
+def test_transcribe_whisper_timeout(tmp_path: Path):
+    """If whisper-cli hangs, we surface a timeout error with context,
+    not freeze the queue."""
+    import subprocess
+    mp3 = tmp_path / "ep.mp3"; mp3.write_bytes(b"x")
+    def fake_hang(cmd, *a, **kw):
+        raise subprocess.TimeoutExpired(cmd=cmd, timeout=600,
+                                         stderr=b"partial stderr")
+    with patch("core.transcriber.subprocess.run", side_effect=fake_hang):
+        with pytest.raises(TranscriptionError, match="timed out"):
+            transcribe_episode(
+                mp3_path=mp3, output_dir=tmp_path / "out", slug="s",
+                metadata={"guid": "g", "title": "T", "show_slug": "d",
+                          "pub_date": "2026-04-01", "mp3_url": "u"},
+            )

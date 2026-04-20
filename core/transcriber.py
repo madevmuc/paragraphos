@@ -13,6 +13,10 @@ WHISPER_BIN = "/opt/homebrew/bin/whisper-cli"
 MODEL_PATH = Path.home() / ".config" / "open-wispr" / "models" / "ggml-large-v3-turbo.bin"
 LANGUAGE = "de"
 THREADS = "6"
+# Generous timeout: a 60-min podcast at ~1.5× realtime finishes in <6 min
+# on an M2 Pro. 10 min covers 2-hour episodes; anything beyond means
+# whisper-cli hung on corrupt audio and we want to fail fast.
+WHISPER_TIMEOUT_SEC = 600
 
 # Natural German podcast speech runs ~140-180 wpm. Below 30 → silence or hallucination.
 MIN_WPM_GUARD = 30
@@ -75,7 +79,19 @@ def transcribe_episode(*, mp3_path: Path, output_dir: Path, slug: str,
         ]
         if whisper_prompt:
             cmd += ["--prompt", whisper_prompt]
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True,
+                timeout=WHISPER_TIMEOUT_SEC,
+            )
+        except subprocess.TimeoutExpired as te:
+            # whisper-cli occasionally hangs on corrupt audio. Don't let it
+            # block the whole queue for hours. subprocess.run will have
+            # killed the child already.
+            raise TranscriptionError(
+                f"whisper-cli timed out after {WHISPER_TIMEOUT_SEC}s  "
+                f"mp3={mp3_path.name}  slug={slug!r}\n"
+                f"  partial stderr: {(te.stderr or b'')[-300:]!r}") from te
         if result.returncode != 0:
             raise TranscriptionError(
                 f"whisper-cli exit {result.returncode}  "
