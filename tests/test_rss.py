@@ -49,7 +49,7 @@ def test_build_manifest_with_url_returns_canonical_after_redirect():
     respx.get("https://old.test/rss").respond(
         301, headers={"location": "https://new.test/rss"})
     respx.get("https://new.test/rss").respond(200, text=FIX.read_text())
-    canonical, episodes = build_manifest_with_url("https://old.test/rss")
+    canonical, episodes, _etag, _mod = build_manifest_with_url("https://old.test/rss")
     assert canonical == "https://new.test/rss"
     assert len(episodes) == 2
 
@@ -57,5 +57,32 @@ def test_build_manifest_with_url_returns_canonical_after_redirect():
 @respx.mock
 def test_build_manifest_with_url_same_url_when_no_redirect():
     respx.get("https://stable.test/rss").respond(200, text=FIX.read_text())
-    canonical, _ = build_manifest_with_url("https://stable.test/rss")
+    canonical, _, _, _ = build_manifest_with_url("https://stable.test/rss")
     assert canonical == "https://stable.test/rss"
+
+
+@respx.mock
+def test_build_manifest_with_url_returns_304_sentinel_when_unchanged():
+    """First fetch returns 200 + etag; second fetch sends If-None-Match and
+    the server answers 304 — we expect episodes=None so the caller can
+    skip manifest parsing for this show."""
+    route = respx.get("https://cond.test/rss")
+    route.respond(200, headers={"etag": '"abc"'}, text=FIX.read_text())
+    canonical, episodes, etag, modified = build_manifest_with_url(
+        "https://cond.test/rss")
+    assert canonical == "https://cond.test/rss"
+    assert episodes is not None and len(episodes) == 2
+    assert etag == '"abc"'
+
+    # Now replace the route with a 304 response and verify we send the
+    # If-None-Match header.
+    respx.reset()
+    route2 = respx.get("https://cond.test/rss")
+    route2.respond(304)
+    canonical2, episodes2, etag2, modified2 = build_manifest_with_url(
+        "https://cond.test/rss", etag=etag, modified=modified)
+    assert episodes2 is None
+    assert etag2 is None and modified2 is None
+    # Verify the request carried the conditional header.
+    sent = route2.calls.last.request
+    assert sent.headers.get("if-none-match") == '"abc"'

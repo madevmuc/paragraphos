@@ -41,7 +41,7 @@ class _FeedFetchThread(QThread):
         out: dict = {"ok": False, "rss": self.rss_url}
         try:
             meta = feed_metadata(self.rss_url)
-            canonical, manifest = build_manifest_with_url(self.rss_url)
+            canonical, manifest, _etag, _modified = build_manifest_with_url(self.rss_url)
             health = FeedHealth.check(canonical)
             out.update({
                 "ok": True,
@@ -211,7 +211,7 @@ class AddShowDialog(QDialog):
     def _fill_from_feed_sync(self, rss: str) -> None:
         try:
             meta = feed_metadata(rss)
-            canonical, manifest = build_manifest_with_url(rss)
+            canonical, manifest, _etag, _modified = build_manifest_with_url(rss)
         except Exception as e:  # noqa: BLE001
             QMessageBox.warning(self, "Error", str(e))
             return

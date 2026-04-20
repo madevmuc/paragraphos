@@ -257,21 +257,40 @@ class CheckAllThread(QThread):
                 for show in fetch_targets:
                     if self._stop:
                         break
+                    stored_etag = self.ctx.state.get_meta(
+                        f"feed_etag:{show.slug}")
+                    stored_modified = self.ctx.state.get_meta(
+                        f"feed_modified:{show.slug}")
                     future_to_show[
-                        ex.submit(build_manifest_with_url, show.rss, timeout=60)
+                        ex.submit(build_manifest_with_url, show.rss,
+                                  timeout=60, etag=stored_etag,
+                                  modified=stored_modified)
                     ] = show
                 for f in as_completed(future_to_show):
                     show = future_to_show[f]
                     if self._stop:
                         continue
                     try:
-                        canonical, manifest = f.result()
+                        canonical, manifest, new_etag, new_modified = f.result()
                     except Exception as e:
                         fails = backoff.on_failure(self.ctx.state, show.slug)
                         self.progress.emit(
                             f"feed error {show.slug} (fail #{fails}): {e}")
                         continue
                     backoff.on_success(self.ctx.state, show.slug)
+                    if manifest is None:
+                        # 304 Not Modified — skip pass-2 manifest parse
+                        # entirely for this show, but still emit progress
+                        # so the UI knows the feed was checked.
+                        self.progress.emit(
+                            f"{show.slug}: unchanged (304) — skipping parse")
+                        continue
+                    if new_etag:
+                        self.ctx.state.set_meta(
+                            f"feed_etag:{show.slug}", new_etag)
+                    if new_modified:
+                        self.ctx.state.set_meta(
+                            f"feed_modified:{show.slug}", new_modified)
                     fetch_results[show.slug] = (show, canonical, manifest)
 
         # Pass 1b: persist redirects, upsert episodes, gather pending.

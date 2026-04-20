@@ -103,22 +103,43 @@ def build_manifest(feed_url: str, *, timeout: float = 30.0
     Backwards-compatible signature — see `build_manifest_with_url`
     for the variant that also returns the canonical URL after redirect.
     """
-    _, episodes = build_manifest_with_url(feed_url, timeout=timeout)
-    return episodes
+    _, episodes, _et, _mod = build_manifest_with_url(feed_url, timeout=timeout)
+    return episodes or []
 
 
-def build_manifest_with_url(feed_url: str, *, timeout: float = 30.0
-                            ) -> tuple[str, List[Dict[str, Any]]]:
-    """Same as build_manifest but returns (canonical_url, episodes).
+def build_manifest_with_url(
+    feed_url: str,
+    *,
+    timeout: float = 30.0,
+    etag: Optional[str] = None,
+    modified: Optional[str] = None,
+) -> tuple[str, Optional[List[Dict[str, Any]]], Optional[str], Optional[str]]:
+    """Fetch + parse a feed, returning ``(canonical_url, episodes, etag, modified)``.
 
     When the feed host issued a 301 Permanent Redirect (or a chain of
-    them), `canonical_url` is the final URL httpx landed on. Callers
+    them), ``canonical_url`` is the final URL httpx landed on. Callers
     that persist feed URLs should save the canonical one so the next
     daily check doesn't re-do the redirect handshake.
+
+    If ``etag`` or ``modified`` are supplied they become
+    ``If-None-Match`` / ``If-Modified-Since`` headers. When the server
+    answers ``304 Not Modified`` we short-circuit: the returned
+    ``episodes`` is ``None`` and ``etag``/``modified`` are ``None``
+    (callers should keep their stored values). Otherwise ``episodes``
+    is the parsed list and the returned etag/last-modified reflect the
+    current response headers so the caller can persist them.
     """
     safe_url(feed_url)
-    r = get_client().get(feed_url, headers={"User-Agent": USER_AGENT},
+    headers = {"User-Agent": USER_AGENT}
+    if etag:
+        headers["If-None-Match"] = etag
+    if modified:
+        headers["If-Modified-Since"] = modified
+    r = get_client().get(feed_url, headers=headers,
                          follow_redirects=True, timeout=timeout)
+    if r.status_code == 304:
+        # Unchanged — keep caller's stored validators, skip parse.
+        return str(r.url), None, None, None
     r.raise_for_status()
     if len(r.content) > MAX_FEED_BYTES:
         raise ValueError(f"feed too large: {len(r.content)} bytes")
@@ -142,7 +163,9 @@ def build_manifest_with_url(feed_url: str, *, timeout: float = 30.0
         })
 
     episodes.sort(key=lambda x: x["pubDate"])
-    return canonical, episodes
+    new_etag = r.headers.get("etag")
+    new_modified = r.headers.get("last-modified")
+    return canonical, episodes, new_etag, new_modified
 
 
 def feed_metadata(feed_url: str, *, timeout: float = 30.0) -> Dict[str, str]:
