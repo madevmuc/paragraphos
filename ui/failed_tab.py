@@ -30,11 +30,15 @@ class FailedTab(QWidget):
         add_q.clicked.connect(self._add_all_to_queue)
         push_top = QPushButton("Push failed on top of queue")
         push_top.clicked.connect(self._push_on_top)
+        play = QPushButton("Play MP3")
+        play.clicked.connect(self._play_selected)
+        play.setToolTip("Open the partial MP3 of the selected row in the "
+                        "default audio app for a spot-check.")
         clean = QPushButton("Clear older than 30 days")
         clean.clicked.connect(self._clear_old)
         refresh = QPushButton("Refresh")
         refresh.clicked.connect(self.refresh)
-        for b in (retry_sel, retry_all, add_q, push_top, clean, refresh):
+        for b in (retry_sel, retry_all, add_q, push_top, play, clean, refresh):
             h.addWidget(b)
         h.addStretch()
         v.addLayout(h)
@@ -62,6 +66,27 @@ class FailedTab(QWidget):
             guid = self.table.item(r, 4).text()
             self.ctx.state.set_status(guid, EpisodeStatus.PENDING)
         self.refresh()
+
+    def _play_selected(self):
+        import subprocess
+        from pathlib import Path
+        rows = {idx.row() for idx in self.table.selectedIndexes()}
+        if not rows:
+            return
+        # Prefer the partial MP3 that's still on disk for failed rows.
+        guid = self.table.item(next(iter(rows)), 4).text()
+        with self.ctx.state._conn() as c:
+            ep = c.execute(
+                "SELECT show_slug, mp3_path FROM episodes WHERE guid=?",
+                (guid,)).fetchone()
+        if ep is None:
+            return
+        from core.pipeline import build_slug
+        # Best-effort locate: episodes.mp3_path is filled if we've ever
+        # downloaded; fall back to reconstructing via slug.
+        mp3 = Path(ep["mp3_path"]) if ep["mp3_path"] else None
+        if mp3 and mp3.exists():
+            subprocess.run(["open", str(mp3)])
 
     def _retry_all(self):
         with self.ctx.state._conn() as c:

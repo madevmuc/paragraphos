@@ -59,6 +59,9 @@ class CheckAllThread(QThread):
             if backoff.in_backoff(self.ctx.state, show.slug):
                 self.progress.emit(f"skip {show.slug} (in backoff after repeated feed failures)")
                 continue
+            if self.ctx.state.get_meta(f"show_paused:{show.slug}") == "1":
+                self.progress.emit(f"skip {show.slug} (paused per-show)")
+                continue
             try:
                 canonical, manifest = build_manifest_with_url(
                     show.rss, timeout=60)

@@ -128,10 +128,23 @@ class ShowsTab(QWidget):
         stale_all.triggered.connect(lambda: self._mark_stale(slug))
         toggle = QAction(f"Toggle enabled", self)
         toggle.triggered.connect(lambda: self._toggle(slug))
+        paused = self.ctx.state.get_meta(f"show_paused:{slug}") == "1"
+        pause_label = f"Resume '{slug}'" if paused else f"Pause '{slug}'"
+        pause_act = QAction(pause_label, self)
+        pause_act.triggered.connect(lambda: self._toggle_show_pause(slug))
         menu.addAction(check_only)
         menu.addAction(stale_all)
         menu.addAction(toggle)
+        menu.addSeparator()
+        menu.addAction(pause_act)
         menu.exec(self.table.viewport().mapToGlobal(pos))
+
+    def _toggle_show_pause(self, slug: str) -> None:
+        key = f"show_paused:{slug}"
+        paused = self.ctx.state.get_meta(key) == "1"
+        self.ctx.state.set_meta(key, "0" if paused else "1")
+        self._log(f"{'resumed' if paused else 'paused'} {slug}")
+        self.refresh()
 
     def _add(self):
         from ui.add_show_dialog import AddShowDialog
