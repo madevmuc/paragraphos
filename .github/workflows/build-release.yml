@@ -10,6 +10,13 @@ on:
 permissions:
   contents: write
 
+# Opt every JS action in this workflow into the Node 24 runtime.
+# GitHub silently forces it starting June 2026, but we bypass the
+# deprecation warning now. Required because softprops/action-gh-release
+# still declares runs.using=node20 in its action.yml.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   build:
     runs-on: macos-14
