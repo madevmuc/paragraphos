@@ -107,6 +107,14 @@ class ParagraphosApp(QObject):
 
         self._rebuild_tray_menu(running=False)
         self.tray.show()
+
+        # Re-render the tray icon when macOS flips light/dark so its
+        # glyph color tracks the new menu-bar appearance.
+        from ui.themes import manager as _theme_manager
+
+        _tm = _theme_manager()
+        if _tm is not None:
+            _tm.themeChanged.connect(self._on_theme_changed)
         print(
             f"paragraphos ready — tray visible={self.tray.isVisible()}, "
             f"system-tray-available={QSystemTrayIcon.isSystemTrayAvailable()}",
@@ -161,6 +169,17 @@ class ParagraphosApp(QObject):
             on_quit=self.quit_with_confirm,
         )
         self.tray.setContextMenu(self._tray_menu)
+
+    def _on_theme_changed(self, _mode: str) -> None:
+        """Re-render the tray icon so its glyph color flips with the
+        menu-bar appearance. Cheap — just re-draws a 22/44 px pixmap.
+        Preserves the current idle vs. running state if any.
+        """
+        q = self.ctx.queue
+        if q.running and q.total > 0:
+            self.tray.setIcon(self._icon_renderer.render(q.done, q.total, running=True))
+        else:
+            self.tray.setIcon(self._icon_renderer.render())
 
     def _on_tray_activated(self, reason):
         # Single-click on macOS tray opens the window; Qt's default context menu
@@ -497,10 +516,17 @@ def _is_descendant(widget, ancestor) -> bool:
 def main() -> int:
     qapp = ParagraphosQApplication(sys.argv)
     qapp.setQuitOnLastWindowClosed(False)
-    # Install the Phase 6 design tokens + QSS globally.
-    from ui.widgets import apply_app_qss
 
-    apply_app_qss(qapp)
+    # App / dock / window icon — bundled AppIcon.icns.
+    _icon_path = Path(__file__).resolve().parent / "assets" / "AppIcon.icns"
+    if _icon_path.exists():
+        qapp.setWindowIcon(QIcon(str(_icon_path)))
+
+    # Install the theme manager BEFORE any widget construction — widgets
+    # subscribe to its themeChanged signal at __init__ time.
+    from ui.themes import install_manager
+
+    install_manager(qapp)
     _focus_filter = _FocusClearFilter()
     qapp.installEventFilter(_focus_filter)
     qapp._focus_filter = _focus_filter  # keep reference alive

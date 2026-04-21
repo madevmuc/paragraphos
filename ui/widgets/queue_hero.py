@@ -49,12 +49,11 @@ class QueueHero(QWidget):
         self._on_pause = on_pause
         self._on_stop = on_stop
 
+        # Styling comes from the global QSS (QFrame#QueueHeroCard rule
+        # in ui/themes/app.qss.tmpl) — border color + bg flip with the
+        # active theme automatically.
         outer = QFrame(self)
         outer.setObjectName("QueueHeroCard")
-        outer.setStyleSheet(
-            "QFrame#QueueHeroCard { border: 1.5px solid palette(mid); "
-            "border-radius: 10px; padding: 14px; }"
-        )
         wrap = QVBoxLayout(self)
         wrap.setContentsMargins(0, 0, 0, 0)
         wrap.addWidget(outer)

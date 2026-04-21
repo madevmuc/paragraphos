@@ -404,11 +404,9 @@ def _build_status_block(done: int, total: int, current_title: str, eta_sec: int 
     pb.setValue(max(0, min(done, total)))
     pb.setTextVisible(False)
     pb.setFixedHeight(6)
-    pb.setStyleSheet(
-        "QProgressBar { border: none; background: rgba(0,0,0,25); "
-        "border-radius: 3px; } "
-        "QProgressBar::chunk { background: #b47a3a; border-radius: 3px; }"
-    )
+    # Picks up track + accent colors from the global QSS (see
+    # ui/themes/app.qss.tmpl → QProgressBar#TrayProgress).
+    pb.setObjectName("TrayProgress")
     v.addWidget(pb)
 
     # Row 3: "Now: <truncated title>"

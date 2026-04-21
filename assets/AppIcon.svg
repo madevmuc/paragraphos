@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 360 360">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#d568f2"></stop>
+      <stop offset="55%" stop-color="#bf5af2"></stop>
+      <stop offset="100%" stop-color="#9a3dd0"></stop>
+    </linearGradient>
+    <linearGradient id="gh" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="rgba(255,255,255,0.18)"></stop>
+      <stop offset="40%" stop-color="rgba(255,255,255,0)"></stop>
+    </linearGradient>
+    <clipPath id="r">
+      <rect x="0" y="0" width="360" height="360" rx="82" ry="82"></rect>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#r)">
+    <rect width="360" height="360" fill="url(#g)"></rect>
+    <rect width="360" height="360" fill="url(#gh)"></rect>
+    <g transform="translate(180,180)" fill="#ffffff">
+      <path d="M -30,-95 A 62,62 0 1 0 -30,29 L -30,95 L -10,95 L -10,-75 L 20,-75 L 20,95 L 40,95 L 40,-75 L 62,-75 L 62,-95 Z"></path>
+    </g>
+    <path d="M 0,0 L 360,0 L 360,60 C 240,30 120,30 0,60 Z" fill="rgba(255,255,255,0.07)"></path>
+  </g>
+</svg>

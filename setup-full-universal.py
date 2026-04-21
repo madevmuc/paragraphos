@@ -27,6 +27,7 @@ APP = ["app.py"]
 OPTIONS = {
     "argv_emulation": False,
     "arch": "universal2",
+    "iconfile": "assets/AppIcon.icns",
     "plist": {
         "CFBundleName": "Paragraphos",
         "CFBundleDisplayName": "Paragraphos",
