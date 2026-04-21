@@ -20,7 +20,6 @@ from PyQt6.QtWidgets import (
     QDialog,
     QFrame,
     QGridLayout,
-    QGroupBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -496,18 +495,40 @@ class ShowDetailsDialog(QDialog):
 
     # ── advanced (collapsed by default) ──────────────────────
 
-    def _build_advanced_group(self) -> QGroupBox:
-        box = QGroupBox("Advanced — tuning")
-        box.setCheckable(True)
-        box.setChecked(False)  # collapsed by default
-        box.setFlat(True)
-        # Handle kept so _refresh_from_feed can pop the group open when it
-        # writes a new title the user would otherwise not see.
-        self._advanced_box = box
+    def _build_advanced_group(self) -> QWidget:
+        """Advanced section: header row (label + Switch) over a collapsible
+        body. Replaces the previous checkable QGroupBox so the toggle
+        reads as a modern on/off switch instead of a square checkbox."""
+        from ui.widgets import Switch
 
-        inner = QGridLayout(box)
+        container = QWidget()
+        vbox = QVBoxLayout(container)
+        vbox.setContentsMargins(0, 4, 0, 0)
+        vbox.setSpacing(6)
+
+        # Header
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        title_lbl = QLabel("Advanced — tuning")
+        f = QFont()
+        f.setBold(True)
+        title_lbl.setFont(f)
+        header.addWidget(title_lbl)
+        header.addStretch(1)
+        self._advanced_switch = Switch()
+        # Alias kept for _refresh_from_feed which called setChecked(True).
+        self._advanced_box = self._advanced_switch
+        header.addWidget(self._advanced_switch)
+        vbox.addLayout(header)
+
+        # Body — hosts the grid with the advanced fields.
+        body = QWidget()
+        vbox.addWidget(body)
+
+        inner = QGridLayout(body)
         inner.setHorizontalSpacing(10)
         inner.setVerticalSpacing(6)
+        inner.setContentsMargins(0, 0, 0, 0)
         inner.setColumnMinimumWidth(0, 120)
         inner.setColumnStretch(0, 0)
         inner.setColumnStretch(1, 1)
@@ -544,25 +565,19 @@ class ShowDetailsDialog(QDialog):
         inner.addWidget(hint, r, 1)
         r += 1
 
-        # Collapse/expand children when the group is toggled. Widgets added
-        # at this point are direct children of `box`; layout recalcs on
-        # visibility change. Also grow / shrink the dialog so the expanded
-        # Advanced block doesn't collide with the episodes table below —
-        # the prompt edit's 80-px fixed height pushed the grid past the
-        # 560-px default and Qt squeezed rows into overlap.
+        # Toggle: switch controls body visibility + grows/shrinks the
+        # dialog so the expanded body doesn't overflow into the
+        # episodes table below.
         def _toggle(expanded: bool):
-            for child in box.findChildren(QWidget):
-                child.setVisible(expanded)
-            # Grow vertically on expand; shrink back on collapse. Width
-            # stays put.
+            body.setVisible(expanded)
             cur = self.size()
             target_h = 760 if expanded else 560
             if cur.height() != target_h:
                 self.resize(cur.width(), target_h)
 
-        box.toggled.connect(_toggle)
+        self._advanced_switch.toggled.connect(_toggle)
         _toggle(False)
-        return box
+        return container
 
     # ── recent episodes ──────────────────────────────────────
 

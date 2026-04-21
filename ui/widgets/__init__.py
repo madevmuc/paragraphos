@@ -14,6 +14,7 @@ from ui.widgets.filter_popover import FilterPopover
 from ui.widgets.pill import Pill
 from ui.widgets.progress_ring import ProgressRing
 from ui.widgets.sidebar import Sidebar
+from ui.widgets.switch import Switch
 from ui.widgets.tray_icon_renderer import IconRenderer
 
 
@@ -36,4 +37,5 @@ __all__ = [
     "ProgressRing",
     "IconRenderer",
     "QueueHero",
+    "Switch",
 ]
