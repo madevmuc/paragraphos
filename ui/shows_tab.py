@@ -164,6 +164,11 @@ class ShowsTab(QWidget):
 
     def refresh(self) -> None:
         self._update_global_stats()
+        # Turn off sorting during insertion — Qt re-sorts between every
+        # setItem() call when enabled, which scrambles row indices and
+        # leaves all cells past column 0 empty for most shows.
+        was_sorting = self.table.isSortingEnabled()
+        self.table.setSortingEnabled(False)
         self.table.setRowCount(0)
         self._feed_pills.clear()
         total_shows = len(self.ctx.watchlist.shows)
@@ -225,6 +230,9 @@ class ShowsTab(QWidget):
         n_active = sum(1 for v in self._active_filters.values() if v)
         self._filter_count_pill.setText(str(n_active))
         self._filter_count_pill.setVisible(n_active > 0)
+        # Re-enable sorting once all cells are filled — this applies any
+        # pending sort order to the new rows atomically.
+        self.table.setSortingEnabled(was_sorting)
 
     def _show_matches_filters(self, show) -> bool:
         f = self._active_filters
