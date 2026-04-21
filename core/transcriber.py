@@ -159,9 +159,9 @@ def transcribe_episode(
         if whisper_prompt:
             cmd += ["--prompt", whisper_prompt]
         if progress_cb is None:
-            # Fast path — classic blocking subprocess.run. Existing
-            # tests mock subprocess.run to return a canned result; keep
-            # this branch intact so test fixtures stay valid.
+            # Classic blocking path — keeps `subprocess.run` so existing
+            # tests that mock it stay valid. Used by the CLI, tests,
+            # and any caller that doesn't want streaming overhead.
             try:
                 result = subprocess.run(
                     cmd,
@@ -176,64 +176,78 @@ def transcribe_episode(
                     f"  partial stderr: {(te.stderr or b'')[-300:]!r}"
                 ) from te
         else:
-            # Streaming path — used by the GUI pipeline so the Queue tab
-            # can render a live % for the transcribing row. whisper-cli
-            # emits the `[HH:MM:SS.xxx --> …]` segment lines on STDOUT;
-            # fold stderr into stdout (stderr=STDOUT) so a single loop
-            # sees everything and we avoid the classic "parent blocks
-            # reading one pipe while child blocks writing the other"
-            # deadlock that killed the first cut of this.
-            import time as _time
+            # Streaming path — redirects whisper's stdout (where the
+            # `[HH:MM:SS.xxx --> ...]` segment lines land) to a temp
+            # file, polls that file once per second from a daemon
+            # thread, and invokes progress_cb with the last parsed
+            # end-timestamp. Still uses subprocess.run so test mocks
+            # that patch it continue to work — the mock receives the
+            # open file handle via the `stdout=` kwarg and can write
+            # simulated segment lines to it.
+            import threading
 
-            out_tail: list[str] = []
-            try:
-                proc = subprocess.Popen(
-                    cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    bufsize=1,
-                )
-            except OSError as oe:
-                raise TranscriptionError(f"whisper-cli launch failed: {oe}") from oe
+            stdout_log = stem.parent / f"{slug}.stdout.log"
+            stop_event = threading.Event()
+            poller_state = {"last_size": 0, "max_sec": 0}
 
-            start = _time.monotonic()
+            def _drain_once() -> None:
+                """Read anything new from stdout_log, fire progress_cb for the
+                last timestamp. Safe to call from either thread."""
+                try:
+                    with open(stdout_log, encoding="utf-8", errors="replace") as f:
+                        f.seek(poller_state["last_size"])
+                        chunk = f.read()
+                        poller_state["last_size"] = f.tell()
+                except (FileNotFoundError, OSError):
+                    return
+                best = poller_state["max_sec"]
+                for m in _WHISPER_TS.finditer(chunk):
+                    h, mi, s = (int(x) for x in m.groups())
+                    sec = h * 3600 + mi * 60 + s
+                    if sec > best:
+                        best = sec
+                if best > poller_state["max_sec"]:
+                    poller_state["max_sec"] = best
+                    try:
+                        progress_cb(best)
+                    except Exception:
+                        pass
+
+            def _poller() -> None:
+                while not stop_event.wait(1.0):
+                    _drain_once()
+
+            thread = threading.Thread(target=_poller, name="whisper-poll", daemon=True)
+            thread.start()
             try:
-                assert proc.stdout is not None
-                for line in proc.stdout:
-                    out_tail.append(line)
-                    if len(out_tail) > 400:
-                        del out_tail[: len(out_tail) - 400]
-                    m = _WHISPER_TS.search(line)
-                    if m:
-                        h, mi, s = (int(x) for x in m.groups())
-                        try:
-                            progress_cb(h * 3600 + mi * 60 + s)
-                        except Exception:
-                            pass
-                    if _time.monotonic() - start > WHISPER_TIMEOUT_SEC:
-                        proc.kill()
+                with open(stdout_log, "w", encoding="utf-8") as stdout_f:
+                    try:
+                        result = subprocess.run(
+                            cmd,
+                            stdout=stdout_f,
+                            stderr=subprocess.PIPE,
+                            text=True,
+                            timeout=WHISPER_TIMEOUT_SEC,
+                        )
+                    except subprocess.TimeoutExpired as te:
                         raise TranscriptionError(
                             f"whisper-cli timed out after {WHISPER_TIMEOUT_SEC}s  "
                             f"mp3={mp3_path.name}  slug={slug!r}\n"
-                            f"  partial output: {''.join(out_tail)[-300:]!r}"
-                        )
-                proc.wait(timeout=30)
-            except subprocess.TimeoutExpired as te:
-                proc.kill()
-                raise TranscriptionError(
-                    f"whisper-cli timed out after {WHISPER_TIMEOUT_SEC}s  "
-                    f"mp3={mp3_path.name}  slug={slug!r}\n"
-                    f"  partial output: {''.join(out_tail)[-300:]!r}"
-                ) from te
-
-            class _R:
+                            f"  partial stderr: {(te.stderr or b'')[-300:]!r}"
+                        ) from te
+            finally:
+                stop_event.set()
+                thread.join(timeout=2.0)
+            # Final sync drain — catches anything written since the last
+            # 1-s tick, and also catches fully-mocked (instant) runs
+            # that never gave the poller a chance to tick.
+            _drain_once()
+            # Surface whisper's stdout via `result.stdout` so the error
+            # paths below that inspect it still have useful context.
+            try:
+                result.stdout = stdout_log.read_text(encoding="utf-8", errors="replace")
+            except OSError:
                 pass
-
-            result = _R()
-            result.returncode = proc.returncode
-            result.stdout = "".join(out_tail)
-            result.stderr = result.stdout  # merged; same buffer for error msgs
         if result.returncode != 0:
             raise TranscriptionError(
                 f"whisper-cli exit {result.returncode}  "
