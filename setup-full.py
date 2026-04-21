@@ -59,6 +59,10 @@ OPTIONS = {
         "pytz",
         "tzlocal",
         "defusedxml",
+        # Required by httpx/httpcore at TLS handshake — without it the
+        # bundled .app raises `[Errno 2] No such file or directory` on
+        # every HTTPS request.
+        "certifi",
     ],
     "includes": [
         "scripts_legacy_shows",
