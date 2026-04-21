@@ -153,12 +153,19 @@ def transcribe_phase(outcome: DownloadOutcome, ctx: PipelineContext) -> Pipeline
 
     model_path = _P.home() / ".config/open-wispr/models" / f"ggml-{ctx.model_name}.bin"
 
-    # Transcribe-progress % column is disabled for now — the streaming
-    # Popen path needs further investigation (whisper-cli behaves
-    # differently when stdout is piped and some invocations produce
-    # zero output files). The API is kept on transcribe_episode so we
-    # can re-enable once the edge cases are understood. Pipeline falls
-    # back to the canonical subprocess.run path with progress_cb=None.
+    # Write % progress into state.meta so the Queue tab can render
+    # "transcribing · X%" on the active row. The transcriber uses a
+    # subprocess.run + stdout→file + background poller chain that
+    # preserves test-mock compatibility.
+    audio_sec = int(ep.get("duration_sec") or 0) or 1
+
+    def _write_progress(elapsed_audio_sec: int) -> None:
+        pct = max(0, min(99, int(100 * elapsed_audio_sec / audio_sec)))
+        try:
+            ctx.state.set_meta(f"transcribe_pct:{guid}", str(pct))
+        except Exception:
+            pass
+
     try:
         result = transcribe_episode(
             mp3_path=mp3_path,
@@ -170,6 +177,7 @@ def transcribe_phase(outcome: DownloadOutcome, ctx: PipelineContext) -> Pipeline
             model_path=model_path,
             fast_mode=ctx.fast_mode,
             processors=ctx.processors,
+            progress_cb=_write_progress,
         )
     except TranscriptionError as e:
         err = f"transcribe failed: {e}\n  show={ep['show_slug']}  guid={guid}\n  mp3={mp3_path}"
@@ -181,6 +189,12 @@ def transcribe_phase(outcome: DownloadOutcome, ctx: PipelineContext) -> Pipeline
 
     ctx.state.record_completion(guid, result.word_count, _duration_from_srt(result.srt_path))
     ctx.state.set_status(guid, EpisodeStatus.DONE)
+    # Clean up stale % so a later re-transcribe of the same guid starts
+    # from blank instead of inheriting the previous 99%.
+    try:
+        ctx.state.set_meta(f"transcribe_pct:{guid}", "")
+    except Exception:
+        pass
 
     # Record the engine+model fingerprint of this successful transcribe so
     # Settings can flag drift when whisper-cli or the model is upgraded.
