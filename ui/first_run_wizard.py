@@ -149,6 +149,12 @@ class FirstRunWizard(QDialog):
 
         footer = QHBoxLayout()
         footer.addStretch()
+        # Recheck re-runs the dep scan so users can click it after
+        # installing Homebrew in the external Terminal, without having
+        # to close + reopen the wizard.
+        self.recheck_btn = QPushButton("Recheck")
+        self.recheck_btn.clicked.connect(self._refresh)
+        footer.addWidget(self.recheck_btn)
         self.close_btn = QPushButton("Continue to Paragraphos")
         self.close_btn.setDefault(True)
         self.close_btn.clicked.connect(self.accept)
