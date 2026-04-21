@@ -44,6 +44,7 @@ from ui.prioritize import (
     can_bump,
 )
 from ui.retranscribe import retranscribe_episode
+from ui.themes import current_tokens
 from ui.widgets.pill import Pill
 
 # Episode-status → Pill-kind mapping. `done` is the canonical success
@@ -136,9 +137,10 @@ class ShowDetailsDialog(QDialog):
         art = QLabel()
         art.setFixedSize(64, 64)
         art.setFrameShape(QFrame.Shape.StyledPanel)
+        _t = current_tokens()
         art.setStyleSheet(
-            "QLabel { background: palette(alternate-base);"
-            " border: 1px solid palette(mid); border-radius: 6px; }"
+            f"QLabel {{ background: {_t['surface_alt']};"
+            f" border: 1px solid {_t['line']}; border-radius: 6px; }}"
         )
         art.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # Show model has no artwork URL field in this repo; placeholder only.
@@ -161,11 +163,11 @@ class ShowDetailsDialog(QDialog):
         meta_text = f"{self.show_.slug} · {s.total} eps · {s.done} done · {s.pending} pending"
         meta = QLabel(meta_text)
         meta.setProperty("class", "muted")
-        meta.setStyleSheet("color: palette(mid); font-size: 11px;")
+        meta.setStyleSheet(f"color: {_t['ink_3']}; font-size: 11px;")
         text_col.addWidget(meta)
 
         feed = QLabel(self.show_.rss)
-        feed.setStyleSheet("color: palette(mid); font-family: Menlo, monospace; font-size: 11px;")
+        feed.setStyleSheet(f"color: {_t['ink_3']}; font-family: Menlo, monospace; font-size: 11px;")
         feed.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         text_col.addWidget(feed)
         text_col.addStretch(1)
@@ -288,13 +290,14 @@ class ShowDetailsDialog(QDialog):
         grid.addWidget(self._label("Last checked"), r, 0)
         last_checked = self._fmt_last_checked()
         self.last_checked_lbl = QLabel(last_checked)
-        self.last_checked_lbl.setStyleSheet("color: palette(mid);")
+        _t = current_tokens()
+        self.last_checked_lbl.setStyleSheet(f"color: {_t['ink_3']};")
         grid.addWidget(self.last_checked_lbl, r, 1)
         r += 1
 
         grid.addWidget(self._label("Backlog"), r, 0)
         self.backlog_lbl = QLabel(self._fmt_backlog())
-        self.backlog_lbl.setStyleSheet("color: palette(mid);")
+        self.backlog_lbl.setStyleSheet(f"color: {_t['ink_3']};")
         grid.addWidget(self.backlog_lbl, r, 1)
         r += 1
 
@@ -379,7 +382,7 @@ class ShowDetailsDialog(QDialog):
         r += 1
 
         hint = QLabel("Comma-separated hints (names, jargon, places). Improves recognition.")
-        hint.setStyleSheet("color: palette(mid); font-size: 11px;")
+        hint.setStyleSheet(f"color: {current_tokens()['ink_3']}; font-size: 11px;")
         hint.setWordWrap(True)
         inner.addWidget(hint, r, 1)
         r += 1
@@ -530,7 +533,7 @@ class ShowDetailsDialog(QDialog):
 
         remove = QPushButton("Remove")
         remove.setProperty("role", "ghost")
-        remove.setStyleSheet("QPushButton { color: #b04040; }")
+        remove.setStyleSheet(f"QPushButton {{ color: {current_tokens()['danger']}; }}")
         remove.clicked.connect(self._remove)
         row.addWidget(remove)
 

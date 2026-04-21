@@ -103,6 +103,20 @@ class MainWindow(QMainWindow):
         self.banner.setVisible(False)
         outer.addWidget(self.banner)
 
+        # Re-paint the banner when the system appearance flips. The banner
+        # paints itself via inline QSS (outside the global stylesheet) so it
+        # would otherwise stick on whichever mode was active at construction.
+        try:
+            from ui.themes import manager as _theme_mgr
+
+            _tm = _theme_mgr()
+            if _tm is not None:
+                _tm.themeChanged.connect(lambda _mode: self._apply_banner_style())
+        except Exception:
+            # Manager not installed (tests) — no live updates, but the
+            # banner still paints correctly at startup.
+            pass
+
         body = QWidget()
         root = QHBoxLayout(body)
         root.setContentsMargins(0, 0, 0, 0)
@@ -204,47 +218,46 @@ class MainWindow(QMainWindow):
     def _apply_banner_style(self) -> None:
         """Choose banner colors that work in both light and dark macOS modes.
 
-        Update-available banner uses a blue palette to distinguish it from
-        the amber wiki-compile reminder.
+        Colors are now derived from theme tokens so the banner tracks live
+        appearance changes (macOS Appearance flip) via the ThemeManager
+        signal — not just whatever scheme was active at window construction.
+
+        Update-available uses `accent` (ochre in light / purple in dark) so
+        it visually anchors to a different hue than the amber compile
+        reminder, which uses `warn`.
         """
-        palette_color = self.palette().window().color()
-        dark = palette_color.lightnessF() < 0.5
+        from ui.themes import current_tokens, manager
+
+        t = current_tokens()
+        tm = manager()
+        dark = tm.scheme() == "dark" if tm is not None else False
         self.banner.setObjectName("appBanner")
         if self._banner_state == "update":
-            if dark:
-                bg, fg, border, btn_bg, btn_fg = (
-                    "#0f3352",
-                    "#c9e3ff",
-                    "#2a6aa8",
-                    "#2a6aa8",
-                    "#ffffff",
-                )
-            else:
-                bg, fg, border, btn_bg, btn_fg = (
-                    "#e6f1fb",
-                    "#0b3e66",
-                    "#9dc7e8",
-                    "#2a6aa8",
-                    "#ffffff",
-                )
+            # Accent-tinted card. Use `accent_tint` for the panel bg and
+            # `accent` for the action button; `ink` / `ink_2` keep label
+            # contrast readable in both modes.
+            bg = t["accent_tint"]
+            fg = t["ink"]
+            border = t["accent"]
+            btn_bg = t["accent"]
+            btn_fg = "#ffffff"
         else:
-            # compile / default (amber)
+            # compile / default — warn family (amber).
+            warn = t["warn"]
             if dark:
-                bg, fg, border, btn_bg, btn_fg = (
-                    "#4a3f00",
-                    "#ffe7a0",
-                    "#8a6b00",
-                    "#8a6b00",
-                    "#fff7d0",
-                )
+                # Translucent warn wash — matches the pill_fail_bg pattern
+                # used elsewhere in the design system.
+                bg = "rgba(240, 185, 85, 0.14)"
+                fg = t["warn"]
+                border = warn
+                btn_bg = warn
+                btn_fg = t["bg"]
             else:
-                bg, fg, border, btn_bg, btn_fg = (
-                    "#fff7d0",
-                    "#3a2d00",
-                    "#e0c870",
-                    "#e0c870",
-                    "#3a2d00",
-                )
+                bg = "rgba(184, 134, 74, 0.14)"
+                fg = t["ink"]
+                border = warn
+                btn_bg = warn
+                btn_fg = "#ffffff"
         self.banner.setStyleSheet(
             f"QWidget#appBanner {{ background:{bg}; border:1px solid {border}; "
             f"border-radius:4px; }} "
@@ -299,16 +312,19 @@ class MainWindow(QMainWindow):
     def _refresh_status_bar(self) -> None:
         from datetime import datetime, timedelta
 
+        from ui.themes import current_tokens
+
+        t = current_tokens()
         q = self.ctx.queue
         if not q.running:
             paused = self.ctx.state.get_meta("queue_paused") == "1"
             if paused:
                 self.status_label.setText(
-                    "<span style='color:#a06030;'>● queue paused</span> "
+                    f"<span style='color:{t['warn']};'>● queue paused</span> "
                     "— click Start on any tab to resume"
                 )
             else:
-                self.status_label.setText("<span style='color:#888;'>● idle</span>")
+                self.status_label.setText(f"<span style='color:{t['ink_3']};'>● idle</span>")
             return
         elapsed = (datetime.now() - q.started_at).total_seconds() if q.started_at else 0
         remaining = q.total - q.done
@@ -316,7 +332,7 @@ class MainWindow(QMainWindow):
         eta_sec = avg * remaining if avg else 0
         finish_at = datetime.now() + timedelta(seconds=eta_sec) if eta_sec else None
         parts = [
-            "<span style='color:#4a7aa0;'>● running</span>",
+            f"<span style='color:{t['accent']};'>● running</span>",
             f"<b>{q.done}/{q.total}</b>",
         ]
         if q.started_at:

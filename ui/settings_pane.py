@@ -63,26 +63,14 @@ def _human_size(n: int) -> str:
 
 
 def _theme_tokens() -> dict:
-    """Return the active theme's token dict — falls back to LIGHT defaults
-    if the ThemeManager hasn't been installed yet."""
-    try:
-        from ui.themes import manager
-        from ui.themes.tokens import LIGHT
+    """Backwards-compatible shim around `ui.themes.current_tokens()`.
 
-        tm = manager()
-        return tm.tokens() if tm is not None else LIGHT
-    except Exception:
-        # Last-resort fallback so settings_pane imports cleanly in tests.
-        return {
-            "accent": "#b47a3a",
-            "accent_tint": "rgba(180,122,58,0.12)",
-            "surface": "#ffffff",
-            "surface_alt": "#f4f2ee",
-            "ink": "#1a1a1a",
-            "ink_3": "#777777",
-            "line": "#d8d4cb",
-            "ok": "#4a8a5a",
-        }
+    Kept so in-file call sites don't churn, but the canonical accessor now
+    lives on `ui.themes` so every UI module can share one implementation.
+    """
+    from ui.themes import current_tokens
+
+    return current_tokens()
 
 
 def _section(title: str) -> QLabel:
@@ -256,7 +244,7 @@ class SettingsPane(QWidget):
         self.model.currentTextChanged.connect(self._on_model_changed)
         model_row.addWidget(self.model)
         self.model_status = QLabel()
-        self.model_status.setStyleSheet("color: #888; font-style: italic;")
+        self.model_status.setStyleSheet(f"color: {_theme_tokens()['ink_3']}; font-style: italic;")
         model_row.addWidget(self.model_status, stretch=1)
         self._add_field(
             f4,
@@ -368,7 +356,7 @@ class SettingsPane(QWidget):
 
         # ── Save indicator ─────────────────────────────────────
         self._saved_label = QLabel("")
-        self._saved_label.setStyleSheet("color: #5a8a4a; font-size: 11px;")
+        self._saved_label.setStyleSheet(f"color: {_theme_tokens()['ok']}; font-size: 11px;")
         root.addWidget(self._saved_label)
 
         # ── Automation & remote control ────────────────────────
@@ -543,7 +531,7 @@ class SettingsPane(QWidget):
             f"(was {last.get('whisper_model', '?')}/"
             f"{(last.get('model_sha256') or '?')[:8]})"
         )
-        self._drift_label.setStyleSheet("color: #a06030; font-size: 11px;")
+        self._drift_label.setStyleSheet(f"color: {tokens['warn']}; font-size: 11px;")
         self._drift_button.setText(f"Re-transcribe all ({n} transcripts)")
         self._drift_button.setEnabled(n > 0)
         self._drift_button.setVisible(True)
@@ -599,7 +587,7 @@ class SettingsPane(QWidget):
             size = path.stat().st_size
         except OSError as e:
             self.model_status.setText(f"⚠ cannot stat model: {e}")
-            self.model_status.setStyleSheet("color: #a04040;")
+            self.model_status.setStyleSheet(f"color: {tokens['danger']};")
             return
 
         # Look up pinned TOFU hash + pinned size (if recorded).
@@ -622,14 +610,14 @@ class SettingsPane(QWidget):
         if partial:
             expected = _human_size(min_bytes)
             self.model_status.setText(f"⚠ partial download · {size_str} · expected ≥{expected}")
-            self.model_status.setStyleSheet("color: #a04040; font-style: normal;")
+            self.model_status.setStyleSheet(f"color: {tokens['danger']}; font-style: normal;")
             return
         if size_drift:
             expected = _human_size(pinned_size)
             self.model_status.setText(
                 f"⚠ size drift · {size_str} · pinned at {expected} — re-verify"
             )
-            self.model_status.setStyleSheet("color: #a06030; font-style: normal;")
+            self.model_status.setStyleSheet(f"color: {tokens['warn']}; font-style: normal;")
             return
 
         pin_frag = f" · pinned {pinned_hash[:8]}…" if pinned_hash else " · unpinned"
@@ -639,15 +627,17 @@ class SettingsPane(QWidget):
     def _download_model(self, name: str) -> None:
         from core.model_download import download_model_async
 
+        tokens = _theme_tokens()
         self.model_status.setText("⏳ downloading…")
-        self.model_status.setStyleSheet("color: #606090;")
+        self.model_status.setStyleSheet(f"color: {tokens['accent']};")
 
         def on_done(ok: bool, err: str):
             if ok:
                 self._update_model_status()
             else:
+                tk = _theme_tokens()
                 self.model_status.setText(f"✖ {err}")
-                self.model_status.setStyleSheet("color: #a04040;")
+                self.model_status.setStyleSheet(f"color: {tk['danger']};")
 
         download_model_async(name, on_done)
 

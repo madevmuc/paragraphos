@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
 
 from core import deps
 from core.model_download import download_model
+from ui.themes import current_tokens
 from ui.widgets import Pill
 
 
@@ -31,7 +32,7 @@ def _make_divider(parent: QWidget) -> QFrame:
     f = QFrame(parent)
     f.setFrameShape(QFrame.Shape.HLine)
     f.setFixedHeight(1)
-    f.setStyleSheet("background-color: palette(mid);")
+    f.setStyleSheet(f"background-color: {current_tokens()['line']};")
     return f
 
 
@@ -57,7 +58,7 @@ class StepRow(QWidget):
         outer.addLayout(top)
 
         self.subcopy = QLabel("")
-        self.subcopy.setStyleSheet("color: palette(mid); font-size: 11px;")
+        self.subcopy.setStyleSheet(f"color: {current_tokens()['ink_3']}; font-size: 11px;")
         self.subcopy.setVisible(False)
         self.subcopy.setWordWrap(True)
         outer.addWidget(self.subcopy)
@@ -121,7 +122,7 @@ class FirstRunWizard(QDialog):
         sub = QLabel(
             "Everything runs locally. We need a few tools on your Mac before the first run."
         )
-        sub.setStyleSheet("color: palette(mid); font-size: 11px;")
+        sub.setStyleSheet(f"color: {current_tokens()['ink_3']}; font-size: 11px;")
         sub.setWordWrap(True)
         v.addWidget(sub)
 

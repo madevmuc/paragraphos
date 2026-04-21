@@ -33,6 +33,7 @@ from core.discovery import find_rss_from_url, search_itunes
 from core.models import Show
 from core.prompt_gen import suggest_whisper_prompt
 from core.rss import FeedHealth, build_manifest_with_url, feed_metadata
+from ui.themes import current_tokens
 from ui.widgets.pill import Pill
 
 # --------------------------------------------------------------------------- #
@@ -295,7 +296,7 @@ class AddShowDialog(QDialog):
         card_v.addWidget(self.url_card_title)
 
         self.url_card_publisher = QLabel("")
-        self.url_card_publisher.setStyleSheet("color: #888;")
+        self.url_card_publisher.setStyleSheet(f"color: {current_tokens()['ink_3']};")
         self.url_card_publisher.setWordWrap(True)
         card_v.addWidget(self.url_card_publisher)
 
@@ -303,7 +304,7 @@ class AddShowDialog(QDialog):
         card_v.addWidget(self.url_card_meta)
 
         self.url_card_warnings = QLabel("")
-        self.url_card_warnings.setStyleSheet("color: #c0392b;")
+        self.url_card_warnings.setStyleSheet(f"color: {current_tokens()['danger']};")
         self.url_card_warnings.setWordWrap(True)
         self.url_card_warnings.setVisible(False)
         card_v.addWidget(self.url_card_warnings)
@@ -421,8 +422,10 @@ class AddShowDialog(QDialog):
         # Dashed-border compact card
         self.apple_card = QFrame()
         self.apple_card.setObjectName("ApplePreviewCard")
+        _t = current_tokens()
         self.apple_card.setStyleSheet(
-            "QFrame#ApplePreviewCard { border: 1px dashed #888; border-radius: 6px; padding: 8px; }"
+            f"QFrame#ApplePreviewCard {{ border: 1px dashed {_t['line']}; "
+            f"border-radius: 6px; padding: 8px; }}"
         )
         self.apple_card.setVisible(False)
         card_v = QVBoxLayout(self.apple_card)
@@ -433,7 +436,7 @@ class AddShowDialog(QDialog):
         self.apple_card_title.setWordWrap(True)
         card_v.addWidget(self.apple_card_title)
         self.apple_card_rss = QLabel("")
-        self.apple_card_rss.setStyleSheet("color: #888;")
+        self.apple_card_rss.setStyleSheet(f"color: {_t['ink_3']};")
         self.apple_card_rss.setWordWrap(True)
         card_v.addWidget(self.apple_card_rss)
         v.addWidget(self.apple_card)

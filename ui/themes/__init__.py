@@ -62,6 +62,23 @@ def tokens(mode: str) -> dict[str, str]:
     return tokens_for(mode)
 
 
+def current_tokens() -> dict[str, str]:
+    """Return the active theme's token dict.
+
+    Shared accessor for every UI module that needs to paint semantic colors
+    (danger/warn/ok/accent) without going through QSS. Falls back to LIGHT
+    if the ThemeManager has not been installed yet — e.g. during unit tests
+    that spin up a widget without booting the full app.
+    """
+    tm = _manager
+    if tm is not None:
+        try:
+            return tm.tokens()
+        except Exception:
+            pass
+    return LIGHT
+
+
 class ThemeManager(QObject):
     """Follows macOS system appearance; re-applies QSS on change.
 
@@ -153,6 +170,7 @@ __all__ = [
     "DARK",
     "load_qss",
     "tokens",
+    "current_tokens",
     "install_manager",
     "manager",
 ]
