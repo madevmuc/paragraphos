@@ -709,6 +709,12 @@ class SettingsPane(QWidget):
 
     def _add_field(self, form, label, widget, hint=None, hint_kind="info"):
         """Add a form row with an optional hint line below."""
+        # Apply generous vertical + horizontal spacing + growth policy once
+        # per form — idempotent, so re-calling from every row is fine.
+        form.setHorizontalSpacing(14)
+        form.setVerticalSpacing(12)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         if hint is None:
             form.addRow(label, widget)
             return

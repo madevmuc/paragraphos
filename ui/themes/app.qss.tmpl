@@ -39,6 +39,46 @@ QLineEdit, QPlainTextEdit, QTextEdit, QSpinBox, QComboBox {{
 }}
 QComboBox::drop-down {{ border: none; }}
 
+/* Combo-box popup list — Qt ignores QComboBox bg/color for the popup
+   itself; target the embedded QAbstractItemView so dark mode renders
+   with dark rows + ink text instead of the native grey slab. */
+QComboBox QAbstractItemView {{
+    background: {surface};
+    color: {ink};
+    border: 1px solid {line};
+    selection-background-color: {accent_tint};
+    selection-color: {ink};
+    padding: 2px;
+    outline: 0;
+}}
+QComboBox QAbstractItemView::item {{
+    padding: 4px 10px;
+    min-height: 22px;
+}}
+
+/* Context-menu popups (right-click + tray + ⋯ menus). Without these
+   Qt falls back to the system palette, which on macOS dark mode
+   shows ok but can look washed out on the themed surfaces. */
+QMenu {{
+    background: {surface};
+    color: {ink};
+    border: 1px solid {line};
+    padding: 4px;
+}}
+QMenu::item {{
+    padding: 5px 16px;
+    border-radius: 4px;
+}}
+QMenu::item:selected {{
+    background: {accent_tint};
+    color: {ink};
+}}
+QMenu::separator {{
+    height: 1px;
+    background: {line};
+    margin: 4px 8px;
+}}
+
 /* Tables — keep native row selection, tweak grid color so it is visible
  * on the dark bg. */
 QTableView, QTableWidget, QTreeView, QListView {{
