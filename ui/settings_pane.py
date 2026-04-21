@@ -200,10 +200,17 @@ class SettingsPane(QWidget):
         f2 = QFormLayout()
         self.time = QTimeEdit(QTime.fromString(self.ctx.settings.daily_check_time, "HH:mm"))
         self.time.timeChanged.connect(self._schedule_save)
+        time_row = QHBoxLayout()
+        time_row.addWidget(self.time)
+        check_now_btn = QPushButton("Check now")
+        check_now_btn.setToolTip("Trigger a feed-check + transcribe pass immediately")
+        check_now_btn.clicked.connect(self._check_now_from_settings)
+        time_row.addWidget(check_now_btn)
+        time_row.addStretch()
         self._add_field(
             f2,
             "Daily check time",
-            self.time,
+            self._row_widget(time_row),
             hint="runs in the background — Mac must be awake",
             hint_kind="info",
         )
@@ -466,6 +473,18 @@ class SettingsPane(QWidget):
         d = QFileDialog.getExistingDirectory(self, "Pick export root", start)
         if d:
             self.export_root.setText(d)
+
+    def _check_now_from_settings(self) -> None:
+        """Kick off a check immediately. Bubbles up through MainWindow to
+        ShowsTab.start_check which owns the CheckAllThread."""
+        w = self.window()
+        shows = getattr(w, "shows_tab", None)
+        if shows is None:
+            return
+        try:
+            shows.start_check(force=True)
+        except Exception:
+            pass
 
     def _open_notification_prefs(self):
         import subprocess

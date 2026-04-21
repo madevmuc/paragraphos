@@ -92,11 +92,13 @@ class QueueTab(QWidget):
         )
         _hdr = self.table.horizontalHeader()
         _hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        # Columns whose value width depends on content (e.g. 'transcribing
-        # · 42%' for status, 'h:mm:ss' for long audio) should auto-fit so
-        # the live % isn't clipped mid-render.
-        for _col in (0, 1, 2, 4, 5, 6, 7):
+        # Auto-fit everything except Status — Status has a fixed width
+        # so the live "transcribing · XXX%" update doesn't resize the
+        # column (and cascade a layout twitch) every second.
+        for _col in (0, 1, 2, 5, 6, 7):
             _hdr.setSectionResizeMode(_col, QHeaderView.ResizeMode.ResizeToContents)
+        _hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
+        self.table.setColumnWidth(4, 150)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._on_context_menu)
         v.addWidget(self.table)
@@ -361,7 +363,9 @@ class QueueTab(QWidget):
                 pct = self.ctx.state.get_meta(f"transcribe_pct:{r['guid']}") or ""
                 if pct.isdigit():
                     status_text = f"transcribing · {pct}%"
-            self.table.setItem(row, 4, QTableWidgetItem(status_text))
+            status_item = QTableWidgetItem(status_text)
+            status_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            self.table.setItem(row, 4, status_item)
 
             # Audio length (mm:ss or h:mm:ss)
             dur_sec = int(r["duration_sec"] or 0)
