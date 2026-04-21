@@ -17,8 +17,29 @@ from PyQt6.QtWidgets import (
 
 from core.version import VERSION
 
-# CHANGELOG.md sits at the Paragraphos repo root, one level above `ui/`.
-CHANGELOG_PATH = Path(__file__).resolve().parent.parent / "CHANGELOG.md"
+
+def _resolve_changelog() -> Path:
+    """Return the first CHANGELOG.md that exists.
+
+    Dev layout:   `.../paragraphos/ui/about_dialog.py` → `../CHANGELOG.md`
+    py2app .app:  CHANGELOG.md ships under `Contents/Resources/`, while
+                  `about_dialog.py` lives at
+                  `Contents/Resources/lib/python3.12/ui/about_dialog.py`
+                  — so the dev-layout path misses it.
+    """
+    here = Path(__file__).resolve().parent  # .../ui/
+    candidates = [
+        here.parent / "CHANGELOG.md",  # dev: paragraphos/CHANGELOG.md
+        here.parent.parent / "CHANGELOG.md",  # Resources/lib/python3.12 → Resources/lib
+        here.parent.parent.parent / "CHANGELOG.md",  # .app/Contents/Resources
+    ]
+    for p in candidates:
+        if p.exists():
+            return p
+    return candidates[0]  # first guess for error messages
+
+
+CHANGELOG_PATH = _resolve_changelog()
 
 
 # (name, version-rough, license-SPDX, project URL)
@@ -283,9 +304,15 @@ class _ChangelogTab(QWidget):
         if markdown.strip():
             self._browser.setMarkdown(markdown)
 
-    def _on_failed(self, _msg: str) -> None:
-        # Keep whatever we already rendered from the bundled CHANGELOG.
-        pass
+    def _on_failed(self, msg: str) -> None:
+        # Don't strand the user on "Loading releases…" if the GitHub
+        # fetch fails AND the bundled CHANGELOG.md is missing.
+        if not CHANGELOG_PATH.exists():
+            self._browser.setPlainText(
+                "Couldn't reach GitHub for release notes.\n\n"
+                "Visit https://github.com/madevmuc/paragraphos/releases\n"
+                f"(error: {msg})"
+            )
 
 
 class _GitHubChangelogThread(QThread):
