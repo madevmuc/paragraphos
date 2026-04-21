@@ -20,7 +20,7 @@ from core.http import get_client
 logger = logging.getLogger(__name__)
 
 # Override in tests or when someone forks the repo.
-DEFAULT_GITHUB_REPO = "m4ma/paragraphos"
+DEFAULT_GITHUB_REPO = "madevmuc/paragraphos"
 
 
 def _parse_semver(tag: str) -> tuple[int, int, int]:
