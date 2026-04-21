@@ -201,13 +201,46 @@ class FirstRunWizard(QDialog):
         self.close_btn.setEnabled(all_ok)
 
     def _install_brew(self):
-        """Homebrew's installer needs an interactive Terminal (sudo). Open
-        Terminal.app with the prefilled command — user authenticates there,
-        then returns here and clicks 'Recheck'."""
+        """Homebrew's installer needs an interactive Terminal (sudo). Write
+        a throwaway .command script and ``open`` it — macOS launches
+        Terminal.app and runs the script there. More reliable than
+        ``osascript tell Terminal to do script`` which silently fails
+        when the brew one-liner has embedded quotes / $() and when
+        Automation permission hasn't been granted.
+        """
+        import os
+        import tempfile
+
         from PyQt6.QtWidgets import QMessageBox
 
         cmd = deps.install_brew_command()
-        subprocess.run(["osascript", "-e", f'tell application "Terminal" to do script "{cmd}"'])
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            suffix=".command",
+            prefix="paragraphos-install-brew-",
+            delete=False,
+            encoding="utf-8",
+        ) as f:
+            f.write("#!/bin/sh\n")
+            f.write("set -e\n")
+            f.write(cmd + "\n")
+            f.write('\necho ""\n')
+            f.write(
+                'echo "✓ Homebrew installer finished. Close this window and '
+                'click Recheck in Paragraphos."\n'
+            )
+            script_path = f.name
+        os.chmod(script_path, 0o755)
+        try:
+            subprocess.Popen(["open", "-a", "Terminal", script_path])
+        except OSError as exc:
+            QMessageBox.warning(
+                self,
+                "Couldn't open Terminal",
+                f"Could not launch Terminal.app: {exc}\n\n"
+                f"Run this manually in a Terminal, then click Recheck:\n\n{cmd}",
+            )
+            return
         QMessageBox.information(
             self,
             "Homebrew installer opened",
