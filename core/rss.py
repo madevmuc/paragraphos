@@ -177,9 +177,23 @@ def feed_metadata(feed_url: str, *, timeout: float = 30.0) -> Dict[str, str]:
     r.raise_for_status()
     parsed = feedparser.parse(r.content)
     ch = parsed.feed
+    # Cover art: feedparser normalises <itunes:image href="..."> to
+    # ch.itunes_image (a dict with 'href') or ch.image (dict with 'href'
+    # or 'url' depending on how the feed spelled it). Check the most
+    # specific source first so we don't pick up a favicon from <image>
+    # when a proper itunes:image exists.
+    itunes_img = ch.get("itunes_image") or {}
+    image = ch.get("image") or {}
+    artwork = (
+        (itunes_img.get("href") if isinstance(itunes_img, dict) else "")
+        or (image.get("href") if isinstance(image, dict) else "")
+        or (image.get("url") if isinstance(image, dict) else "")
+        or ""
+    )
     return {
         "title": ch.get("title", ""),
         "author": ch.get("author", "") or ch.get("itunes_author", ""),
         "description": ch.get("subtitle", "") or ch.get("description", ""),
         "canonical_url": str(r.url),
+        "artwork_url": artwork,
     }
