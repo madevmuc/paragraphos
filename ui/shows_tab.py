@@ -75,7 +75,14 @@ class ShowsTab(QWidget):
         filter_row.addWidget(self._filter_btn)
         layout.addLayout(filter_row)
 
+        # One-shot migration: earlier versions persisted feed-status filters
+        # that would hide every row on a fresh install (no health sweep yet).
+        # Clear any pre-v1.0.1 filter state so users don't see an empty table
+        # after upgrading.
         _qs = QSettings("m4ma", "Paragraphos")
+        if _qs.value("shows/filters_schema", 0, type=int) < 1:
+            _qs.remove("shows/filters")
+            _qs.setValue("shows/filters_schema", 1)
         self._active_filters = _qs.value("shows/filters", {}, type=dict) or {}
         self._feed_pills: dict[str, Pill] = {}
 

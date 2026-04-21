@@ -79,7 +79,11 @@ class ShowDetailsDialog(QDialog):
             self.reject()
             return
         self.setWindowTitle(f"{self.show_.title} — Details")
-        self.setFixedSize(620, 440)
+        # Minimum size (not fixed): the dialog has to fit header + form +
+        # collapsible Advanced + episodes table + footer. Fixed 440 h
+        # clipped the footer off-screen on the v1.0.0 restyle.
+        self.setMinimumSize(620, 560)
+        self.resize(620, 560)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 16, 16, 12)
@@ -135,7 +139,49 @@ class ShowDetailsDialog(QDialog):
         text_col.addStretch(1)
 
         row.addLayout(text_col, 1)
+
+        # Right-hand "Refresh from feed" button — re-fetches feed metadata
+        # (title, publisher, canonical URL) so the user can populate / sync
+        # details without editing the row manually.
+        self._refresh_btn = QPushButton("Refresh from feed")
+        self._refresh_btn.setToolTip("Re-fetch RSS metadata and update fields")
+        self._refresh_btn.clicked.connect(self._refresh_from_feed)
+        row.addWidget(self._refresh_btn, 0, Qt.AlignmentFlag.AlignTop)
         return row
+
+    def _refresh_from_feed(self) -> None:
+        """Pull channel metadata from the feed URL and update editable fields.
+
+        Runs synchronously on the UI thread — feed_metadata is a short HEAD-
+        plus-parse hop and the alternative (a throwaway QThread) buys little
+        here. The button is disabled while the request is in flight.
+        """
+        from core.rss import feed_metadata
+
+        self._refresh_btn.setEnabled(False)
+        self._refresh_btn.setText("Fetching…")
+        try:
+            meta = feed_metadata(self.rss_edit.text().strip(), timeout=15.0)
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Refresh failed",
+                f"Could not fetch feed metadata:\n{exc}",
+            )
+            self._refresh_btn.setEnabled(True)
+            self._refresh_btn.setText("Refresh from feed")
+            return
+        # Apply — only overwrite fields the feed actually supplied.
+        if meta.get("title"):
+            self._title_edit.setText(meta["title"])
+        canonical = meta.get("canonical_url")
+        if canonical and canonical != self.rss_edit.text().strip():
+            self.rss_edit.setText(canonical)
+        self._refresh_btn.setEnabled(True)
+        self._refresh_btn.setText("✓ Refreshed")
+        from PyQt6.QtCore import QTimer
+
+        QTimer.singleShot(1400, lambda: self._refresh_btn.setText("Refresh from feed"))
 
     # ── form grid ────────────────────────────────────────────
 
@@ -190,7 +236,10 @@ class ShowDetailsDialog(QDialog):
 
     def _label(self, text: str) -> QLabel:
         lbl = QLabel(text)
-        lbl.setStyleSheet("color: palette(mid); font-size: 12px;")
+        # Let the themed QSS pick the color — inline palette(mid) rendered
+        # white-on-white in dark mode because Qt's palette role doesn't
+        # track our custom ThemeManager. Font size stays 12 px.
+        lbl.setStyleSheet("font-size: 12px;")
         lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         return lbl
 

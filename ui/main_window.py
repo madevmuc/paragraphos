@@ -17,9 +17,10 @@ from PyQt6.QtWidgets import (
 )
 
 from core.paths import user_data_dir  # noqa: E402
+from ui.about_dialog import AboutPane
 from ui.app_context import AppContext
 from ui.failed_tab import FailedTab
-from ui.log_dock import LogDock
+from ui.log_dock import LogDock, LogsPane
 from ui.menu_bar import build_menu_bar
 from ui.queue_tab import QueueTab
 from ui.settings_pane import SettingsPane
@@ -99,11 +100,27 @@ class MainWindow(QMainWindow):
         self.queue_tab = QueueTab(self.ctx)
         self.failed_tab = FailedTab(self.ctx)
         self.settings_pane = SettingsPane(self.ctx)
+        self.logs_pane = LogsPane(self)
+        self.about_pane = AboutPane(self)
         # Let ShowsTab forward queue signals to the queue tab.
         self.shows_tab.queue_listener = self.queue_tab  # type: ignore[attr-defined]
-        for w in (self.shows_tab, self.queue_tab, self.failed_tab, self.settings_pane):
+        for w in (
+            self.shows_tab,
+            self.queue_tab,
+            self.failed_tab,
+            self.settings_pane,
+            self.logs_pane,
+            self.about_pane,
+        ):
             self.stack.addWidget(w)
-        self._nav_index = {"shows": 0, "queue": 1, "failed": 2, "settings": 3}
+        self._nav_index = {
+            "shows": 0,
+            "queue": 1,
+            "failed": 2,
+            "settings": 3,
+            "logs": 4,
+            "about": 5,
+        }
         root.addWidget(self.stack, stretch=1)
 
         outer.addWidget(body, stretch=1)
@@ -111,7 +128,14 @@ class MainWindow(QMainWindow):
 
         self.log_dock = LogDock(self)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.log_dock)
-        self.shows_tab.log_sink = self.log_dock.append  # type: ignore[attr-defined]
+
+        # Fan every log message into both the dock (bottom) and the
+        # sidebar Logs pane so they stay in sync.
+        def _log_sink(msg: str) -> None:
+            self.log_dock.append(msg)
+            self.logs_pane.append(msg)
+
+        self.shows_tab.log_sink = _log_sink  # type: ignore[attr-defined]
 
         self.setMenuBar(build_menu_bar(self))
 
@@ -165,16 +189,6 @@ class MainWindow(QMainWindow):
             )
 
     def _on_nav(self, key: str) -> None:
-        if key == "logs":
-            import subprocess
-
-            subprocess.run(["open", str(self.ctx.data_dir / "logs")])
-            return
-        if key == "about":
-            from ui.about_dialog import AboutDialog
-
-            AboutDialog(self).exec()
-            return
         idx = self._nav_index.get(key)
         if idx is not None:
             self.stack.setCurrentIndex(idx)

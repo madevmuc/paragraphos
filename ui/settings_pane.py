@@ -30,6 +30,29 @@ def _model_installed(name: str) -> bool:
     return (_MODEL_DIR / f"ggml-{name}.bin").exists()
 
 
+def _theme_tokens() -> dict:
+    """Return the active theme's token dict — falls back to LIGHT defaults
+    if the ThemeManager hasn't been installed yet."""
+    try:
+        from ui.themes import manager
+        from ui.themes.tokens import LIGHT
+
+        tm = manager()
+        return tm.tokens() if tm is not None else LIGHT
+    except Exception:
+        # Last-resort fallback so settings_pane imports cleanly in tests.
+        return {
+            "accent": "#b47a3a",
+            "accent_tint": "rgba(180,122,58,0.12)",
+            "surface": "#ffffff",
+            "surface_alt": "#f4f2ee",
+            "ink": "#1a1a1a",
+            "ink_3": "#777777",
+            "line": "#d8d4cb",
+            "ok": "#4a8a5a",
+        }
+
+
 def _section(title: str) -> QLabel:
     lbl = QLabel(f"<b>{title}</b>")
     lbl.setStyleSheet(
@@ -317,17 +340,27 @@ class SettingsPane(QWidget):
         agent_prompt = QLabel(self._agent_prompt_html())
         agent_prompt.setTextFormat(Qt.TextFormat.RichText)
         agent_prompt.setWordWrap(True)
+        _tk = _theme_tokens()
         agent_prompt.setStyleSheet(
-            "background: palette(alternate-base); padding: 10px; "
-            "border: 1px solid palette(mid); border-radius: 4px; "
-            "font-family: Menlo, Monaco, monospace; font-size: 11px; "
-            "white-space: pre-wrap;"
+            f"background: {_tk['surface_alt']}; color: {_tk['ink']}; "
+            f"padding: 10px; border: 1px solid {_tk['line']}; "
+            f"border-radius: 4px; font-family: Menlo, Monaco, monospace; "
+            f"font-size: 11px; white-space: pre-wrap;"
         )
         agent_prompt.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         root.addWidget(agent_prompt)
 
         copy_btn = QPushButton("Copy agent prompt to clipboard")
-        copy_btn.clicked.connect(self._copy_agent_prompt)
+        # Default QPushButton lacks hover/pressed feedback under our themed
+        # QSS. Give it explicit press states so the click registers visually.
+        copy_btn.setStyleSheet(
+            f"QPushButton {{ background: {_tk['surface']}; color: {_tk['ink']}; "
+            f"border: 1px solid {_tk['line']}; border-radius: 5px; padding: 6px 14px; }}"
+            f"QPushButton:hover {{ background: {_tk['surface_alt']}; }}"
+            f"QPushButton:pressed {{ background: {_tk['accent_tint']}; "
+            f"border: 1px solid {_tk['accent']}; }}"
+        )
+        copy_btn.clicked.connect(lambda: self._copy_agent_prompt_with_feedback(copy_btn))
         root.addWidget(copy_btn)
 
         root.addStretch()
@@ -368,6 +401,15 @@ class SettingsPane(QWidget):
         from PyQt6.QtWidgets import QApplication
 
         QApplication.clipboard().setText(self._agent_prompt_plain())
+
+    def _copy_agent_prompt_with_feedback(self, btn) -> None:
+        """Copy + flash the button label so the user sees the click landed."""
+        from PyQt6.QtCore import QTimer
+
+        self._copy_agent_prompt()
+        original = btn.text()
+        btn.setText("✓ Copied")
+        QTimer.singleShot(1400, lambda: btn.setText(original))
 
     def _on_model_changed(self, text: str) -> None:
         self._schedule_save()
@@ -445,6 +487,9 @@ class SettingsPane(QWidget):
             form.addRow(label, widget)
             return
         container = QWidget()
+        # Make sure the container reports its full height back to
+        # QFormLayout; otherwise wrapped hint labels overlap the next row.
+        container.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.MinimumExpanding)
         v = QVBoxLayout(container)
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(2)
@@ -452,10 +497,15 @@ class SettingsPane(QWidget):
         prefix = "✓ " if hint_kind == "good" else "ⓘ "
         h = QLabel(prefix + hint)
         h.setWordWrap(True)
+        h.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.MinimumExpanding)
+        # Pull colors from the theme token dict — inline hex was invisible /
+        # too dim in dark mode because Qt palette roles don't track our
+        # ThemeManager.
+        tokens = _theme_tokens()
         if hint_kind == "good":
-            h.setStyleSheet("color: #4a7a44; font-size: 11px;")
+            h.setStyleSheet(f"color: {tokens['ok']}; font-size: 11px;")
         else:
-            h.setStyleSheet("color: palette(mid); font-size: 11px; font-style: italic;")
+            h.setStyleSheet(f"color: {tokens['ink_3']}; font-size: 11px; font-style: italic;")
         v.addWidget(h)
         form.addRow(label, container)
 

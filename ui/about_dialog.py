@@ -249,3 +249,20 @@ class ChangelogDialog(QDialog):
         close = QPushButton("Close")
         close.clicked.connect(self.accept)
         v.addWidget(close)
+
+
+class AboutPane(QWidget):
+    """In-window About content — same tabs as AboutDialog, shown as a page
+    in the main-window sidebar stack instead of a popup."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        v = QVBoxLayout(self)
+        v.setContentsMargins(14, 14, 14, 14)
+        tabs = QTabWidget()
+        # Borrow AboutDialog's tab builders — they take `self` but only use
+        # it as a QWidget parent, which AboutPane is fine providing.
+        tabs.addTab(AboutDialog._about_tab(self), "About")
+        tabs.addTab(AboutDialog._licenses_tab(self), "Credits & Licenses")
+        tabs.addTab(AboutDialog._security_tab(self), "Security")
+        v.addWidget(tabs)

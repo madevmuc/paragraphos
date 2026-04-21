@@ -66,6 +66,7 @@ OPTIONS = {
         "pytz",
         "tzlocal",
         "defusedxml",
+        "certifi",
     ],
     "includes": [
         "scripts_legacy_shows",
