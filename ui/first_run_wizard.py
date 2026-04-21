@@ -119,7 +119,7 @@ class FirstRunWizard(QDialog):
         heading = QLabel("<h3 style='margin:0'>Welcome to Paragraphos</h3>")
         v.addWidget(heading)
         sub = QLabel(
-            "Everything runs locally. We need a few tools on your Mac before " "the first run."
+            "Everything runs locally. We need a few tools on your Mac before the first run."
         )
         sub.setStyleSheet("color: palette(mid); font-size: 11px;")
         sub.setWordWrap(True)
@@ -265,7 +265,7 @@ class FirstRunWizard(QDialog):
     def _on_progress(self, kind: str, done: int, total: int):
         if total:
             self.progress.setValue(int(done * 100 / total))
-        self.model_row._set_sub(f"downloading… {done // (1024*1024)} MB")
+        self.model_row._set_sub(f"downloading… {done // (1024 * 1024)} MB")
 
 
 def show_wizard_if_needed(app) -> bool:

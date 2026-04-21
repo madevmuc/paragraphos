@@ -89,7 +89,7 @@ def download_mp3(
                 raise
             last_exc = e
             logger.warning(
-                "download transient failure attempt %d/%d — " "sleeping %.0fs then retrying: %s",
+                "download transient failure attempt %d/%d — sleeping %.0fs then retrying: %s",
                 attempt + 1,
                 len(RETRY_DELAYS),
                 delay,
@@ -111,7 +111,7 @@ def _download_once(
         pass  # Some servers block HEAD — fall through to GET.
     if expected and expected > max_bytes:
         raise DownloadTooLargeError(
-            f"remote advertises {expected} bytes — refusing " f"(cap {max_bytes})"
+            f"remote advertises {expected} bytes — refusing (cap {max_bytes})"
         )
     if dest.exists() and expected and dest.stat().st_size == expected:
         return DownloadResult(0, True, expected)
