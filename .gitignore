@@ -1,0 +1,16 @@
+.venv/
+.DS_Store
+*.tmp
+/tmp/
+
+# user runtime state (lives in ~/Library/Application Support/Paragraphos/)
+data/*
+!data/default_prompts.yaml
+
+# py2app outputs
+build/
+dist/
+
+# python artefacts
+**/__pycache__/
+.pytest_cache/

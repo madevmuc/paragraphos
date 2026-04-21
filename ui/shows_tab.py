@@ -1,0 +1,514 @@
+"""Shows tab — watchlist management + Check Now."""
+
+from __future__ import annotations
+
+from PyQt6.QtCore import QSettings, Qt
+from PyQt6.QtGui import QAction
+from PyQt6.QtWidgets import (
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QMenu,
+    QMessageBox,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
+
+from ui.app_context import AppContext
+from ui.widgets import FilterPopover, Pill
+
+FEED_COL = 6
+
+
+class ShowsTab(QWidget):
+    def __init__(self, ctx: AppContext):
+        super().__init__()
+        self.ctx = ctx
+        self._thread = None
+        self.log_sink = None  # set by MainWindow to route progress to LogDock
+        self.queue_listener = None  # set by MainWindow — receives queue signals
+
+        layout = QVBoxLayout(self)
+        self.global_stats_label = QLabel()
+        self.global_stats_label.setStyleSheet(
+            "padding:8px 12px; background:palette(alternate-base); border-radius:4px;"
+        )
+        self.global_stats_label.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(self.global_stats_label)
+
+        # Bulk-action toolbar — operates on all currently selected rows.
+        # Buttons are disabled until the table has a selection.
+        bulk_row = QHBoxLayout()
+        self._bulk_disable = QPushButton("Disable selected")
+        self._bulk_enable = QPushButton("Enable selected")
+        self._bulk_stale = QPushButton("Mark stale selected")
+        self._bulk_delete = QPushButton("Delete selected")
+        self._bulk_delete.setProperty("class", "danger")
+        for b, fn in (
+            (self._bulk_disable, self._do_bulk_disable),
+            (self._bulk_enable, self._do_bulk_enable),
+            (self._bulk_stale, self._do_bulk_stale),
+            (self._bulk_delete, self._do_bulk_delete),
+        ):
+            b.setEnabled(False)
+            b.clicked.connect(fn)
+            bulk_row.addWidget(b)
+        bulk_row.addStretch()
+        layout.addLayout(bulk_row)
+
+        # Filter toolbar — summary label on the left, filter button + count
+        # pill on the right. The legacy standalone QLineEdit search was
+        # folded into FilterPopover's "search" field.
+        filter_row = QHBoxLayout()
+        self._summary = QLabel()
+        self._summary.setProperty("class", "muted")
+        filter_row.addWidget(self._summary)
+        filter_row.addStretch()
+        self._filter_count_pill = Pill("0", kind="ok")
+        self._filter_count_pill.hide()
+        self._filter_btn = QPushButton("▾ Filter")
+        self._filter_btn.clicked.connect(self._open_filter_popover)
+        filter_row.addWidget(self._filter_count_pill)
+        filter_row.addWidget(self._filter_btn)
+        layout.addLayout(filter_row)
+
+        _qs = QSettings("m4ma", "Paragraphos")
+        self._active_filters = _qs.value("shows/filters", {}, type=dict) or {}
+        self._feed_pills: dict[str, Pill] = {}
+
+        self.table = QTableWidget(0, 7)
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        # ExtendedSelection for multi-select bulk actions.
+        self.table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
+        self.table.doubleClicked.connect(self._open_details)
+        self.table.setHorizontalHeaderLabels(
+            ["Slug", "Title", "On", "Total", "Done", "Pending", "Feed"]
+        )
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSortIndicatorShown(True)
+        self.table.setSortingEnabled(True)
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._context_menu)
+        self.table.itemSelectionChanged.connect(self._on_selection_changed)
+        layout.addWidget(self.table)
+
+        btns = QHBoxLayout()
+        self.add_btn = QPushButton("Add Podcast…")
+        self.add_btn.clicked.connect(self._add)
+        self.curated_btn = QPushButton("Add Episodes…")
+        self.curated_btn.clicked.connect(self._curated)
+        self.check_btn = QPushButton("Start / Check Now")
+        self.check_btn.clicked.connect(self._check)
+        self.pause_btn = QPushButton("Pause")
+        self.pause_btn.clicked.connect(self._pause)
+        self.stop_btn = QPushButton("Stop")
+        self.stop_btn.setEnabled(False)
+        self.stop_btn.clicked.connect(self._stop)
+        self.refresh_btn = QPushButton("Refresh")
+        self.refresh_btn.clicked.connect(self.refresh)
+        self.health_btn = QPushButton("Check feeds")
+        self.health_btn.clicked.connect(self._check_feed_health)
+        self.rescan_btn = QPushButton("Rescan library")
+        self.rescan_btn.clicked.connect(self._rescan_library)
+        self.rescan_btn.setToolTip(
+            "Count words + durations for all existing transcripts (one-time)"
+        )
+        for b in (
+            self.add_btn,
+            self.curated_btn,
+            self.check_btn,
+            self.pause_btn,
+            self.stop_btn,
+            self.refresh_btn,
+            self.health_btn,
+            self.rescan_btn,
+        ):
+            btns.addWidget(b)
+        btns.addStretch()
+        layout.addLayout(btns)
+
+        self.refresh()
+
+    def _open_details(self, index) -> None:
+        row = index.row()
+        if row < 0:
+            return
+        slug = self.table.item(row, 0).text()
+        from ui.show_details_dialog import ShowDetailsDialog
+
+        dlg = ShowDetailsDialog(self.ctx, slug, self)
+        if dlg.exec():
+            self.refresh()
+
+    def _update_global_stats(self) -> None:
+        from core.stats import compute_global_stats, format_duration
+
+        g = compute_global_stats(self.ctx.state)
+        dur_str = format_duration(g.total_seconds)
+        self.global_stats_label.setText(
+            f"<b>Library</b>  —  {g.transcripts} transcripts · "
+            f"{dur_str} of audio · "
+            f"{g.total_words:,}".replace(",", ".")
+            + f" words · {g.episodes_pending} pending · {g.episodes_failed} failed"
+        )
+
+    def refresh(self) -> None:
+        self._update_global_stats()
+        self.table.setRowCount(0)
+        self._feed_pills.clear()
+        total_shows = len(self.ctx.watchlist.shows)
+        visible = 0
+        for show in self.ctx.watchlist.shows:
+            if not self._show_matches_filters(show):
+                continue
+            visible += 1
+            with self.ctx.state._conn() as c:
+                total = c.execute(
+                    "SELECT COUNT(*) FROM episodes WHERE show_slug=?", (show.slug,)
+                ).fetchone()[0]
+                done = c.execute(
+                    "SELECT COUNT(*) FROM episodes WHERE show_slug=? AND status='done'",
+                    (show.slug,),
+                ).fetchone()[0]
+                pend = c.execute(
+                    "SELECT COUNT(*) FROM episodes WHERE show_slug=? AND status='pending'",
+                    (show.slug,),
+                ).fetchone()[0]
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            self.table.setItem(row, 0, QTableWidgetItem(show.slug))
+            # Prompt-quality flag: if the last N transcripts ignore most
+            # of the prompt terms, add a ⚠ before the title. Cheap read —
+            # runs only on done rows, no network.
+            from core.stats import show_prompt_coverage
+
+            n, cov = show_prompt_coverage(self.ctx.state, show.slug, show.whisper_prompt)
+            title_text = show.title
+            if n >= 5 and cov < 0.2:
+                title_text = f"⚠ {title_text}"
+            title_item = QTableWidgetItem(title_text)
+            if n >= 5 and cov < 0.2:
+                title_item.setToolTip(
+                    f"whisper_prompt coverage is low: only "
+                    f"{cov*100:.0f}% of prompt terms appear in the last "
+                    f"{n} transcripts. Consider updating the prompt."
+                )
+            self.table.setItem(row, 1, title_item)
+            self.table.setItem(row, 2, QTableWidgetItem("✓" if show.enabled else ""))
+            self.table.setItem(row, 3, QTableWidgetItem(str(total)))
+            self.table.setItem(row, 4, QTableWidgetItem(str(done)))
+            self.table.setItem(row, 5, QTableWidgetItem(str(pend)))
+            # Feed column hosts a Pill widget (starts idle "?"); filled in
+            # on demand by _check_feed_health.
+            pill_container = QWidget()
+            h = QHBoxLayout(pill_container)
+            h.setContentsMargins(2, 2, 2, 2)
+            pill = Pill("?", kind="idle")
+            h.addWidget(pill)
+            self.table.setCellWidget(row, FEED_COL, pill_container)
+            self._feed_pills[show.slug] = pill
+
+        self._summary.setText(
+            f"Showing {visible} of {total_shows}"
+            + (" · filtered" if visible != total_shows else "")
+        )
+        n_active = sum(1 for v in self._active_filters.values() if v)
+        self._filter_count_pill.setText(str(n_active))
+        self._filter_count_pill.setVisible(n_active > 0)
+
+    def _show_matches_filters(self, show) -> bool:
+        f = self._active_filters
+        if f.get("enabled_only") and not show.enabled:
+            return False
+        needle = (f.get("search", "") or "").lower()
+        if needle and needle not in show.slug.lower() and needle not in show.title.lower():
+            return False
+        if f.get("has_pending") and not self._row_count(show.slug, "pending"):
+            return False
+        if f.get("has_failed") and not self._row_count(show.slug, "failed"):
+            return False
+        feed_flags = [k for k in ("feed_ok", "feed_stale", "feed_unreachable") if f.get(k)]
+        if feed_flags:
+            pill = self._feed_pills.get(show.slug)
+            # Pill stores its state via QLabel.property("kind"); fall back to
+            # None when the pill hasn't been created yet.
+            kind = pill.property("kind") if pill is not None else None
+            # Pill only emits "ok" | "fail" | "idle" today — there is no
+            # distinct "stale" kind. Conflate feed_stale with feed_unreachable
+            # (both match "fail") until a real stale-detection path lands.
+            matches = (
+                ("feed_ok" in feed_flags and kind == "ok")
+                or ("feed_stale" in feed_flags and kind == "fail")
+                or ("feed_unreachable" in feed_flags and kind == "fail")
+            )
+            if not matches:
+                return False
+        return True
+
+    def _row_count(self, slug: str, status: str) -> int:
+        with self.ctx.state._conn() as c:
+            return c.execute(
+                "SELECT COUNT(*) FROM episodes WHERE show_slug=? AND status=?", (slug, status)
+            ).fetchone()[0]
+
+    def _open_filter_popover(self) -> None:
+        pop = FilterPopover(initial=self._active_filters, parent=self)
+        pop.applied.connect(self._on_filters_applied)
+        pop.show_at_button(self._filter_btn)
+
+    def _on_filters_applied(self, state: dict) -> None:
+        self._active_filters = state
+        QSettings("m4ma", "Paragraphos").setValue("shows/filters", state)
+        self.refresh()
+
+    def _context_menu(self, pos):
+        row = self.table.rowAt(pos.y())
+        if row < 0:
+            return
+        slug = self.table.item(row, 0).text()
+        menu = QMenu(self)
+        check_only = QAction(f"Check '{slug}' now", self)
+        check_only.triggered.connect(lambda: self._check(only_slug=slug))
+        stale_all = QAction(f"Mark all '{slug}' episodes stale", self)
+        stale_all.triggered.connect(lambda: self._mark_stale(slug))
+        toggle = QAction("Toggle enabled", self)
+        toggle.triggered.connect(lambda: self._toggle(slug))
+        paused = self.ctx.state.get_meta(f"show_paused:{slug}") == "1"
+        pause_label = f"Resume '{slug}'" if paused else f"Pause '{slug}'"
+        pause_act = QAction(pause_label, self)
+        pause_act.triggered.connect(lambda: self._toggle_show_pause(slug))
+        menu.addAction(check_only)
+        menu.addAction(stale_all)
+        menu.addAction(toggle)
+        menu.addSeparator()
+        menu.addAction(pause_act)
+        menu.exec(self.table.viewport().mapToGlobal(pos))
+
+    def _toggle_show_pause(self, slug: str) -> None:
+        key = f"show_paused:{slug}"
+        paused = self.ctx.state.get_meta(key) == "1"
+        self.ctx.state.set_meta(key, "0" if paused else "1")
+        self._log(f"{'resumed' if paused else 'paused'} {slug}")
+        self.refresh()
+
+    def _add(self):
+        from ui.add_show_dialog import AddShowDialog
+
+        dlg = AddShowDialog(self.ctx, self)
+        if dlg.exec():
+            self.ctx.watchlist = dlg.updated_watchlist
+            self.refresh()
+
+    def _curated(self):
+        from ui.add_episodes_dialog import AddEpisodesDialog
+
+        dlg = AddEpisodesDialog(self.ctx, self)
+        dlg.exec()
+        self.refresh()
+
+    def _check(self, only_slug: str | None = None):
+        self.start_check(only_slug=only_slug or None)
+
+    def start_check(self, *, only_slug: str | None = None) -> bool:
+        """Public entry: start a check and update button state.
+        Returns False if another check is already running."""
+        from ui.worker_thread import CheckAllThread
+
+        if self._thread and self._thread.isRunning():
+            return False
+        self._thread = CheckAllThread(self.ctx, self.ctx.settings, only_slug=only_slug)
+        self._thread.progress.connect(self._log)
+        self._thread.queue_sized.connect(self._on_queue_sized)
+        self._thread.episode_done.connect(self._on_ep_done)
+        self._thread.finished_all.connect(self._check_done)
+        if self.queue_listener is not None:
+            self._thread.queue_sized.connect(self.queue_listener.on_queue_sized)
+            self._thread.episode_done.connect(self.queue_listener.on_episode_done)
+            self._thread.finished_all.connect(self.queue_listener.on_finished_all)
+        self.stop_btn.setEnabled(True)
+        self.check_btn.setEnabled(False)
+        from datetime import datetime
+
+        from core.stats import historical_avg_transcribe_sec
+
+        self.ctx.queue.running = True
+        self.ctx.queue.started_at = datetime.now()
+        self.ctx.queue.total = 0
+        self.ctx.queue.done = 0
+        self.ctx.queue.avg_sec_per_episode = 0.0
+        # Historical DB-derived average lets us show an ETA and 'finish ≈'
+        # time immediately — long before the first live episode finishes
+        # (whisper takes ~5 min, and the user wants feedback now).
+        self.ctx.queue.historical_avg_sec = historical_avg_transcribe_sec(self.ctx.state)
+        self._ep_durations: list[float] = []
+        self._last_ep_start = datetime.now()
+        self._thread.start()
+        return True
+
+    def _on_queue_sized(self, total: int) -> None:
+        self.ctx.queue.total = total
+
+    def _on_ep_done(self, slug, guid, action, done_idx, total, show_title, ep_title):
+        from datetime import datetime
+
+        self.ctx.queue.done = done_idx
+        self.ctx.queue.total = total
+        self.ctx.queue.last_episode_show = show_title
+        self.ctx.queue.last_episode_title = ep_title
+        now = datetime.now()
+        if self._last_ep_start:
+            self._ep_durations.append((now - self._last_ep_start).total_seconds())
+            self._ep_durations = self._ep_durations[-10:]
+            self.ctx.queue.avg_sec_per_episode = sum(self._ep_durations) / len(self._ep_durations)
+        self._last_ep_start = now
+
+    def attach_external_thread(self, thread) -> None:
+        """Called when someone (e.g. the tray-app) started a CheckAllThread
+        before the window existed — wire up the buttons so Stop works."""
+        self._thread = thread
+        if thread.isRunning():
+            self.stop_btn.setEnabled(True)
+            self.check_btn.setEnabled(False)
+            thread.progress.connect(self._log)
+            thread.finished_all.connect(self._check_done)
+            if self.queue_listener is not None:
+                thread.queue_sized.connect(self.queue_listener.on_queue_sized)
+                thread.episode_done.connect(self.queue_listener.on_episode_done)
+                thread.finished_all.connect(self.queue_listener.on_finished_all)
+
+    def _stop(self):
+        if self._thread:
+            self._thread.request_stop()
+            self._log("stop requested — current episode will finish, " "then queue halts.")
+        self.stop_btn.setEnabled(False)
+
+    def _pause(self):
+        self.ctx.state.set_meta("queue_paused", "1")
+        if self._thread and self._thread.isRunning():
+            self._thread.request_stop()
+        self._log("queue paused — Resume to continue (survives restart).")
+
+    def _resume(self):
+        self.ctx.state.set_meta("queue_paused", "0")
+        self._log("queue resumed — starting check…")
+        self.start_check()
+
+    def _check_done(self):
+        self.stop_btn.setEnabled(False)
+        self.check_btn.setEnabled(True)
+        self.ctx.queue.running = False
+        self.refresh()
+        from datetime import datetime, timezone
+
+        self.ctx.state.set_meta("last_successful_check", datetime.now(timezone.utc).isoformat())
+
+    def _log(self, msg: str) -> None:
+        if self.log_sink is not None:
+            self.log_sink(msg)
+        else:
+            print(msg)
+
+    def _mark_stale(self, slug: str) -> None:
+        with self.ctx.state._conn() as c:
+            c.execute("UPDATE episodes SET status='pending' WHERE show_slug=?", (slug,))
+        self.refresh()
+
+    def _rescan_library(self) -> None:
+        from pathlib import Path
+
+        from core.stats import rescan_library_counts
+
+        count = rescan_library_counts(
+            self.ctx.state,
+            Path(self.ctx.settings.output_root).expanduser(),
+        )
+        self._log(f"rescan complete — {count} transcript(s) re-counted")
+        self.refresh()
+
+    def _check_feed_health(self) -> None:
+        """Synchronous feed-health sweep. Slow for 16 feeds (~5–10 s) but
+        runs on-demand and blocks only the button click."""
+        from core.rss import FeedHealth
+
+        for row in range(self.table.rowCount()):
+            slug = self.table.item(row, 0).text()
+            show = next((s for s in self.ctx.watchlist.shows if s.slug == slug), None)
+            if not show:
+                continue
+            health = FeedHealth.check(show.rss, timeout=8)
+            pill = self._feed_pills.get(slug)
+            if pill is None:
+                continue
+            pill.set_kind("ok" if health.ok else "fail")
+            pill.setText("✅" if health.ok else f"⚠ {health.reason}")
+
+    def _toggle(self, slug: str) -> None:
+        for show in self.ctx.watchlist.shows:
+            if show.slug == slug:
+                show.enabled = not show.enabled
+        self.ctx.watchlist.save(self.ctx.data_dir / "watchlist.yaml")
+        self.refresh()
+
+    # ----- bulk actions on multi-selected rows --------------------------
+
+    def _selected_slugs(self) -> list[str]:
+        rows = {idx.row() for idx in self.table.selectedIndexes()}
+        slugs: list[str] = []
+        for row in rows:
+            item = self.table.item(row, 0)
+            if item:
+                slugs.append(item.text())
+        return slugs
+
+    def _find_show(self, slug: str):
+        return next((s for s in self.ctx.watchlist.shows if s.slug == slug), None)
+
+    def _on_selection_changed(self) -> None:
+        has = bool(self._selected_slugs())
+        for b in (self._bulk_disable, self._bulk_enable, self._bulk_stale, self._bulk_delete):
+            b.setEnabled(has)
+
+    def _do_bulk_disable(self) -> None:
+        for slug in self._selected_slugs():
+            s = self._find_show(slug)
+            if s:
+                s.enabled = False
+        self.ctx.watchlist.save(self.ctx.data_dir / "watchlist.yaml")
+        self.refresh()
+
+    def _do_bulk_enable(self) -> None:
+        for slug in self._selected_slugs():
+            s = self._find_show(slug)
+            if s:
+                s.enabled = True
+        self.ctx.watchlist.save(self.ctx.data_dir / "watchlist.yaml")
+        self.refresh()
+
+    def _do_bulk_stale(self) -> None:
+        # Same blanket-reset semantics as the single-row _mark_stale helper
+        # — flips every episode back to 'pending'. Inlined (rather than
+        # looping _mark_stale) to avoid N refreshes clearing the selection
+        # mid-loop.
+        with self.ctx.state._conn() as c:
+            for slug in self._selected_slugs():
+                c.execute("UPDATE episodes SET status='pending' WHERE show_slug=?", (slug,))
+        self.refresh()
+
+    def _do_bulk_delete(self) -> None:
+        slugs = self._selected_slugs()
+        if not slugs:
+            return
+        reply = QMessageBox.question(
+            self,
+            "Delete shows",
+            f"Remove {len(slugs)} show(s) from the watchlist?\n" "On-disk transcripts are kept.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        self.ctx.watchlist.shows = [s for s in self.ctx.watchlist.shows if s.slug not in slugs]
+        self.ctx.watchlist.save(self.ctx.data_dir / "watchlist.yaml")
+        self.refresh()

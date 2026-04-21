@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
+<channel>
+  <title>Sample Feed</title>
+  <itunes:author>Sample Author</itunes:author>
+  <item>
+    <title>Episode One</title>
+    <guid>ep-001</guid>
+    <pubDate>Mon, 01 Apr 2026 09:00:00 +0000</pubDate>
+    <itunes:duration>1800</itunes:duration>
+    <itunes:episode>1</itunes:episode>
+    <enclosure url="https://cdn.example.com/ep1.mp3" type="audio/mpeg" length="1234567"/>
+    <description>Intro episode.</description>
+    <link>https://example.com/ep1</link>
+  </item>
+  <item>
+    <title>Episode Two</title>
+    <guid>ep-002</guid>
+    <pubDate>Mon, 08 Apr 2026 09:00:00 +0000</pubDate>
+    <itunes:duration>1850</itunes:duration>
+    <itunes:episode>2</itunes:episode>
+    <enclosure url="https://cdn.example.com/ep2.mp3" type="audio/mpeg" length="1345678"/>
+    <description>Second episode.</description>
+    <link>https://example.com/ep2</link>
+  </item>
+</channel>
+</rss>

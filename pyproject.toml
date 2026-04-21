@@ -1,0 +1,30 @@
+[project]
+name = "paragraphos"
+version = "1.0.0"
+description = "Local podcast → whisper.cpp transcription pipeline for macOS."
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "Matthias Maier" }]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: end-to-end test against real whisper-cli + real MP3 (opt-in with -m integration)",
+]
+# Don't run integration tests by default — they need binaries + fixtures.
+addopts = "-m 'not integration'"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["build", "dist", ".venv", "docs/design-handoff"]
+
+[tool.ruff.lint]
+# Start lenient. Tighten over time.
+select = ["E", "F", "W", "I"]
+ignore = [
+    "E501",  # line too long — handled by formatter
+    "E402",  # module-level import not at top — intentional for PYTHONPATH shim
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["F401", "F811"]
