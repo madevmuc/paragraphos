@@ -296,7 +296,20 @@ class QueueTab(QWidget):
                 "SELECT show_slug, pub_date, title, status, guid "
                 "FROM episodes "
                 "WHERE status IN ('pending','downloading','downloaded','transcribing') "
-                "ORDER BY status DESC, priority DESC, pub_date DESC LIMIT 500"
+                # Active stages first (transcribing → downloaded →
+                # downloading), then pending by priority + date. Without
+                # this CASE, a large 'pending' backlog would push in-flight
+                # rows past the LIMIT 500 cutoff and hide parallel workers
+                # from the UI.
+                "ORDER BY "
+                "  CASE status "
+                "    WHEN 'transcribing' THEN 0 "
+                "    WHEN 'downloaded'   THEN 1 "
+                "    WHEN 'downloading'  THEN 2 "
+                "    ELSE 3 "
+                "  END, "
+                "  priority DESC, pub_date DESC "
+                "LIMIT 500"
             ).fetchall()
         self.table.setRowCount(0)
         for r in rows:
