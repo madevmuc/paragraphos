@@ -1,5 +1,74 @@
 # Paragraphos Changelog
 
+## v1.1.1 — 2026-04-21 (live progress + UX polish)
+
+### Queue & transcription
+- **Live transcribe %** — whisper-cli's segment timestamps are tailed
+  from a redirected stdout log via a daemon poller; Queue status
+  column shows `transcribing · 42%` on the active row.
+- **Duration-based ETA** — pending audio × realtime factor replaces
+  episodes × avg-per-episode; Queue hero + status bar + tray all
+  converged on the same calculation.
+- **Active stages on top** — SQL CASE sort in Queue table puts
+  transcribing → downloaded → downloading before pending; the 500-row
+  LIMIT is gone so the full backlog is visible.
+- **Per-row Audio / Whisper / Finish columns** in Queue with
+  cumulative completion time (row N = sum of all rows above).
+- **304 "feed unchanged" still processes pending** — earlier the
+  conditional GET short-circuit skipped orphaned pending episodes
+  from prior runs.
+- **Run next / Run now** context-menu actions (priority 5 / 10) in
+  Queue and Show Details.
+- **Parallel download pool** with per-host cap actually visible in
+  the table now that the sort honours active stages.
+- **Resumable `.mp3.part`** via HTTP Range.
+
+### UI polish
+- **Auto-start queue** on launch (Settings checkbox, default on);
+  clears any leftover `queue_paused` flag so it actually runs.
+- **Land on Queue tab** when work is pending, else Shows.
+- **Window size persists** across sessions via QSettings; first
+  launch fills 95% of the available primary screen.
+- **Auto-fit Queue columns** so `transcribing · 42%` isn't clipped.
+- **Scroll + selection preserved** across Shows-tab refresh.
+- **Dark-mode QComboBox popup + QMenu** styled via theme tokens.
+- **Section headlines** in Settings readable in dark mode.
+- **Sidebar count chip** no longer renders as a black box.
+- **Show Details**: 'Refresh from feed' persists changes + refreshes
+  Shows table in place; artwork auto-loads from `<itunes:image>`
+  with on-disk cache.
+- **In-window Logs + About** panes (no more Finder / popup detour);
+  Log title bar click-to-copy; About grows a live Changelog tab
+  fetched from GitHub releases.
+- **Keyboard cheatsheet** via `?` / `Cmd+/`.
+- **Context menus**: Details / Informationen reachable from right-
+  click in Shows (not just double-click).
+- **Notification icon**: app icon in every tray push notification.
+- **Multi-processor split**: HW-based recommendation seeded + hint.
+- **Tuning hint banner** in Queue when parallel/multiproc diverge.
+
+### Fixes
+- **Signal delivery** child → parent in `CheckAllThread` is now
+  `DirectConnection`; queued delivery silently dropped because
+  CheckAllThread has no event loop. Hero counter now increments.
+- **Queue table refresh** runs every 1 s (3 s coalesce) — status
+  transitions (downloaded → transcribing) no longer stay invisible
+  until an episode fully completes.
+- **Feed-status Pill** seeded from `feed_health` meta on load; each
+  check writes ok/fail via backoff.
+- **Settings hint text** no longer clipped (heightForWidth container);
+  Whisper-prompt edit + hint no longer overlap.
+
+### Infra
+- **Node 24 actions + FORCE_JAVASCRIPT_ACTIONS_TO_NODE24** — no more
+  Node 20 deprecation warnings.
+- **`contents: write` permission** in build-release.yml so release
+  notes + DMG asset upload actually work.
+- **CHANGELOG tab** pulls from GitHub releases (madevmuc/paragraphos)
+  off-thread; falls back to bundled CHANGELOG.md.
+- **Vendor-neutral compile banner** ("your AI assistant" not "Claude").
+- **Pre-commit ruff pinned to v0.15.11** to match CI.
+
 ## v1.1.0 — 2026-04-21 (perf + UX polish)
 
 ### Performance
