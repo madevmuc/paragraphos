@@ -1,5 +1,39 @@
 # Paragraphos Changelog
 
+## v1.1.0 — 2026-04-21 (perf + UX polish)
+
+### Performance
+- **Parallel downloads** — `_DownloadPool` spawns N worker threads
+  (`settings.download_concurrency`); per-host cap (`download_concurrency_per_host`)
+  now actually parallelizes across CDNs.
+- **Resumable downloads** — interrupted `.mp3.part` files resume via HTTP
+  `Range: bytes=N-`; falls back cleanly when the server ignores the
+  header (returns 200 instead of 206).
+
+### UX
+- **Episode priority UI** — right-click in Queue / Show Details exposes
+  "Run next" (priority=5) and "Run now" (priority=10). Queue sort key
+  now includes `priority DESC`.
+- **Keyboard shortcut cheatsheet** — press `?` or `Cmd+/` to see every
+  shortcut, harvested from the menu bar so it can't drift.
+- **In-window update banner** — when a new release is available, the
+  banner shows a `Download <tag>` button that opens the GitHub release.
+  Dismissed per-tag via QSettings.
+
+### Settings
+- **Model health row** — shows file size, first 8 hex of the pinned
+  TOFU hash, and flags partial downloads / size drift vs. the pinned
+  entry. `model_hashes.yaml` now records size alongside sha256.
+- **Engine-drift detection** — transcripts carry `whisper_version` and
+  `model_sha256` in frontmatter; Settings surfaces a
+  "Re-transcribe all" button when either changes since the last batch.
+
+### Dark-mode polish
+- Banner, status bar, Show Details, Add dialog, First-run wizard no
+  longer depend on inline `palette(mid)` — all flow through
+  `ui.themes.current_tokens()`. Banner re-paints live on appearance
+  change instead of freezing on whichever mode was active at startup.
+
 ## v1.0.1 — 2026-04-21 (design polish)
 
 - Proper macOS dark mode — `ThemeManager` follows system appearance,
