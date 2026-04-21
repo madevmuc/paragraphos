@@ -1,5 +1,16 @@
 # Paragraphos Changelog
 
+## v1.0.1 — 2026-04-21 (design polish)
+
+- Proper macOS dark mode — `ThemeManager` follows system appearance,
+  shared QSS template with light/dark token dicts, all custom-paint
+  widgets (Pill, ProgressRing, tray icon) repaint on `colorSchemeChanged`.
+  Accent flips from ochre (light) to Apple-Podcasts purple (dark).
+- App icon (Concept A "Pilcrow") — bundled `AppIcon.icns`, wired into
+  `QApplication.setWindowIcon` and every `py2app` config as `iconfile`.
+- Menu-bar tray icon uses `MenuBarIconTemplate.png` with
+  `QIcon.setIsMask(True)` so macOS auto-tints against the menu bar.
+
 ## v1.0.0 — 2026-04-21 (ship v1.0)
 
 First public release. Closes every deferred item from the Phase 0–6 roadmap.
