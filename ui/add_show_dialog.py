@@ -253,6 +253,7 @@ class AddShowDialog(QDialog):
             "whisper_prompt": self.name_prompt.toPlainText().strip(),
             "manifest": self._loaded_manifest,
             "backlog": self._backlog_choice("name"),
+            "artwork_url": (self._loaded_meta or {}).get("artwork_url", ""),
         }
         self._do_save(show)
 
@@ -392,6 +393,7 @@ class AddShowDialog(QDialog):
             "whisper_prompt": prompt,
             "manifest": self._loaded_manifest,
             "backlog": self._backlog_choice("url"),
+            "artwork_url": meta.get("artwork_url", ""),
         }
         self._do_save(show)
 
@@ -532,6 +534,7 @@ class AddShowDialog(QDialog):
             "whisper_prompt": prompt,
             "manifest": self._loaded_manifest,
             "backlog": self._backlog_choice("apple"),
+            "artwork_url": meta.get("artwork_url", ""),
         }
         self._do_save(show)
 
@@ -612,6 +615,7 @@ class AddShowDialog(QDialog):
             title=(show.get("title") or "").strip() or slug,
             rss=rss,
             whisper_prompt=(show.get("whisper_prompt") or "").strip(),
+            artwork_url=(show.get("artwork_url") or "").strip(),
         )
         self.updated_watchlist.shows.append(model)
         self.updated_watchlist.save(self.ctx.data_dir / "watchlist.yaml")

@@ -20,6 +20,11 @@ class Show(BaseModel):
     enabled: bool = True
     output_override: Optional[str] = None
     language: str = "de"  # whisper language code; "auto" for per-episode detect
+    # Cover art URL (from <itunes:image> or <image>) captured at add / refresh
+    # time. Default is empty string for backward compat with existing
+    # watchlist.yaml files — ShowDetailsDialog falls back to a 🎙 placeholder
+    # when the feed didn't expose artwork.
+    artwork_url: str = ""
 
 
 class Watchlist(BaseModel):

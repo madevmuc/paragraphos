@@ -113,7 +113,7 @@ def build_menu_bar(window) -> QMenuBar:
     ac = mb.addMenu("Actions")
     a = QAction("Check Now", window)
     a.setShortcut("Ctrl+R")
-    a.triggered.connect(lambda: window.shows_tab.start_check())
+    a.triggered.connect(lambda: window.shows_tab.start_check(force=True))
     ac.addAction(a)
     a = QAction("Check Selected Show", window)
     a.setShortcut("Ctrl+Shift+R")
@@ -327,7 +327,7 @@ def _selected_slug(window) -> str | None:
 def _check_selected(window) -> None:
     slug = _selected_slug(window)
     if slug:
-        window.shows_tab.start_check(only_slug=slug)
+        window.shows_tab.start_check(only_slug=slug, force=True)
 
 
 def _mark_selected_stale(window) -> None:

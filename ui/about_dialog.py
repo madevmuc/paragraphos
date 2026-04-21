@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from PyQt6.QtCore import QThread, pyqtSignal
 from PyQt6.QtWidgets import (
     QDialog,
     QLabel,
@@ -251,6 +252,78 @@ class ChangelogDialog(QDialog):
         v.addWidget(close)
 
 
+class _ChangelogTab(QWidget):
+    """Tab showing a changelog. Prefers GitHub releases API (live, covers
+    every tagged release) and falls back to the bundled CHANGELOG.md if
+    the network call fails. Fetch happens off-thread."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        v = QVBoxLayout(self)
+        v.setContentsMargins(0, 0, 0, 0)
+        self._browser = QTextBrowser()
+        self._browser.setOpenExternalLinks(True)
+        # Render bundled CHANGELOG.md immediately so the tab is never blank
+        # while the GitHub fetch is in flight.
+        if CHANGELOG_PATH.exists():
+            self._browser.setMarkdown(CHANGELOG_PATH.read_text(encoding="utf-8"))
+        else:
+            self._browser.setPlainText("Loading releases…")
+        v.addWidget(self._browser)
+
+        # Kick off the GitHub fetch.
+        self._ChangelogThread = _GitHubChangelogThread  # alias for readability
+        self._thread = _GitHubChangelogThread(self)
+        self._thread.loaded.connect(self._on_loaded)
+        self._thread.failed.connect(self._on_failed)  # silent fallback
+        self._thread.start()
+
+    def _on_loaded(self, markdown: str) -> None:
+        if markdown.strip():
+            self._browser.setMarkdown(markdown)
+
+    def _on_failed(self, _msg: str) -> None:
+        # Keep whatever we already rendered from the bundled CHANGELOG.
+        pass
+
+
+class _GitHubChangelogThread(QThread):
+    """Fetch every release from GitHub + stitch into a single markdown
+    document. Runs off the UI thread."""
+
+    loaded = pyqtSignal(str)
+    failed = pyqtSignal(str)
+
+    def run(self) -> None:
+        try:
+            from core.http import get_client
+            from core.updater import DEFAULT_GITHUB_REPO
+
+            url = f"https://api.github.com/repos/{DEFAULT_GITHUB_REPO}/releases"
+            r = get_client().get(url, timeout=10, headers={"Accept": "application/vnd.github+json"})
+            r.raise_for_status()
+            releases = r.json()
+        except Exception as exc:  # noqa: BLE001
+            self.failed.emit(str(exc))
+            return
+
+        if not releases:
+            self.failed.emit("no releases")
+            return
+
+        parts = ["# Paragraphos Changelog", ""]
+        for rel in releases:
+            tag = rel.get("tag_name") or rel.get("name") or "?"
+            date = (rel.get("published_at") or "")[:10]
+            body = (rel.get("body") or "").strip()
+            parts.append(f"## {tag} — {date}")
+            parts.append("")
+            parts.append(body or "_(no notes)_")
+            parts.append("")
+        self.loaded.emit("\n".join(parts))
+
+
 class AboutPane(QWidget):
     """In-window About content — same tabs as AboutDialog, shown as a page
     in the main-window sidebar stack instead of a popup."""
@@ -261,6 +334,7 @@ class AboutPane(QWidget):
         v.setContentsMargins(14, 14, 14, 14)
         tabs = QTabWidget()
         tabs.addTab(_about_tab(self), "About")
+        tabs.addTab(_ChangelogTab(self), "Changelog")
         tabs.addTab(_licenses_tab(self), "Credits & Licenses")
         tabs.addTab(_security_tab(self), "Security")
         v.addWidget(tabs)

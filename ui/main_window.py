@@ -184,7 +184,7 @@ class MainWindow(QMainWindow):
         # QShortcuts guarantee they work even when no menu-item is focused).
         for key, fn in (
             (QKeySequence.StandardKey.Preferences, lambda: self._on_nav("settings")),
-            ("Ctrl+R", self.shows_tab.start_check),
+            ("Ctrl+R", lambda: self.shows_tab.start_check(force=True)),
             ("Ctrl+.", self.shows_tab._stop),
             ("Ctrl+L", lambda: self.log_dock.setVisible(not self.log_dock.isVisible())),
             ("?", lambda: self._show_cheatsheet()),
@@ -373,9 +373,13 @@ class MainWindow(QMainWindow):
                 new_count += 1
         if new_count > 0:
             self._banner_state = "compile"
+            # Vendor-neutral copy: users run any AI coding assistant
+            # (Claude Code, Gemini CLI, Cursor, Copilot CLI, etc.) —
+            # don't assume Claude.
             self.banner_label.setText(
                 f"📝 {new_count} transcripts newer than last wiki compile "
-                f"— run the 'Compile' workflow in Claude to pull them into the wiki."
+                f"— run your AI assistant's 'Compile' workflow "
+                f"to pull them into the wiki."
             )
             self.banner_action_btn.setVisible(False)
             self._apply_banner_style()

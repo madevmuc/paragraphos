@@ -13,7 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QPainter, QPainterPath, QPixmap
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -102,6 +102,61 @@ class _FeedMetadataThread(QThread):
         self.ok.emit(meta or {})
 
 
+class _ArtworkFetchThread(QThread):
+    """Short-lived worker: downloads (or reads from cache) cover art.
+
+    Emits ``ready(Path)`` on success or ``missing()`` on any failure —
+    the dialog keeps showing the 🎙 placeholder when missing fires, so
+    we don't need to distinguish error types.
+    """
+
+    ready = pyqtSignal(object)  # pathlib.Path
+    missing = pyqtSignal()
+
+    def __init__(self, slug: str, url: str, parent=None):
+        super().__init__(parent)
+        self._slug = slug
+        self._url = url
+
+    def run(self) -> None:  # noqa: D401 — QThread entry
+        from core.artwork import ensure_artwork
+
+        path = ensure_artwork(self._slug, self._url)
+        if path is None:
+            self.missing.emit()
+        else:
+            self.ready.emit(path)
+
+
+def _rounded_pixmap(src: QPixmap, side: int, radius: int) -> QPixmap:
+    """Crop ``src`` to a ``side``×``side`` square with rounded corners.
+
+    Scaling is done with SmoothTransformation and the crop is centered so
+    16:9 / portrait sources still look right in the 64 px frame.
+    """
+    scaled = src.scaled(
+        side,
+        side,
+        Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+    # Centre-crop to square.
+    x = (scaled.width() - side) // 2
+    y = (scaled.height() - side) // 2
+    cropped = scaled.copy(x, y, side, side)
+
+    out = QPixmap(side, side)
+    out.fill(Qt.GlobalColor.transparent)
+    p = QPainter(out)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    path = QPainterPath()
+    path.addRoundedRect(0, 0, side, side, radius, radius)
+    p.setClipPath(path)
+    p.drawPixmap(0, 0, cropped)
+    p.end()
+    return out
+
+
 class ShowDetailsDialog(QDialog):
     def __init__(self, ctx, slug: str, parent=None):
         super().__init__(parent)
@@ -143,10 +198,18 @@ class ShowDetailsDialog(QDialog):
             f" border: 1px solid {_t['line']}; border-radius: 6px; }}"
         )
         art.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        # Show model has no artwork URL field in this repo; placeholder only.
+        # Placeholder glyph — stays on screen until (and unless) the
+        # async artwork fetch resolves with a real pixmap. Keeps the
+        # dialog render cleanly when the feed exposes no cover art.
         art.setText("🎙")
         art.setObjectName("ShowArtwork")
+        self._artwork_label = art
         row.addWidget(art, 0, Qt.AlignmentFlag.AlignTop)
+
+        # Kick off artwork load off-thread so dialog open isn't blocked
+        # on a CDN round-trip. Cache hits still read from disk inside
+        # ensure_artwork, but we always hop to a QThread for uniformity.
+        self._maybe_load_artwork(getattr(self.show_, "artwork_url", "") or "")
 
         text_col = QVBoxLayout()
         text_col.setSpacing(2)
@@ -182,6 +245,55 @@ class ShowDetailsDialog(QDialog):
         self._refresh_btn.clicked.connect(self._refresh_from_feed)
         row.addWidget(self._refresh_btn, 0, Qt.AlignmentFlag.AlignTop)
         return row
+
+    def _maybe_load_artwork(self, url: str) -> None:
+        """Start an async fetch of the cover art at ``url``.
+
+        No-op when ``url`` is empty (leaves the 🎙 placeholder). Guards
+        against starting a second fetch while one is already running —
+        Refresh-from-feed can call this repeatedly.
+        """
+        if not url:
+            return
+        existing = getattr(self, "_artwork_thread", None)
+        if existing is not None and existing.isRunning():
+            return
+        thread = _ArtworkFetchThread(self.slug, url, parent=self)
+        thread.ready.connect(self._on_artwork_ready)
+        thread.missing.connect(self._on_artwork_missing)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(lambda: setattr(self, "_artwork_thread", None))
+        self._artwork_thread = thread
+        thread.start()
+
+    def _on_artwork_ready(self, path) -> None:
+        lbl = getattr(self, "_artwork_label", None)
+        if lbl is None:
+            return
+        pm = QPixmap(str(path))
+        if pm.isNull():
+            # File exists but isn't decodable — leave placeholder.
+            return
+        lbl.setText("")
+        lbl.setPixmap(_rounded_pixmap(pm, 64, 6))
+
+    def _on_artwork_missing(self) -> None:
+        # Network or cache miss — placeholder is already rendered, nothing to do.
+        return
+
+    def _invalidate_artwork_cache(self) -> None:
+        """Delete any cached artwork file for this slug so a fresh URL
+        triggers a re-fetch on the next ``ensure_artwork`` call."""
+        from core.artwork import artwork_dir
+
+        d = artwork_dir()
+        for ext in (".jpg", ".png", ".webp", ".gif", ".img"):
+            p = d / f"{self.slug}{ext}"
+            if p.exists():
+                try:
+                    p.unlink()
+                except OSError:
+                    pass
 
     def _refresh_from_feed(self) -> None:
         """Pull channel metadata off-thread and update editable fields.
@@ -219,6 +331,19 @@ class ShowDetailsDialog(QDialog):
         canonical = meta.get("canonical_url")
         if canonical and canonical != self.rss_edit.text().strip():
             self.rss_edit.setText(canonical)
+        # Artwork: persist on the Show so a subsequent dialog open (or
+        # watchlist save via _save) doesn't lose it. We also trigger an
+        # async (re)load so the header updates in-place without the user
+        # having to reopen the dialog.
+        artwork_url = meta.get("artwork_url") or ""
+        new_art = artwork_url and artwork_url != getattr(self.show_, "artwork_url", "")
+        if artwork_url:
+            self.show_.artwork_url = artwork_url
+            if new_art:
+                # URL changed — drop the cached file so ensure_artwork
+                # fetches fresh bytes instead of returning the stale one.
+                self._invalidate_artwork_cache()
+            self._maybe_load_artwork(artwork_url)
         # Advanced group is collapsed by default; if the refresh wrote a new
         # title there, pop the group open so the user sees what changed
         # before hitting Save.
@@ -255,6 +380,17 @@ class ShowDetailsDialog(QDialog):
                 pass
             thread.quit()
             thread.wait(2000)
+        art_thread = getattr(self, "_artwork_thread", None)
+        if art_thread is not None and art_thread.isRunning():
+            try:
+                art_thread.ready.disconnect()
+                art_thread.missing.disconnect()
+            except (TypeError, RuntimeError):
+                pass
+            # Artwork fetch is a single blocking httpx GET — give it up to
+            # 3 s to unwind so we don't hang on dialog close.
+            art_thread.quit()
+            art_thread.wait(3000)
         super().closeEvent(event)
 
     # ── form grid ────────────────────────────────────────────
@@ -376,15 +512,21 @@ class ShowDetailsDialog(QDialog):
         r += 1
 
         inner.addWidget(self._label("Whisper prompt"), r, 0)
+        # Stack the edit + its hint in a sub-layout so the hint can't
+        # overlap the text edit when rows collapse.
+        prompt_col = QVBoxLayout()
+        prompt_col.setContentsMargins(0, 0, 0, 0)
+        prompt_col.setSpacing(3)
         self._whisper_prompt_edit = QPlainTextEdit(self.show_.whisper_prompt or "")
-        self._whisper_prompt_edit.setFixedHeight(64)
-        inner.addWidget(self._whisper_prompt_edit, r, 1)
-        r += 1
-
+        self._whisper_prompt_edit.setFixedHeight(80)
+        prompt_col.addWidget(self._whisper_prompt_edit)
         hint = QLabel("Comma-separated hints (names, jargon, places). Improves recognition.")
         hint.setStyleSheet(f"color: {current_tokens()['ink_3']}; font-size: 11px;")
         hint.setWordWrap(True)
-        inner.addWidget(hint, r, 1)
+        prompt_col.addWidget(hint)
+        prompt_wrap = QWidget()
+        prompt_wrap.setLayout(prompt_col)
+        inner.addWidget(prompt_wrap, r, 1)
         r += 1
 
         # Collapse/expand children when the group is toggled. Widgets added

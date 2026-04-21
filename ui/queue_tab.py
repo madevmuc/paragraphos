@@ -143,7 +143,8 @@ class QueueTab(QWidget):
         paused = self.ctx.state.get_meta("queue_paused") == "1"
         if paused:
             self.ctx.state.set_meta("queue_paused", "0")
-        self._shows_tab().start_check()
+        # Queue tab Start is always user-initiated → bypass feed backoff.
+        self._shows_tab().start_check(force=True)
         self._update_btns()
 
     def _pause(self):
