@@ -164,6 +164,19 @@ class ShowsTab(QWidget):
 
     def refresh(self) -> None:
         self._update_global_stats()
+        # Preserve the user's scroll position + selection across the
+        # rebuild. setRowCount(0) wipes both by default, so opening
+        # Details on row 42 and closing would otherwise jerk the view
+        # back to the top.
+        sb = self.table.verticalScrollBar()
+        scroll_pos = sb.value() if sb is not None else 0
+        sel_slug = None
+        cur = self.table.currentItem()
+        if cur is not None:
+            cur_row = cur.row()
+            slug_item = self.table.item(cur_row, 0)
+            if slug_item is not None:
+                sel_slug = slug_item.text()
         # Turn off sorting during insertion — Qt re-sorts between every
         # setItem() call when enabled, which scrambles row indices and
         # leaves all cells past column 0 empty for most shows.
@@ -241,6 +254,18 @@ class ShowsTab(QWidget):
         # Re-enable sorting once all cells are filled — this applies any
         # pending sort order to the new rows atomically.
         self.table.setSortingEnabled(was_sorting)
+        # Restore scroll + selection to where the user was. We re-find
+        # the previously selected slug because sorting + filters may
+        # have changed its row index.
+        if sel_slug is not None:
+            for r in range(self.table.rowCount()):
+                it = self.table.item(r, 0)
+                if it is not None and it.text() == sel_slug:
+                    self.table.setCurrentItem(it)
+                    break
+        if sb is not None:
+            # Clamp in case the row count shrank below the old offset.
+            sb.setValue(min(scroll_pos, sb.maximum()))
 
     def _show_matches_filters(self, show) -> bool:
         f = self._active_filters
