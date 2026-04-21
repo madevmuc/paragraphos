@@ -101,6 +101,41 @@ def test_download_does_not_retry_on_404(tmp_path):
 
 
 @respx.mock
+def test_resume_from_partial(tmp_path: Path):
+    full = b"\x00" * 4096
+    # Pre-existing .part file with first 1 KB already downloaded.
+    part = tmp_path / "a.mp3.part"
+    part.write_bytes(full[:1024])
+
+    respx.head("https://x.test/a.mp3").respond(
+        200,
+        headers={
+            "content-length": str(len(full)),
+            "accept-ranges": "bytes",
+        },
+    )
+
+    def get_resp(request):
+        # Server MUST see the Range header and respond with 206 + the tail.
+        assert request.headers.get("range") == "bytes=1024-"
+        return httpx.Response(
+            206,
+            content=full[1024:],
+            headers={
+                "content-length": str(len(full) - 1024),
+                "content-range": f"bytes 1024-{len(full) - 1}/{len(full)}",
+            },
+        )
+
+    respx.get("https://x.test/a.mp3").mock(side_effect=get_resp)
+    dest = tmp_path / "a.mp3"
+    result = download_mp3("https://x.test/a.mp3", dest)
+    assert result.skipped is False
+    assert dest.stat().st_size == 4096
+    assert dest.read_bytes() == full
+
+
+@respx.mock
 def test_download_exhausts_retries_then_raises(tmp_path):
     import httpx
     import pytest

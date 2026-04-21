@@ -146,6 +146,8 @@ class MainWindow(QMainWindow):
             ("Ctrl+R", self.shows_tab.start_check),
             ("Ctrl+.", self.shows_tab._stop),
             ("Ctrl+L", lambda: self.log_dock.setVisible(not self.log_dock.isVisible())),
+            ("?", lambda: self._show_cheatsheet()),
+            ("Ctrl+/", lambda: self._show_cheatsheet()),
         ):
             QShortcut(
                 QKeySequence(key) if isinstance(key, str) else QKeySequence(key), self, activated=fn
@@ -197,6 +199,21 @@ class MainWindow(QMainWindow):
             if hasattr(w, "refresh"):
                 w.refresh()
             self._refresh_banner()
+
+    def _show_cheatsheet(self) -> None:
+        # Toggle: re-pressing the trigger while the dialog is open closes it
+        # (handled in the dialog's keyPressEvent for `?`; for Cmd+/ we just
+        # re-open which raises the existing instance).
+        existing = getattr(self, "_cheatsheet_dlg", None)
+        if existing is not None and existing.isVisible():
+            existing.close()
+            return
+        from ui.shortcut_cheatsheet import ShortcutCheatsheet
+
+        self._cheatsheet_dlg = ShortcutCheatsheet(self)
+        self._cheatsheet_dlg.show()
+        self._cheatsheet_dlg.raise_()
+        self._cheatsheet_dlg.activateWindow()
 
     def _update_sidebar_counts(self) -> None:
         try:

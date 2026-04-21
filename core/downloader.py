@@ -62,6 +62,14 @@ def _expected_size(url: str, timeout: float = 10.0) -> int:
     return int(r.headers.get("content-length", "0") or 0)
 
 
+def _head(url: str, timeout: float = 10.0) -> httpx.Response:
+    r = get_client().head(
+        url, headers={"User-Agent": USER_AGENT}, follow_redirects=True, timeout=timeout
+    )
+    r.raise_for_status()
+    return r
+
+
 def download_mp3(
     url: str,
     dest: Path,
@@ -105,8 +113,11 @@ def _download_once(
     url: str, dest: Path, *, chunk: int, timeout: float, max_bytes: int
 ) -> DownloadResult:
     expected = 0
+    accept_ranges = False
     try:
-        expected = _expected_size(url, timeout=timeout)
+        head = _head(url, timeout=timeout)
+        expected = int(head.headers.get("content-length", "0") or 0)
+        accept_ranges = head.headers.get("accept-ranges", "").lower() == "bytes"
     except httpx.HTTPError:
         pass  # Some servers block HEAD — fall through to GET.
     if expected and expected > max_bytes:
@@ -117,9 +128,35 @@ def _download_once(
         return DownloadResult(0, True, expected)
 
     tmp = dest.with_suffix(dest.suffix + ".part")
+
+    # Resume support: if a .part file exists and the server advertises
+    # Range support + a known Content-Length, try to continue from the
+    # partial offset instead of re-downloading from zero.
+    resume_from = 0
+    if tmp.exists() and expected and accept_ranges:
+        partial_size = tmp.stat().st_size
+        if partial_size == expected:
+            # Already fully downloaded, just never finalized.
+            tmp.replace(dest)
+            return DownloadResult(0, True, dest.stat().st_size)
+        if partial_size > expected:
+            logger.debug(
+                "partial %s larger than expected (%d > %d) — discarding",
+                tmp,
+                partial_size,
+                expected,
+            )
+            tmp.unlink()
+        elif 0 < partial_size < expected:
+            resume_from = partial_size
+
     written = 0
+    headers: dict[str, str] = {"User-Agent": USER_AGENT}
+    if resume_from:
+        headers["Range"] = f"bytes={resume_from}-"
+
     with get_client().stream(
-        "GET", url, headers={"User-Agent": USER_AGENT}, follow_redirects=True, timeout=timeout
+        "GET", url, headers=headers, follow_redirects=True, timeout=timeout
     ) as r:
         r.raise_for_status()
         # Content-Type sniff — reject obvious non-audio (HTML, JSON, etc.).
@@ -127,7 +164,22 @@ def _download_once(
         if ct and not is_allowed_audio_content_type(ct):
             if not ct.lower().startswith("application/octet-stream"):
                 raise ValueError(f"refusing non-audio Content-Type: {ct!r}")
-        with tmp.open("wb") as f:
+
+        # If we asked for a Range and got 200 back, the server ignored it.
+        # Truncate the partial and restart from zero.
+        mode = "wb"
+        if resume_from:
+            if r.status_code == 206:
+                mode = "ab"
+                written = resume_from
+            else:
+                logger.debug(
+                    "server returned %d to Range request — restarting from zero",
+                    r.status_code,
+                )
+                resume_from = 0
+
+        with tmp.open(mode) as f:
             for block in r.iter_bytes(chunk):
                 f.write(block)
                 written += len(block)
