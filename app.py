@@ -141,11 +141,14 @@ class ParagraphosApp(QObject):
             self.ctx.settings.daily_check_time,
         ):
             # Fire AFTER the window opens (300ms) so ShowsTab owns the thread.
+            self.ctx.state.set_meta("queue_paused", "0")
             QTimer.singleShot(2500, self._run_check)
         elif getattr(self.ctx.settings, "auto_start_queue", True):
             # Auto-start the queue on launch (checkbox in Settings, on by
-            # default). Delayed so the window is up first and ShowsTab
-            # owns the CheckAllThread.
+            # default). If a previous session left the queue paused, the
+            # user's explicit setting here overrides — a launch-time
+            # auto-start means "resume and go", not "sit and wait".
+            self.ctx.state.set_meta("queue_paused", "0")
             QTimer.singleShot(2500, lambda: self._run_check(force=False))
 
     def _rebuild_tray_menu(
