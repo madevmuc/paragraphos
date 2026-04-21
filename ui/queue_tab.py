@@ -334,8 +334,7 @@ class QueueTab(QWidget):
                 "    WHEN 'downloading'  THEN 2 "
                 "    ELSE 3 "
                 "  END, "
-                "  priority DESC, pub_date DESC "
-                "LIMIT 500"
+                "  priority DESC, pub_date DESC"
             ).fetchall()
         self.table.setRowCount(0)
         for r in rows:
@@ -349,7 +348,14 @@ class QueueTab(QWidget):
             self.table.setItem(row, 1, QTableWidgetItem(r["pub_date"]))
             self.table.setItem(row, 2, QTableWidgetItem(""))  # episode_number not in state
             self.table.setItem(row, 3, QTableWidgetItem(r["title"]))
-            self.table.setItem(row, 4, QTableWidgetItem(r["status"]))
+            # Status column — for transcribing rows, read the live
+            # percent meta written by core.pipeline.transcribe_phase.
+            status_text = r["status"]
+            if status_text == "transcribing":
+                pct = self.ctx.state.get_meta(f"transcribe_pct:{r['guid']}") or ""
+                if pct.isdigit():
+                    status_text = f"transcribing · {pct}%"
+            self.table.setItem(row, 4, QTableWidgetItem(status_text))
 
             # Audio length (mm:ss or h:mm:ss)
             dur_sec = int(r["duration_sec"] or 0)

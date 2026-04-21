@@ -152,6 +152,13 @@ def transcribe_phase(outcome: DownloadOutcome, ctx: PipelineContext) -> Pipeline
     from pathlib import Path as _P
 
     model_path = _P.home() / ".config/open-wispr/models" / f"ggml-{ctx.model_name}.bin"
+
+    # Transcribe-progress % column is disabled for now — the streaming
+    # Popen path needs further investigation (whisper-cli behaves
+    # differently when stdout is piped and some invocations produce
+    # zero output files). The API is kept on transcribe_episode so we
+    # can re-enable once the edge cases are understood. Pipeline falls
+    # back to the canonical subprocess.run path with progress_cb=None.
     try:
         result = transcribe_episode(
             mp3_path=mp3_path,
