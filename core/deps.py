@@ -36,12 +36,33 @@ class DepStatus:
         return out
 
 
-_BREW_CANDIDATES = ("/opt/homebrew/bin/brew", "/usr/local/bin/brew")
-_FFMPEG_CANDIDATES = ("/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg")
+_BREW_CANDIDATES = (
+    "/opt/homebrew/bin/brew",  # Apple Silicon
+    "/usr/local/bin/brew",  # Intel Mac
+    "/opt/local/bin/brew",  # uncommon legacy
+)
+_FFMPEG_CANDIDATES = (
+    "/opt/homebrew/bin/ffmpeg",
+    "/usr/local/bin/ffmpeg",
+    "/opt/local/bin/ffmpeg",
+)
+
+# Homebrew bin dirs that may not be on PATH when the .app is launched
+# from Finder/launchd — `shutil.which` by default only looks in the
+# inherited PATH which on macOS GUI apps is typically `/usr/bin:/bin:
+# /usr/sbin:/sbin`. Merge our own Homebrew-aware path list so a fresh
+# brew install is detected on Recheck even before the user restarts.
+_EXTRA_PATH = ":".join(["/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin"])
 
 
 def _has_any(paths: tuple[str, ...], name: str) -> bool:
-    if shutil.which(name):
+    import os as _os
+
+    search_path = _EXTRA_PATH
+    env_path = _os.environ.get("PATH", "")
+    if env_path:
+        search_path = env_path + ":" + search_path
+    if shutil.which(name, path=search_path):
         return True
     return any(Path(p).exists() for p in paths)
 

@@ -153,7 +153,7 @@ class FirstRunWizard(QDialog):
         # installing Homebrew in the external Terminal, without having
         # to close + reopen the wizard.
         self.recheck_btn = QPushButton("Recheck")
-        self.recheck_btn.clicked.connect(self._refresh)
+        self.recheck_btn.clicked.connect(self._on_recheck_clicked)
         footer.addWidget(self.recheck_btn)
         self.close_btn = QPushButton("Continue to Paragraphos")
         self.close_btn.setDefault(True)
@@ -164,6 +164,29 @@ class FirstRunWizard(QDialog):
 
         self.progress_sig.connect(self._on_progress)
         QTimer.singleShot(0, self._refresh)
+
+    def _on_recheck_clicked(self) -> None:
+        """Recheck with visible feedback — flashes the button text so the
+        user sees the click registered, and includes a tooltip with the
+        detected dep paths so they can tell what's failing."""
+        self.recheck_btn.setText("Rechecking…")
+        self.recheck_btn.setEnabled(False)
+
+        def run_check():
+            status = deps.check()
+            # Build tooltip string for debugging
+            parts = [
+                f"brew: {'✓' if status.brew else '✗'}",
+                f"whisper-cli: {'✓' if status.whisper_cli else '✗'}",
+                f"ffmpeg: {'✓' if status.ffmpeg else '✗'}",
+                f"model: {'✓' if status.model else '✗'}",
+            ]
+            self.recheck_btn.setToolTip(" · ".join(parts))
+            self.recheck_btn.setText("Recheck")
+            self.recheck_btn.setEnabled(True)
+            self._refresh()
+
+        QTimer.singleShot(250, run_check)
 
     # ---- refresh --------------------------------------------------------
     def _refresh(self):
