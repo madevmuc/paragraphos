@@ -125,6 +125,13 @@ class QueueTab(QWidget):
         self._tick_header()
         self._update_btns()
         self._refresh_tuning_hint()
+        # Rebuild the table too — the refresh() call is throttled to
+        # 3 s internally, so firing every second just keeps the
+        # coalesce-window warm. Without this, the table only updated
+        # on on_queue_sized / on_episode_done / on_finished_all signals,
+        # which meant status transitions mid-queue (downloaded →
+        # transcribing) stayed invisible for minutes.
+        self.refresh()
 
     def _refresh_tuning_hint(self) -> None:
         """Show a muted 'nicht-empfohlen'-hinweis when parallel_transcribe
