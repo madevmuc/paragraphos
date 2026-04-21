@@ -172,11 +172,18 @@ class ShowDetailsDialog(QDialog):
             self._refresh_btn.setText("Refresh from feed")
             return
         # Apply — only overwrite fields the feed actually supplied.
-        if meta.get("title"):
+        title_changed = False
+        if meta.get("title") and meta["title"] != self._title_edit.text():
             self._title_edit.setText(meta["title"])
+            title_changed = True
         canonical = meta.get("canonical_url")
         if canonical and canonical != self.rss_edit.text().strip():
             self.rss_edit.setText(canonical)
+        # Advanced group is collapsed by default; if the refresh wrote a new
+        # title there, pop the group open so the user sees what changed
+        # before hitting Save.
+        if title_changed and hasattr(self, "_advanced_box"):
+            self._advanced_box.setChecked(True)
         self._refresh_btn.setEnabled(True)
         self._refresh_btn.setText("✓ Refreshed")
         from PyQt6.QtCore import QTimer
@@ -273,6 +280,9 @@ class ShowDetailsDialog(QDialog):
         box.setCheckable(True)
         box.setChecked(False)  # collapsed by default
         box.setFlat(True)
+        # Handle kept so _refresh_from_feed can pop the group open when it
+        # writes a new title the user would otherwise not see.
+        self._advanced_box = box
 
         inner = QGridLayout(box)
         inner.setHorizontalSpacing(10)
