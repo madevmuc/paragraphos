@@ -375,7 +375,11 @@ class ShowsTab(QWidget):
         self.check_btn.setEnabled(False)
         from datetime import datetime
 
-        from core.stats import historical_avg_transcribe_sec
+        from core.stats import (
+            historical_avg_transcribe_sec,
+            pending_duration_sum,
+            realtime_factor,
+        )
 
         self.ctx.queue.running = True
         self.ctx.queue.started_at = datetime.now()
@@ -386,6 +390,13 @@ class ShowsTab(QWidget):
         # time immediately — long before the first live episode finishes
         # (whisper takes ~5 min, and the user wants feedback now).
         self.ctx.queue.historical_avg_sec = historical_avg_transcribe_sec(self.ctx.state)
+        # Duration-based ETA: pending audio × realtime factor. Far more
+        # accurate than episode-count × avg-per-episode when shows have
+        # varying episode lengths.
+        self.ctx.queue.remaining_audio_sec = pending_duration_sum(
+            self.ctx.state, show_slug=only_slug
+        )
+        self.ctx.queue.realtime_factor = realtime_factor(self.ctx.state)
         self._ep_durations: list[float] = []
         self._last_ep_start = datetime.now()
         self._thread.start()
@@ -397,10 +408,15 @@ class ShowsTab(QWidget):
     def _on_ep_done(self, slug, guid, action, done_idx, total, show_title, ep_title):
         from datetime import datetime
 
+        from core.stats import pending_duration_sum
+
         self.ctx.queue.done = done_idx
         self.ctx.queue.total = total
         self.ctx.queue.last_episode_show = show_title
         self.ctx.queue.last_episode_title = ep_title
+        # Refresh remaining audio after each episode so the ETA winds
+        # down with actual progress instead of a fixed at-start estimate.
+        self.ctx.queue.remaining_audio_sec = pending_duration_sum(self.ctx.state)
         now = datetime.now()
         if self._last_ep_start:
             self._ep_durations.append((now - self._last_ep_start).total_seconds())

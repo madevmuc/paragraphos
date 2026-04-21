@@ -160,6 +160,63 @@ def _duration_from_srt(path: Path) -> Optional[int]:
     return last_end or None
 
 
+def realtime_factor(state, *, sample_limit: int = 50) -> float:
+    """Return transcribe wall-clock seconds divided by audio duration seconds.
+
+    A value of ``0.25`` means whisper runs at 4× realtime (transcribes a
+    60-minute episode in 15 minutes). Derived from the most recent
+    ``sample_limit`` completed episodes.
+
+    Falls back to 0.25 when we have no usable history — a sensible
+    optimistic default for whisper-cpp large-v3-turbo on Apple Silicon.
+    """
+    with state._conn() as c:
+        rows = c.execute(
+            "SELECT attempted_at, completed_at, duration_sec FROM episodes "
+            "WHERE status='done' AND attempted_at IS NOT NULL "
+            "AND completed_at IS NOT NULL AND duration_sec > 0 "
+            "ORDER BY completed_at DESC LIMIT ?",
+            (sample_limit,),
+        ).fetchall()
+    if not rows:
+        return 0.25
+    from datetime import datetime
+
+    total_wall = 0.0
+    total_audio = 0
+    for r in rows:
+        try:
+            a = datetime.fromisoformat(r["attempted_at"])
+            b = datetime.fromisoformat(r["completed_at"])
+        except (TypeError, ValueError):
+            continue
+        wall = (b - a).total_seconds()
+        # Skip implausible wall-clock (dedup skips + crashed jobs).
+        if wall < 5 or wall > 3600:
+            continue
+        total_wall += wall
+        total_audio += int(r["duration_sec"])
+    if total_audio <= 0:
+        return 0.25
+    return total_wall / total_audio
+
+
+def pending_duration_sum(state, *, show_slug: str | None = None) -> int:
+    """Sum of duration_sec across pending + downloading + downloaded
+    episodes — i.e. audio still to transcribe."""
+    where = "status IN ('pending', 'downloading', 'downloaded') AND duration_sec > 0"
+    params: tuple = ()
+    if show_slug:
+        where = f"show_slug=? AND {where}"
+        params = (show_slug,)
+    with state._conn() as c:
+        row = c.execute(
+            f"SELECT COALESCE(SUM(duration_sec), 0) AS tot FROM episodes WHERE {where}",
+            params,
+        ).fetchone()
+    return int(row["tot"] or 0)
+
+
 def historical_avg_transcribe_sec(state, *, sample_limit: int = 50) -> float:
     """Return the average wall-clock time an episode takes to transcribe,
     measured from the most recent `sample_limit` completed episodes.

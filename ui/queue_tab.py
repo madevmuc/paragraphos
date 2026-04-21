@@ -216,7 +216,13 @@ class QueueTab(QWidget):
         # at start_check so "finish ≈" is shown from t=0.
         avg = live_avg or self.ctx.queue.effective_avg_sec
         remaining = self._total - self._done
-        eta_sec = avg * remaining if avg else 0
+        # Prefer duration-based ETA (pending audio × realtime factor)
+        # when available — the per-episode average is a last resort.
+        duration_eta = self.ctx.queue.duration_based_eta_sec
+        if duration_eta > 0:
+            eta_sec = duration_eta
+        else:
+            eta_sec = avg * remaining if avg else 0
         finish_at = datetime.now() + timedelta(seconds=eta_sec) if eta_sec else None
 
         from ui.main_window import _fmt_dt_locale
