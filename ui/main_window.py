@@ -227,28 +227,42 @@ class MainWindow(QMainWindow):
         self._counts_timer.start(2000)
 
     def _restore_geometry(self) -> None:
-        """Re-open at last-session size/position; default 95% of screen."""
+        """Re-open at last-session size/position, clamped to the current
+        screen. First launch fills 90% of the available screen area."""
         from PyQt6.QtCore import QSettings
         from PyQt6.QtGui import QGuiApplication
 
         qs = QSettings("madevmuc", "Paragraphos")
         saved = qs.value("window/geometry")
+
+        screen = QGuiApplication.primaryScreen()
+        avail = screen.availableGeometry() if screen is not None else None
+
         if saved:
             try:
                 self.restoreGeometry(saved)
+                # Clamp to the current screen — a saved geometry from a
+                # larger external display must not overflow onto the
+                # smaller built-in one when the external is gone.
+                if avail is not None:
+                    geo = self.geometry()
+                    w = min(geo.width(), avail.width())
+                    h = min(geo.height(), avail.height())
+                    x = max(avail.x(), min(geo.x(), avail.x() + avail.width() - w))
+                    y = max(avail.y(), min(geo.y(), avail.y() + avail.height() - h))
+                    if (w, h, x, y) != (geo.width(), geo.height(), geo.x(), geo.y()):
+                        self.setGeometry(x, y, w, h)
                 return
             except Exception:
                 pass
-        # First launch — fill 95% of the available screen area.
-        screen = QGuiApplication.primaryScreen()
-        if screen is None:
+
+        # First launch — 90% of the available primary screen, centred.
+        if avail is None:
             self.resize(1100, 720)
             return
-        avail = screen.availableGeometry()
-        w = int(avail.width() * 0.95)
-        h = int(avail.height() * 0.95)
+        w = int(avail.width() * 0.90)
+        h = int(avail.height() * 0.90)
         self.resize(w, h)
-        # Centre on screen.
         self.move(avail.x() + (avail.width() - w) // 2, avail.y() + (avail.height() - h) // 2)
 
     def closeEvent(self, event) -> None:  # noqa: N802 — Qt override
