@@ -327,10 +327,12 @@ class ShowDetailsDialog(QDialog):
         title_changed = False
         if meta.get("title") and meta["title"] != self._title_edit.text():
             self._title_edit.setText(meta["title"])
+            self.show_.title = meta["title"]
             title_changed = True
         canonical = meta.get("canonical_url")
         if canonical and canonical != self.rss_edit.text().strip():
             self.rss_edit.setText(canonical)
+            self.show_.rss = canonical
         # Artwork: persist on the Show so a subsequent dialog open (or
         # watchlist save via _save) doesn't lose it. We also trigger an
         # async (re)load so the header updates in-place without the user
@@ -344,6 +346,21 @@ class ShowDetailsDialog(QDialog):
                 # fetches fresh bytes instead of returning the stale one.
                 self._invalidate_artwork_cache()
             self._maybe_load_artwork(artwork_url)
+        # Persist the updated Show to the watchlist so the Shows-tab row
+        # reflects the new title/rss/artwork without the user having to
+        # hit Save first. Best-effort — if ctx.data_dir isn't present we
+        # fall through and the user can still click Save manually.
+        try:
+            self.ctx.watchlist.save(self.ctx.data_dir / "watchlist.yaml")
+            parent = self.parent()
+            while parent is not None:
+                shows_tab = getattr(parent, "shows_tab", None)
+                if shows_tab is not None:
+                    shows_tab.refresh()
+                    break
+                parent = parent.parent()
+        except Exception:
+            pass
         # Advanced group is collapsed by default; if the refresh wrote a new
         # title there, pop the group open so the user sees what changed
         # before hitting Save.

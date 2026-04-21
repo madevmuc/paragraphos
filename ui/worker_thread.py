@@ -371,10 +371,14 @@ class CheckAllThread(QThread):
                         continue
                     backoff.on_success(self.ctx.state, show.slug)
                     if manifest is None:
-                        # 304 Not Modified — skip pass-2 manifest parse
-                        # entirely for this show, but still emit progress
-                        # so the UI knows the feed was checked.
-                        self.progress.emit(f"{show.slug}: unchanged (304) — skipping parse")
+                        # 304 Not Modified — feed unchanged, but the DB may
+                        # still hold pending episodes from an earlier run.
+                        # Register with manifest=None so pass 1b gathers them.
+                        self.progress.emit(
+                            f"{show.slug}: unchanged (304) — "
+                            f"skipping parse, still processing pending"
+                        )
+                        fetch_results[show.slug] = (show, canonical, None)
                         continue
                     if new_etag:
                         self.ctx.state.set_meta(f"feed_etag:{show.slug}", new_etag)
@@ -397,16 +401,21 @@ class CheckAllThread(QThread):
                 self.progress.emit(f"feed moved: {show.rss} → {canonical} — updating watchlist")
                 show.rss = canonical
                 self.ctx.watchlist.save(self.ctx.data_dir / "watchlist.yaml")
-            for ep in manifest:
-                self.ctx.state.upsert_episode(
-                    show_slug=show.slug,
-                    guid=ep["guid"],
-                    title=ep["title"],
-                    pub_date=ep["pubDate"],
-                    mp3_url=ep["mp3_url"],
-                    duration_sec=_pd(ep.get("duration", "")),
-                )
-            ep_num_map = {e["guid"]: e["episode_number"] for e in manifest}
+            # manifest is None on a 304 — skip the upsert pass (nothing new
+            # to add) but still collect existing pending episodes below.
+            if manifest is not None:
+                for ep in manifest:
+                    self.ctx.state.upsert_episode(
+                        show_slug=show.slug,
+                        guid=ep["guid"],
+                        title=ep["title"],
+                        pub_date=ep["pubDate"],
+                        mp3_url=ep["mp3_url"],
+                        duration_sec=_pd(ep.get("duration", "")),
+                    )
+                ep_num_map = {e["guid"]: e["episode_number"] for e in manifest}
+            else:
+                ep_num_map = {}
             pending = self.ctx.state.list_by_status(show.slug, EpisodeStatus.PENDING)
             if self.limit:
                 pending = pending[-self.limit :]
