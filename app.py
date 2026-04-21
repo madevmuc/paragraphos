@@ -105,20 +105,25 @@ class ParagraphosApp(QObject):
         self.tray.setToolTip("Paragraphos")
         self.tray.activated.connect(self._on_tray_activated)
 
-        # Modern flat app-icon used in every tray push notification
-        # (balloon / Notification Center bubble). Falls back to the
-        # default bell glyph when the asset is missing.
-        _asset = Path(__file__).resolve().parent / "assets" / "AppIcon.icns"
-        self._notify_icon = QIcon(str(_asset)) if _asset.exists() else QIcon()
-
-        # Wrap showMessage so every call site picks up the custom icon
-        # without having to pass it explicitly.
+        # Tray push notifications on macOS: QSystemTrayIcon.showMessage
+        # maps to legacy NSUserNotification, which ignores any QIcon we
+        # pass — it always shows the bundle's own CFBundleIconFile.
+        # Passing MessageIcon.Information as Qt does by default makes
+        # macOS overlay a generic ⓘ glyph on top. NoIcon clears that so
+        # the bubble shows just the app icon (which IS the pilcrow via
+        # the bundled assets/AppIcon.icns wired through py2app
+        # iconfile=).
         _orig_show = self.tray.showMessage
 
         def _show_with_icon(title, body, *args, **kwargs):
             if args or kwargs:
                 return _orig_show(title, body, *args, **kwargs)
-            return _orig_show(title, body, self._notify_icon, 5000)
+            return _orig_show(
+                title,
+                body,
+                QSystemTrayIcon.MessageIcon.NoIcon,
+                5000,
+            )
 
         self.tray.showMessage = _show_with_icon  # type: ignore[assignment]
 
