@@ -213,8 +213,7 @@ def phase3_transcript_crosscheck(results: List[FeedResult]) -> None:
         gaps = [g for g in ref_guids if g not in md_guids]
 
         print(
-            f"\n  {slug}: .md files with GUID frontmatter = {len(md_guids)}, "
-            f"ref = {len(ref_guids)}"
+            f"\n  {slug}: .md files with GUID frontmatter = {len(md_guids)}, ref = {len(ref_guids)}"
         )
         print(f"    orphans (md without manifest entry): {len(orphans)}")
         if orphans[:5]:

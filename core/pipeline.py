@@ -165,11 +165,7 @@ def transcribe_phase(outcome: DownloadOutcome, ctx: PipelineContext) -> Pipeline
             processors=ctx.processors,
         )
     except TranscriptionError as e:
-        err = (
-            f"transcribe failed: {e}\n"
-            f"  show={ep['show_slug']}  guid={guid}\n"
-            f"  mp3={mp3_path}"
-        )
+        err = f"transcribe failed: {e}\n  show={ep['show_slug']}  guid={guid}\n  mp3={mp3_path}"
         logger.error("transcribe failed: %s (guid=%s)", ep["show_slug"], guid, exc_info=True)
         ctx.state.set_status(guid, EpisodeStatus.FAILED, error_text=err)
         return PipelineResult("failed", guid, err)

@@ -89,10 +89,10 @@ def test_download_does_not_retry_on_404(tmp_path):
 
     calls = {"n": 0}
     respx.head("https://x.test/gone.mp3").mock(
-        side_effect=lambda r: (calls.__setitem__("n", calls["n"] + 1) or httpx.Response(404))
+        side_effect=lambda r: calls.__setitem__("n", calls["n"] + 1) or httpx.Response(404)
     )
     respx.get("https://x.test/gone.mp3").mock(
-        side_effect=lambda r: (calls.__setitem__("n", calls["n"] + 1) or httpx.Response(404))
+        side_effect=lambda r: calls.__setitem__("n", calls["n"] + 1) or httpx.Response(404)
     )
     with pytest.raises(httpx.HTTPStatusError):
         download_mp3("https://x.test/gone.mp3", tmp_path / "a.mp3", _sleep=lambda _: None)

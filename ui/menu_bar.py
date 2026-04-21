@@ -9,6 +9,7 @@ from __future__ import annotations
 import webbrowser
 from pathlib import Path
 
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QAction, QKeySequence
 from PyQt6.QtWidgets import (
     QHBoxLayout,
@@ -16,6 +17,7 @@ from PyQt6.QtWidgets import (
     QMenu,
     QMenuBar,
     QProgressBar,
+    QProgressDialog,
     QVBoxLayout,
     QWidget,
     QWidgetAction,
@@ -180,12 +182,55 @@ def _focus_tab(window, idx: int) -> None:
     window._on_nav(key)
 
 
+class _OPMLImportThread(QThread):
+    """Worker: fetches feed metadata + manifest for each OPML entry off the UI thread.
+
+    Emits `progress(i, total, title)` before each entry and `result(entries)`
+    when done, where each `entries` item is a dict with keys:
+      - ok (bool)
+      - entry (original OPML dict)
+      - meta (feed_metadata dict) — only when ok
+      - manifest (list[dict]) — only when ok
+      - error (str) — only when not ok
+    The caller mutates watchlist + state on the UI thread using those results.
+    Co-operative cancellation via `request_cancel()`.
+    """
+
+    progress = pyqtSignal(int, int, str)
+    result = pyqtSignal(list)
+
+    def __init__(self, entries: list[dict], parent=None):
+        super().__init__(parent)
+        self._entries = entries
+        self._cancelled = False
+
+    def request_cancel(self) -> None:
+        self._cancelled = True
+
+    def run(self) -> None:  # noqa: D401 — QThread entry
+        from core.rss import build_manifest, feed_metadata
+
+        out: list[dict] = []
+        total = len(self._entries)
+        for i, entry in enumerate(self._entries):
+            if self._cancelled:
+                break
+            self.progress.emit(i, total, entry.get("title") or entry.get("xmlUrl") or "")
+            try:
+                meta = feed_metadata(entry["xmlUrl"])
+                manifest = build_manifest(entry["xmlUrl"], timeout=60)
+            except Exception as ex:  # noqa: BLE001 — surfaced as per-entry error
+                out.append({"ok": False, "entry": entry, "error": str(ex)})
+                continue
+            out.append({"ok": True, "entry": entry, "meta": meta, "manifest": manifest})
+        self.result.emit(out)
+
+
 def _import_opml(window) -> None:
     from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
     from core.models import Show
     from core.opml import parse_opml
-    from core.rss import build_manifest, feed_metadata
 
     path, _ = QFileDialog.getOpenFileName(
         window, "Select OPML", str(Path.home()), "OPML (*.opml *.xml)"
@@ -197,43 +242,79 @@ def _import_opml(window) -> None:
     except Exception as ex:
         QMessageBox.warning(window, "OPML error", str(ex))
         return
-    existing = {s.slug for s in window.ctx.watchlist.shows}
-    added = 0
-    errs: list[str] = []
-    for entry in entries:
-        try:
-            meta = feed_metadata(entry["xmlUrl"])
-            manifest = build_manifest(entry["xmlUrl"], timeout=60)
-        except Exception as ex:
-            errs.append(f"{entry['title']}: {ex}")
-            continue
-        slug = (meta["title"] or entry["title"]).lower().replace(" ", "-")
-        if slug in existing:
-            continue
-        window.ctx.watchlist.shows.append(
-            Show(
-                slug=slug,
-                title=meta["title"] or entry["title"],
-                rss=entry["xmlUrl"],
-                whisper_prompt="",
+    if not entries:
+        QMessageBox.information(window, "OPML import", "No feeds found in the OPML file.")
+        return
+
+    total = len(entries)
+    dlg = QProgressDialog("Importing feeds…", "Cancel", 0, total, window)
+    dlg.setWindowTitle("OPML import")
+    dlg.setWindowModality(Qt.WindowModality.WindowModal)
+    dlg.setMinimumDuration(0)
+    dlg.setAutoClose(False)
+    dlg.setAutoReset(False)
+    dlg.setValue(0)
+
+    thread = _OPMLImportThread(entries, parent=window)
+
+    def _on_progress(i: int, tot: int, title: str) -> None:
+        dlg.setLabelText(f"Importing {i + 1} of {tot}: {title}")
+        dlg.setValue(i)
+
+    def _on_result(results: list[dict]) -> None:
+        # UI-thread: apply results to watchlist + state, save, report.
+        existing = {s.slug for s in window.ctx.watchlist.shows}
+        added = 0
+        errs: list[str] = []
+        for r in results:
+            entry = r["entry"]
+            if not r["ok"]:
+                errs.append(f"{entry.get('title', '?')}: {r['error']}")
+                continue
+            meta = r["meta"]
+            manifest = r["manifest"]
+            slug = (meta.get("title") or entry["title"]).lower().replace(" ", "-")
+            if slug in existing:
+                continue
+            existing.add(slug)
+            window.ctx.watchlist.shows.append(
+                Show(
+                    slug=slug,
+                    title=meta.get("title") or entry["title"],
+                    rss=entry["xmlUrl"],
+                    whisper_prompt="",
+                )
             )
-        )
-        for ep in manifest:
-            window.ctx.state.upsert_episode(
-                show_slug=slug,
-                guid=ep["guid"],
-                title=ep["title"],
-                pub_date=ep["pubDate"],
-                mp3_url=ep["mp3_url"],
-            )
-        added += 1
-    window.ctx.watchlist.save(window.ctx.data_dir / "watchlist.yaml")
-    window.shows_tab.refresh()
-    QMessageBox.information(
-        window,
-        "OPML import",
-        f"Added {added} show(s)." + ("\n\nErrors:\n" + "\n".join(errs[:10]) if errs else ""),
-    )
+            for ep in manifest:
+                window.ctx.state.upsert_episode(
+                    show_slug=slug,
+                    guid=ep["guid"],
+                    title=ep["title"],
+                    pub_date=ep["pubDate"],
+                    mp3_url=ep["mp3_url"],
+                )
+            added += 1
+        window.ctx.watchlist.save(window.ctx.data_dir / "watchlist.yaml")
+        window.shows_tab.refresh()
+        dlg.setValue(total)
+        dlg.close()
+        cancelled = thread._cancelled  # noqa: SLF001 — intentional peek
+        header = f"Added {added} show(s)." + (" (cancelled)" if cancelled else "")
+        body = header + ("\n\nErrors:\n" + "\n".join(errs[:10]) if errs else "")
+        QMessageBox.information(window, "OPML import", body)
+
+    def _on_cancel() -> None:
+        thread.request_cancel()
+        dlg.setLabelText("Cancelling…")
+
+    thread.progress.connect(_on_progress)
+    thread.result.connect(_on_result)
+    dlg.canceled.connect(_on_cancel)
+    # Keep thread alive until Qt has a chance to deliver its last signals.
+    thread.finished.connect(thread.deleteLater)
+    # Stash on window so the QThread isn't GC'd mid-flight.
+    window._opml_import_thread = thread
+    thread.start()
 
 
 def _selected_slug(window) -> str | None:

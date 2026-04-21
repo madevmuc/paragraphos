@@ -45,7 +45,7 @@ _LEGACY = Path(__file__).resolve().parent / "data"
 _migrated = migrate_from_legacy(_LEGACY)
 if _migrated:
     print(
-        f"migrated user data to ~/Library/Application Support/Paragraphos/: " f"{_migrated}",
+        f"migrated user data to ~/Library/Application Support/Paragraphos/: {_migrated}",
         flush=True,
     )
 DATA_DIR = user_data_dir()
@@ -313,7 +313,7 @@ class ParagraphosApp(QObject):
         # when q.running is False (e.g. app somehow lost thread state).
         with self.ctx.state._conn() as c:
             row = c.execute(
-                "SELECT COUNT(*) FROM episodes " "WHERE status IN ('downloading','transcribing')"
+                "SELECT COUNT(*) FROM episodes WHERE status IN ('downloading','transcribing')"
             ).fetchone()
         return (row[0] or 0) > 0
 

@@ -200,7 +200,7 @@ class ShowsTab(QWidget):
             if n >= 5 and cov < 0.2:
                 title_item.setToolTip(
                     f"whisper_prompt coverage is low: only "
-                    f"{cov*100:.0f}% of prompt terms appear in the last "
+                    f"{cov * 100:.0f}% of prompt terms appear in the last "
                     f"{n} transcripts. Consider updating the prompt."
                 )
             self.table.setItem(row, 1, title_item)
@@ -389,7 +389,7 @@ class ShowsTab(QWidget):
     def _stop(self):
         if self._thread:
             self._thread.request_stop()
-            self._log("stop requested — current episode will finish, " "then queue halts.")
+            self._log("stop requested — current episode will finish, then queue halts.")
         self.stop_btn.setEnabled(False)
 
     def _pause(self):
@@ -511,7 +511,7 @@ class ShowsTab(QWidget):
         reply = QMessageBox.question(
             self,
             "Delete shows",
-            f"Remove {len(slugs)} show(s) from the watchlist?\n" "On-disk transcripts are kept.",
+            f"Remove {len(slugs)} show(s) from the watchlist?\nOn-disk transcripts are kept.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -9,7 +10,26 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Mapping
 
-WHISPER_BIN = "/opt/homebrew/bin/whisper-cli"
+
+def _locate_whisper_bin() -> str:
+    """Find whisper-cli via PATH, falling back to common Homebrew prefixes.
+
+    Apple Silicon Homebrew: /opt/homebrew/bin
+    Intel Homebrew        : /usr/local/bin
+    Returns the Apple-Silicon path as a last resort so a missing binary
+    surfaces through the existing WHISPER_BIN exists-check rather than
+    an unhelpful None.
+    """
+    found = shutil.which("whisper-cli")
+    if found:
+        return found
+    for p in ("/opt/homebrew/bin/whisper-cli", "/usr/local/bin/whisper-cli"):
+        if Path(p).exists():
+            return p
+    return "/opt/homebrew/bin/whisper-cli"
+
+
+WHISPER_BIN = _locate_whisper_bin()
 MODEL_PATH = Path.home() / ".config" / "open-wispr" / "models" / "ggml-large-v3-turbo.bin"
 LANGUAGE = "de"
 THREADS = "6"

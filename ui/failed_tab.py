@@ -53,7 +53,7 @@ class FailedTab(QWidget):
         play = QPushButton("Play MP3")
         play.clicked.connect(self._play_selected)
         play.setToolTip(
-            "Open the partial MP3 of the selected row in the " "default audio app for a spot-check."
+            "Open the partial MP3 of the selected row in the default audio app for a spot-check."
         )
         clean = QPushButton("Clear older than 30 days")
         clean.clicked.connect(self._clear_old)
@@ -196,14 +196,14 @@ class FailedTab(QWidget):
     def _add_all_to_queue(self):
         """Mark all failed as pending (priority 0) and kick off a check if idle."""
         with self.ctx.state._conn() as c:
-            c.execute("UPDATE episodes SET status='pending', priority=0 " "WHERE status='failed'")
+            c.execute("UPDATE episodes SET status='pending', priority=0 WHERE status='failed'")
         self.refresh()
         self._trigger_start()
 
     def _push_on_top(self):
         """Mark all failed as pending with priority=10 → processed first."""
         with self.ctx.state._conn() as c:
-            c.execute("UPDATE episodes SET status='pending', priority=10 " "WHERE status='failed'")
+            c.execute("UPDATE episodes SET status='pending', priority=10 WHERE status='failed'")
         self.refresh()
         self._trigger_start()
 

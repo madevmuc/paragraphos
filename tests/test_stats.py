@@ -56,7 +56,7 @@ def test_show_stats(tmp_path: Path):
             show_slug="s",
             guid=guid,
             title=f"T{i}",
-            pub_date=f"2026-04-0{i+1}",
+            pub_date=f"2026-04-0{i + 1}",
             mp3_url="u",
             duration_sec=1000 + i * 100,
         )

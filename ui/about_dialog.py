@@ -45,6 +45,176 @@ DEPENDENCIES = [
 ]
 
 
+def _about_tab(parent: QWidget) -> QWidget:
+    w = QWidget(parent)
+    v = QVBoxLayout(w)
+    v.addWidget(QLabel("<h2>Paragraphos</h2>"))
+    v.addWidget(
+        QLabel(f"Local podcast → whisper.cpp pipeline.<br>Version {VERSION} · Apple Silicon only")
+    )
+    v.addWidget(
+        QLabel(
+            "<br>The name <b>Paragraphos</b> refers to the ancient Greek "
+            "punctuation mark that signalled a change of speaker in a text — "
+            "the job Paragraphos does for every episode it transcribes."
+        )
+    )
+    v.addWidget(
+        QLabel(
+            "<br><b>Technology</b>: Python 3.12, PyQt6, whisper.cpp "
+            "(large-v3-turbo), APScheduler, watchdog, feedparser."
+        )
+    )
+    v.addWidget(
+        QLabel(
+            "<br><b>Spotlight</b>: macOS automatically indexes the "
+            "<code>.md</code> transcripts in your output folder. "
+            "Search them system-wide with ⌘Space."
+        )
+    )
+    v.addWidget(
+        QLabel(
+            "<br><b>Privacy</b>: everything runs locally. No cloud APIs "
+            "for transcription. No telemetry."
+        )
+    )
+    v.addStretch()
+    return w
+
+
+def _licenses_tab(parent: QWidget) -> QWidget:
+    w = QWidget(parent)
+    v = QVBoxLayout(w)
+    v.addWidget(
+        QLabel(
+            "Paragraphos stands on the shoulders of open-source projects. "
+            "The full list of bundled + runtime dependencies and their licenses:"
+        )
+    )
+
+    html = "<table cellpadding='6' cellspacing='0' style='border-collapse:collapse;'>"
+    html += (
+        "<tr style='background:palette(alternate-base);'>"
+        "<th align='left'>Component</th>"
+        "<th align='left'>Version</th>"
+        "<th align='left'>License</th>"
+        "<th align='left'>Project</th></tr>"
+    )
+    for name, ver, lic, url in DEPENDENCIES:
+        html += (
+            "<tr>"
+            f"<td><b>{name}</b></td>"
+            f"<td>{ver}</td>"
+            f"<td>{lic}</td>"
+            f"<td><a href='{url}'>{url.replace('https://', '').rstrip('/')}</a></td>"
+            "</tr>"
+        )
+    html += "</table>"
+
+    html += (
+        "<br><br>"
+        "<b>About the licenses</b><br>"
+        "MIT, BSD, Apache-2.0, and PSF are permissive — they allow "
+        "free use, modification, and redistribution subject to "
+        "attribution and preservation of the license notice. "
+        "GPL / LGPL (PyQt6 under GPL-3.0, parts of ffmpeg under "
+        "LGPL-2.1/GPL) require that modifications to those components "
+        "themselves be released under the same license; dynamic "
+        "linking from Paragraphos is covered. Paragraphos itself is "
+        "a personal project and is not redistributed to third parties."
+        "<br><br>"
+        "<b>Whisper model weights</b> (OpenAI, released under MIT) "
+        "are downloaded separately from the Hugging Face mirror at "
+        "<a href='https://huggingface.co/ggerganov/whisper.cpp'>"
+        "huggingface.co/ggerganov/whisper.cpp</a>."
+        "<br><br>"
+        "<b>Podcast audio</b> remains the property of its original "
+        "authors. Transcripts are derived works for personal "
+        "research / archiving use. Check the license of each podcast "
+        "before redistribution."
+    )
+
+    browser = QTextBrowser()
+    browser.setOpenExternalLinks(True)
+    browser.setHtml(html)
+    v.addWidget(browser)
+    return w
+
+
+def _security_tab(parent: QWidget) -> QWidget:
+    w = QWidget(parent)
+    v = QVBoxLayout(w)
+    html = (
+        "<h3>Threat model</h3>"
+        "Paragraphos ingests <b>fully untrusted data</b>: RSS feed XML, "
+        "episode landing-page HTML, MP3 URLs, and OPML subscription lists. "
+        "A compromised feed or a MITM between you and a podcast host "
+        "should not be able to read your local files, reach your private "
+        "network, or execute code on your Mac."
+        ""
+        "<h3>Mitigations in place</h3>"
+        "<ul>"
+        "<li><b>URL allowlist</b> — only <code>http://</code> and "
+        "<code>https://</code> are followed. <code>file://</code>, "
+        "<code>data:</code>, <code>javascript:</code> are rejected.</li>"
+        "<li><b>SSRF guard</b> — URLs resolving to loopback, link-local, "
+        "private (RFC1918), multicast, or reserved IP ranges are refused, "
+        "so a malicious feed can't probe your LAN or read "
+        "<code>http://localhost/admin</code>.</li>"
+        "<li><b>Download caps</b> — MP3 ≤ 2 GB, RSS feed ≤ 50 MB, "
+        "HTML ≤ 10 MB. Streams exceeding the cap are aborted and the "
+        "<code>.part</code> file deleted.</li>"
+        "<li><b>Content-Type sniffing</b> — MP3 downloads must advertise "
+        "<code>audio/*</code> or <code>application/octet-stream</code>. "
+        "A feed can't sneak a <code>text/html</code> payload into your "
+        "transcripts folder.</li>"
+        "<li><b>XML hardening</b> — OPML parsing uses "
+        "<code>defusedxml</code> (blocks XXE, billion-laughs, external "
+        "entity expansion). feedparser and lxml are called without "
+        "feature flags that enable entity resolution.</li>"
+        "<li><b>Path-traversal defence</b> — the filename sanitizer "
+        'strips <code>/ \\ : * ? " &lt; &gt; |</code> and neutralises '
+        "<code>..</code>. A second check (<code>safe_path_within</code>) "
+        "verifies each write stays inside <code>output_root</code>.</li>"
+        "<li><b>Model integrity</b> — whisper-cpp GGML models are "
+        "verified against a pinned SHA-256 after download; a mismatched "
+        "file is deleted before being moved into place.</li>"
+        "<li><b>No shell execution</b> — all subprocess invocations use "
+        "<code>subprocess.run([...])</code> with list-form arguments. "
+        "Episode titles, whisper prompts, and feed URLs never touch a "
+        "shell. No <code>shell=True</code> anywhere.</li>"
+        "<li><b>SQL injection impossible</b> — every state query uses "
+        "parameterised <code>?</code> placeholders.</li>"
+        "<li><b>YAML is <code>safe_load</code> only</b> — frontmatter "
+        "parsing can't instantiate arbitrary Python classes.</li>"
+        "</ul>"
+        ""
+        "<h3>Residual risks</h3>"
+        "<ul>"
+        "<li><b>whisper.cpp itself</b> is a C++ binary; a crafted MP3 "
+        "could in theory exploit a parser bug. macOS sandbox / signed "
+        "Homebrew releases mitigate this. Keep <code>brew upgrade "
+        "whisper-cpp</code> current.</li>"
+        "<li><b>HTTP-only feeds</b> (no TLS) are still followed — their "
+        "contents can be tampered with on the wire. A future release "
+        "could flag these in the feed-health check.</li>"
+        "<li><b>No code signing / notarization</b> — the .app is locally "
+        "ad-hoc signed, so macOS Gatekeeper warns on first launch. Only "
+        "install Paragraphos from a source you trust.</li>"
+        "</ul>"
+        ""
+        "<h3>Reporting a vulnerability</h3>"
+        "Paragraphos is a personal project. If you find a security issue, "
+        "open a private issue in the repository or mail the maintainer "
+        "directly before disclosing publicly."
+    )
+    browser = QTextBrowser()
+    browser.setOpenExternalLinks(True)
+    browser.setHtml(html)
+    v.addWidget(browser)
+    return w
+
+
 class AboutDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -52,183 +222,13 @@ class AboutDialog(QDialog):
         self.resize(720, 560)
         v = QVBoxLayout(self)
         tabs = QTabWidget()
-        tabs.addTab(self._about_tab(), "About")
-        tabs.addTab(self._licenses_tab(), "Credits & Licenses")
-        tabs.addTab(self._security_tab(), "Security")
+        tabs.addTab(_about_tab(self), "About")
+        tabs.addTab(_licenses_tab(self), "Credits & Licenses")
+        tabs.addTab(_security_tab(self), "Security")
         v.addWidget(tabs)
         close = QPushButton("Close")
         close.clicked.connect(self.accept)
         v.addWidget(close)
-
-    def _about_tab(self) -> QWidget:
-        w = QWidget()
-        v = QVBoxLayout(w)
-        v.addWidget(QLabel("<h2>Paragraphos</h2>"))
-        v.addWidget(
-            QLabel(
-                "Local podcast → whisper.cpp pipeline.<br>"
-                f"Version {VERSION} · Apple Silicon only"
-            )
-        )
-        v.addWidget(
-            QLabel(
-                "<br>The name <b>Paragraphos</b> refers to the ancient Greek "
-                "punctuation mark that signalled a change of speaker in a text — "
-                "the job Paragraphos does for every episode it transcribes."
-            )
-        )
-        v.addWidget(
-            QLabel(
-                "<br><b>Technology</b>: Python 3.12, PyQt6, whisper.cpp "
-                "(large-v3-turbo), APScheduler, watchdog, feedparser."
-            )
-        )
-        v.addWidget(
-            QLabel(
-                "<br><b>Spotlight</b>: macOS automatically indexes the "
-                "<code>.md</code> transcripts in your output folder. "
-                "Search them system-wide with ⌘Space."
-            )
-        )
-        v.addWidget(
-            QLabel(
-                "<br><b>Privacy</b>: everything runs locally. No cloud APIs "
-                "for transcription. No telemetry."
-            )
-        )
-        v.addStretch()
-        return w
-
-    def _licenses_tab(self) -> QWidget:
-        w = QWidget()
-        v = QVBoxLayout(w)
-        v.addWidget(
-            QLabel(
-                "Paragraphos stands on the shoulders of open-source projects. "
-                "The full list of bundled + runtime dependencies and their licenses:"
-            )
-        )
-
-        html = "<table cellpadding='6' cellspacing='0' style='border-collapse:collapse;'>"
-        html += (
-            "<tr style='background:palette(alternate-base);'>"
-            "<th align='left'>Component</th>"
-            "<th align='left'>Version</th>"
-            "<th align='left'>License</th>"
-            "<th align='left'>Project</th></tr>"
-        )
-        for name, ver, lic, url in DEPENDENCIES:
-            html += (
-                "<tr>"
-                f"<td><b>{name}</b></td>"
-                f"<td>{ver}</td>"
-                f"<td>{lic}</td>"
-                f"<td><a href='{url}'>{url.replace('https://', '').rstrip('/')}</a></td>"
-                "</tr>"
-            )
-        html += "</table>"
-
-        html += (
-            "<br><br>"
-            "<b>About the licenses</b><br>"
-            "MIT, BSD, Apache-2.0, and PSF are permissive — they allow "
-            "free use, modification, and redistribution subject to "
-            "attribution and preservation of the license notice. "
-            "GPL / LGPL (PyQt6 under GPL-3.0, parts of ffmpeg under "
-            "LGPL-2.1/GPL) require that modifications to those components "
-            "themselves be released under the same license; dynamic "
-            "linking from Paragraphos is covered. Paragraphos itself is "
-            "a personal project and is not redistributed to third parties."
-            "<br><br>"
-            "<b>Whisper model weights</b> (OpenAI, released under MIT) "
-            "are downloaded separately from the Hugging Face mirror at "
-            "<a href='https://huggingface.co/ggerganov/whisper.cpp'>"
-            "huggingface.co/ggerganov/whisper.cpp</a>."
-            "<br><br>"
-            "<b>Podcast audio</b> remains the property of its original "
-            "authors. Transcripts are derived works for personal "
-            "research / archiving use. Check the license of each podcast "
-            "before redistribution."
-        )
-
-        browser = QTextBrowser()
-        browser.setOpenExternalLinks(True)
-        browser.setHtml(html)
-        v.addWidget(browser)
-        return w
-
-    def _security_tab(self) -> QWidget:
-        w = QWidget()
-        v = QVBoxLayout(w)
-        html = (
-            "<h3>Threat model</h3>"
-            "Paragraphos ingests <b>fully untrusted data</b>: RSS feed XML, "
-            "episode landing-page HTML, MP3 URLs, and OPML subscription lists. "
-            "A compromised feed or a MITM between you and a podcast host "
-            "should not be able to read your local files, reach your private "
-            "network, or execute code on your Mac."
-            ""
-            "<h3>Mitigations in place</h3>"
-            "<ul>"
-            "<li><b>URL allowlist</b> — only <code>http://</code> and "
-            "<code>https://</code> are followed. <code>file://</code>, "
-            "<code>data:</code>, <code>javascript:</code> are rejected.</li>"
-            "<li><b>SSRF guard</b> — URLs resolving to loopback, link-local, "
-            "private (RFC1918), multicast, or reserved IP ranges are refused, "
-            "so a malicious feed can't probe your LAN or read "
-            "<code>http://localhost/admin</code>.</li>"
-            "<li><b>Download caps</b> — MP3 ≤ 2 GB, RSS feed ≤ 50 MB, "
-            "HTML ≤ 10 MB. Streams exceeding the cap are aborted and the "
-            "<code>.part</code> file deleted.</li>"
-            "<li><b>Content-Type sniffing</b> — MP3 downloads must advertise "
-            "<code>audio/*</code> or <code>application/octet-stream</code>. "
-            "A feed can't sneak a <code>text/html</code> payload into your "
-            "transcripts folder.</li>"
-            "<li><b>XML hardening</b> — OPML parsing uses "
-            "<code>defusedxml</code> (blocks XXE, billion-laughs, external "
-            "entity expansion). feedparser and lxml are called without "
-            "feature flags that enable entity resolution.</li>"
-            "<li><b>Path-traversal defence</b> — the filename sanitizer "
-            'strips <code>/ \\ : * ? " &lt; &gt; |</code> and neutralises '
-            "<code>..</code>. A second check (<code>safe_path_within</code>) "
-            "verifies each write stays inside <code>output_root</code>.</li>"
-            "<li><b>Model integrity</b> — whisper-cpp GGML models are "
-            "verified against a pinned SHA-256 after download; a mismatched "
-            "file is deleted before being moved into place.</li>"
-            "<li><b>No shell execution</b> — all subprocess invocations use "
-            "<code>subprocess.run([...])</code> with list-form arguments. "
-            "Episode titles, whisper prompts, and feed URLs never touch a "
-            "shell. No <code>shell=True</code> anywhere.</li>"
-            "<li><b>SQL injection impossible</b> — every state query uses "
-            "parameterised <code>?</code> placeholders.</li>"
-            "<li><b>YAML is <code>safe_load</code> only</b> — frontmatter "
-            "parsing can't instantiate arbitrary Python classes.</li>"
-            "</ul>"
-            ""
-            "<h3>Residual risks</h3>"
-            "<ul>"
-            "<li><b>whisper.cpp itself</b> is a C++ binary; a crafted MP3 "
-            "could in theory exploit a parser bug. macOS sandbox / signed "
-            "Homebrew releases mitigate this. Keep <code>brew upgrade "
-            "whisper-cpp</code> current.</li>"
-            "<li><b>HTTP-only feeds</b> (no TLS) are still followed — their "
-            "contents can be tampered with on the wire. A future release "
-            "could flag these in the feed-health check.</li>"
-            "<li><b>No code signing / notarization</b> — the .app is locally "
-            "ad-hoc signed, so macOS Gatekeeper warns on first launch. Only "
-            "install Paragraphos from a source you trust.</li>"
-            "</ul>"
-            ""
-            "<h3>Reporting a vulnerability</h3>"
-            "Paragraphos is a personal project. If you find a security issue, "
-            "open a private issue in the repository or mail the maintainer "
-            "directly before disclosing publicly."
-        )
-        browser = QTextBrowser()
-        browser.setOpenExternalLinks(True)
-        browser.setHtml(html)
-        v.addWidget(browser)
-        return w
 
 
 class ChangelogDialog(QDialog):
@@ -260,9 +260,7 @@ class AboutPane(QWidget):
         v = QVBoxLayout(self)
         v.setContentsMargins(14, 14, 14, 14)
         tabs = QTabWidget()
-        # Borrow AboutDialog's tab builders — they take `self` but only use
-        # it as a QWidget parent, which AboutPane is fine providing.
-        tabs.addTab(AboutDialog._about_tab(self), "About")
-        tabs.addTab(AboutDialog._licenses_tab(self), "Credits & Licenses")
-        tabs.addTab(AboutDialog._security_tab(self), "Security")
+        tabs.addTab(_about_tab(self), "About")
+        tabs.addTab(_licenses_tab(self), "Credits & Licenses")
+        tabs.addTab(_security_tab(self), "Security")
         v.addWidget(tabs)
