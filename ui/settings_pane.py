@@ -314,15 +314,18 @@ class SettingsPane(QWidget):
 
         self.multiproc = QSpinBox()
         self.multiproc.setRange(1, 8)
-        self.multiproc.setValue(self.ctx.settings.whisper_multiproc)
+        # Seed from settings; fall back to the HW-derived recommendation
+        # for fresh installs (same pattern as Parallel workers).
+        self.multiproc.setValue(
+            self.ctx.settings.whisper_multiproc or self._multiproc_recommendation_value()
+        )
         self.multiproc.valueChanged.connect(self._schedule_save)
         self._add_field(
             f4,
             "Multi-processor split",
             self.multiproc,
-            hint="whisper-cli -p N splits audio across N cores "
-            "(1 = disabled, 4 recommended for long episodes)",
-            hint_kind="info",
+            hint=f"recommended: {self._multiproc_recommendation_hint()}",
+            hint_kind="good",
         )
 
         # Engine/model drift row — compares the fingerprint of the current
@@ -800,6 +803,28 @@ class SettingsPane(QWidget):
     def _hw_recommendation(self) -> str:
         """Back-compat shim: original full-label form."""
         return f"  recommended: {self._hw_recommendation_hint()}"
+
+    def _multiproc_recommendation_value(self) -> int:
+        """Numeric whisper-cli -p N recommendation (1-4).
+
+        whisper.cpp sees diminishing returns past 4 on Apple Silicon
+        (memory-bandwidth bound). Cap at min(perf_cores // 2, 4) so we
+        keep cores free for the OS + the parallel-workers path.
+        """
+        _, ncpu = self._hw_detect()
+        if ncpu is None:
+            return 1
+        return max(1, min(ncpu // 2, 4))
+
+    def _multiproc_recommendation_hint(self) -> str:
+        rec = self._multiproc_recommendation_value()
+        _, ncpu = self._hw_detect()
+        if ncpu is None:
+            return f"{rec} (auto-detect failed — set conservatively)"
+        return (
+            f"{rec} — whisper-cli -p N splits audio across N cores "
+            f"({ncpu} perf cores detected; diminishing returns past 4)"
+        )
 
     def _terminal_help_html(self) -> str:
         return (
