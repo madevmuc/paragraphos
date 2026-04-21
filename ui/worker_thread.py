@@ -371,13 +371,10 @@ class CheckAllThread(QThread):
                         continue
                     backoff.on_success(self.ctx.state, show.slug)
                     if manifest is None:
-                        # 304 Not Modified — feed unchanged, but the DB may
-                        # still hold pending episodes from an earlier run.
-                        # Register with manifest=None so pass 1b gathers them.
-                        self.progress.emit(
-                            f"{show.slug}: unchanged (304) — "
-                            f"skipping parse, still processing pending"
-                        )
+                        # 304 Not Modified — feed unchanged. The DB may
+                        # still hold pending episodes from an earlier run;
+                        # pass 1b picks those up via list_by_status(PENDING).
+                        self.progress.emit(f"{show.slug}: feed unchanged")
                         fetch_results[show.slug] = (show, canonical, None)
                         continue
                     if new_etag:
