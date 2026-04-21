@@ -25,9 +25,40 @@ from PyQt6.QtWidgets import (
 
 _MODEL_DIR = Path.home() / ".config" / "open-wispr" / "models"
 
+# Sane lower bounds per whisper model (bytes). Anything less than this is
+# almost certainly a truncated/partial download — the real files from
+# huggingface are all multi-hundred-MB. Numbers are rough lower bounds
+# (~half the known ggml-*.bin size), not exact expected sizes.
+_MODEL_MIN_BYTES: dict[str, int] = {
+    "base": 70 * 1024 * 1024,  # real ~148 MB
+    "small": 200 * 1024 * 1024,  # real ~488 MB
+    "medium": 700 * 1024 * 1024,  # real ~1.5 GB
+    "large-v3": 1_400 * 1024 * 1024,  # real ~3.1 GB
+    "large-v3-turbo": 400 * 1024 * 1024,  # real ~809 MB
+}
+# Floor: below this we flag a partial download regardless of model pick.
+_MODEL_FLOOR_BYTES = 100 * 1024 * 1024
+
+
+def _model_path(name: str) -> Path:
+    return _MODEL_DIR / f"ggml-{name}.bin"
+
 
 def _model_installed(name: str) -> bool:
-    return (_MODEL_DIR / f"ggml-{name}.bin").exists()
+    return _model_path(name).exists()
+
+
+def _human_size(n: int) -> str:
+    """'1.5 GB', '340 MB', '512 KB'. Whisper models are always MB+, so
+    we don't bother with finer granularity than KB."""
+    step = 1024.0
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if n < step or unit == "TB":
+            if unit in ("B", "KB"):
+                return f"{int(n)} {unit}"
+            return f"{n:.1f} {unit}"
+        n /= step
+    return f"{n} B"  # unreachable
 
 
 def _theme_tokens() -> dict:
@@ -419,12 +450,53 @@ class SettingsPane(QWidget):
 
     def _update_model_status(self) -> None:
         name = self.model.currentText()
-        if _model_installed(name):
-            self.model_status.setText("● installed")
-            self.model_status.setStyleSheet("color: #5a8a4a; font-style: normal;")
-        else:
+        tokens = _theme_tokens()
+        if not _model_installed(name):
             self.model_status.setText("○ not installed — will download on next use")
-            self.model_status.setStyleSheet("color: #a06030; font-style: italic;")
+            self.model_status.setStyleSheet(f"color: {tokens['ink_3']}; font-style: italic;")
+            return
+
+        path = _model_path(name)
+        try:
+            size = path.stat().st_size
+        except OSError as e:
+            self.model_status.setText(f"⚠ cannot stat model: {e}")
+            self.model_status.setStyleSheet("color: #a04040;")
+            return
+
+        # Look up pinned TOFU hash + pinned size (if recorded).
+        pinned_hash: str | None = None
+        pinned_size: int | None = None
+        try:
+            from core.security import get_pinned_hash, get_pinned_size
+
+            pinned_hash = get_pinned_hash(name)
+            pinned_size = get_pinned_size(name)
+        except Exception:
+            # Pin file missing/corrupt — treat as unpinned, still show size.
+            pass
+
+        min_bytes = _MODEL_MIN_BYTES.get(name, _MODEL_FLOOR_BYTES)
+        partial = size < min_bytes
+        size_drift = pinned_size is not None and size != pinned_size
+
+        size_str = _human_size(size)
+        if partial:
+            expected = _human_size(min_bytes)
+            self.model_status.setText(f"⚠ partial download · {size_str} · expected ≥{expected}")
+            self.model_status.setStyleSheet("color: #a04040; font-style: normal;")
+            return
+        if size_drift:
+            expected = _human_size(pinned_size)
+            self.model_status.setText(
+                f"⚠ size drift · {size_str} · pinned at {expected} — re-verify"
+            )
+            self.model_status.setStyleSheet("color: #a06030; font-style: normal;")
+            return
+
+        pin_frag = f" · pinned {pinned_hash[:8]}…" if pinned_hash else " · unpinned"
+        self.model_status.setText(f"● installed · {size_str}{pin_frag}")
+        self.model_status.setStyleSheet(f"color: {tokens['ok']}; font-style: normal;")
 
     def _download_model(self, name: str) -> None:
         from core.model_download import download_model_async

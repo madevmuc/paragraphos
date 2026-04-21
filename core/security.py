@@ -153,6 +153,24 @@ def _model_hashes_path() -> Path:
 
 
 def _load_pinned_hashes() -> dict[str, str]:
+    """Backward-compatible loader: returns {model_name: sha256}.
+
+    On-disk entries may be either a bare SHA-256 string (legacy schema) or
+    a mapping ``{sha256: <hex>, size: <int>}`` (new schema). Both shapes
+    normalize to a string-to-string dict here so existing callers keep
+    working. Use :func:`_load_pinned_entries` to read the full entry.
+    """
+    entries = _load_pinned_entries()
+    return {k: v["sha256"] for k, v in entries.items() if "sha256" in v}
+
+
+def _load_pinned_entries() -> dict[str, dict]:
+    """Returns {model_name: {"sha256": str, "size"?: int}}.
+
+    Tolerates the legacy bare-string form; unknown keys inside the
+    mapping are preserved on round-trip via the raw YAML but we only
+    surface the ones we care about here.
+    """
     import yaml
 
     p = _model_hashes_path()
@@ -162,32 +180,82 @@ def _load_pinned_hashes() -> dict[str, str]:
         data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
     except yaml.YAMLError:
         return {}
-    return {str(k): str(v) for k, v in data.items() if isinstance(v, str)}
+    out: dict[str, dict] = {}
+    if not isinstance(data, dict):
+        return out
+    for k, v in data.items():
+        name = str(k)
+        if isinstance(v, str):
+            out[name] = {"sha256": v}
+        elif isinstance(v, dict) and isinstance(v.get("sha256"), str):
+            entry: dict = {"sha256": v["sha256"]}
+            if isinstance(v.get("size"), int):
+                entry["size"] = v["size"]
+            out[name] = entry
+    return out
 
 
 def _save_pinned_hashes(pins: dict[str, str]) -> None:
+    """Legacy-compatible save: writes bare strings.
+
+    New callers should use :func:`_save_pinned_entries` to persist size
+    alongside the hash.
+    """
+    entries = {k: {"sha256": v} for k, v in pins.items()}
+    # Collapse trivial entries back to bare strings so we don't churn the
+    # on-disk format for installs that never pin a size.
+    _save_pinned_entries(entries)
+
+
+def _save_pinned_entries(entries: dict[str, dict]) -> None:
     import yaml
 
     p = _model_hashes_path()
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(yaml.safe_dump(pins, sort_keys=True), encoding="utf-8")
+    serializable: dict[str, object] = {}
+    for name, entry in entries.items():
+        if set(entry.keys()) == {"sha256"}:
+            serializable[name] = entry["sha256"]
+        else:
+            serializable[name] = {k: entry[k] for k in sorted(entry)}
+    p.write_text(yaml.safe_dump(serializable, sort_keys=True), encoding="utf-8")
+
+
+def get_pinned_hash(model_name: str) -> str | None:
+    """Return the pinned SHA-256 for ``model_name`` or ``None``."""
+    return _load_pinned_hashes().get(model_name)
+
+
+def get_pinned_size(model_name: str) -> int | None:
+    """Return the pinned on-disk size (bytes) for ``model_name`` or ``None``.
+
+    Only present for pins recorded after the size-tracking change; older
+    pins return ``None`` and callers should treat that as "unknown".
+    """
+    entry = _load_pinned_entries().get(model_name)
+    if entry is None:
+        return None
+    size = entry.get("size")
+    return size if isinstance(size, int) else None
 
 
 def verify_model(path: Path, model_name: str) -> None:
     """Trust-On-First-Use integrity check.
 
-    - First time we see a given `model_name`: record its SHA256.
+    - First time we see a given `model_name`: record its SHA256 (and the
+      file size, so later UI can warn on partial / truncated copies).
     - Subsequent calls: compare against the pin; raise ValueError on
       mismatch (the user decides whether to trust the new file by
       deleting the pin from model_hashes.yaml).
     """
     actual = sha256_of(path)
-    pins = _load_pinned_hashes()
-    expected = pins.get(model_name)
-    if expected is None:
-        pins[model_name] = actual
-        _save_pinned_hashes(pins)
+    entries = _load_pinned_entries()
+    existing = entries.get(model_name)
+    if existing is None:
+        entries[model_name] = {"sha256": actual, "size": path.stat().st_size}
+        _save_pinned_entries(entries)
         return
+    expected = existing.get("sha256")
     if actual != expected:
         raise ValueError(
             f"model {model_name!r} SHA256 changed:\n"
@@ -197,6 +265,11 @@ def verify_model(path: Path, model_name: str) -> None:
             f"  {_model_hashes_path()}\n"
             f"and retry the download."
         )
+    # Backfill the size on first match if the pin predates size-tracking.
+    if "size" not in existing:
+        existing["size"] = path.stat().st_size
+        entries[model_name] = existing
+        _save_pinned_entries(entries)
 
 
 # --------------------------------------------------------------------------- #
