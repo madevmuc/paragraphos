@@ -29,7 +29,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from urllib.parse import urlparse
 
-from PyQt6.QtCore import QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
 
 from core.models import Settings, Watchlist
 from core.pipeline import (
@@ -457,10 +457,16 @@ class CheckAllThread(QThread):
             total=total,
             stop_flag=self._stop_event,
         )
-        # Re-emit child signals on this thread so existing wiring stays valid.
-        dl.progress.connect(self.progress.emit)
-        tr.progress.connect(self.progress.emit)
-        tr.episode_done.connect(self.episode_done.emit)
+        # Re-emit child signals on this thread so existing wiring stays
+        # valid. CRITICAL: DirectConnection. The default AutoConnection
+        # would be Queued (child workers and CheckAllThread run on
+        # different QThreads), but CheckAllThread.run() is pure Python
+        # without a QEventLoop.exec() — queued delivery never fires, so
+        # the re-emits would be silently dropped. `.emit()` is thread-
+        # safe regardless of which thread invokes it.
+        dl.progress.connect(self.progress.emit, type=Qt.ConnectionType.DirectConnection)
+        tr.progress.connect(self.progress.emit, type=Qt.ConnectionType.DirectConnection)
+        tr.episode_done.connect(self.episode_done.emit, type=Qt.ConnectionType.DirectConnection)
 
         # Poll the persisted pause flag from a short helper thread — when
         # set we trip the shared stop event, draining both workers.
