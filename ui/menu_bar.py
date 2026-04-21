@@ -77,7 +77,8 @@ def build_menu_bar(window) -> QMenuBar:
     e.addSeparator()
     a = QAction("Settings…", window)
     a.setShortcut(QKeySequence.StandardKey.Preferences)
-    a.triggered.connect(lambda: _focus_tab(window, 2))
+    # Settings is index 3 (shows/queue/failed/settings/logs/about).
+    a.triggered.connect(lambda: _focus_tab(window, 3))
     e.addAction(a)
 
     # ── View ──────────────────────────────────────────────────────
@@ -133,7 +134,8 @@ def build_menu_bar(window) -> QMenuBar:
     a.triggered.connect(lambda: _mark_selected_stale(window))
     ac.addAction(a)
     a = QAction("Retry Selected (Failed)", window)
-    a.triggered.connect(lambda: _focus_tab(window, 1))
+    # Failed tab is index 2.
+    a.triggered.connect(lambda: _focus_tab(window, 2))
     ac.addAction(a)
     a = QAction("Open Latest in Obsidian", window)
     a.triggered.connect(lambda: _open_in_obsidian(window))

@@ -37,9 +37,9 @@ class TranscriptDiffDialog(QDialog):
             "body { font-family: -apple-system, system-ui, sans-serif; font-size: 12px; }"
             "table.diff { border-collapse: collapse; width: 100%; }"
             ".diff_header { background: palette(alternate-base); }"
-            ".diff_add { background: #e6f4ea; }"
-            ".diff_chg { background: #fff4ce; }"
-            ".diff_sub { background: #fce8e6; }"
+            ".diff_add { background: #e6f4ea; color: #202020; }"
+            ".diff_chg { background: #fff4ce; color: #202020; }"
+            ".diff_sub { background: #fce8e6; color: #202020; }"
             "</style></head><body>" + html + "</body></html>"
         )
         v.addWidget(browser)
