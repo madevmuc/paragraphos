@@ -266,6 +266,71 @@ def test_processors_adds_p_flag(tmp_path: Path):
     assert "-p" in cmd and cmd[cmd.index("-p") + 1] == "4"
 
 
+def test_transcribe_writes_engine_fingerprint(tmp_path: Path, monkeypatch):
+    """whisper_model is always recorded; whisper_version / model_sha256 are
+    best-effort and omitted when the detectors return None."""
+    import core.engine_version as ev
+
+    ev.reset_cache()
+    monkeypatch.setattr(ev, "get_whisper_version", lambda *_a, **_k: "whisper.cpp v1.9.9-abc")
+    monkeypatch.setattr(ev, "get_model_fingerprint", lambda *_a, **_k: "deadbeef1234")
+
+    mp3 = tmp_path / "ep.mp3"
+    mp3.write_bytes(b"x")
+    with patch("core.transcriber.subprocess.run", side_effect=_fake_whisper_ok):
+        r = transcribe_episode(
+            mp3_path=mp3,
+            output_dir=tmp_path / "out",
+            slug="s",
+            metadata={
+                "guid": "g",
+                "title": "T",
+                "show_slug": "d",
+                "pub_date": "2026-04-01",
+                "mp3_url": "u",
+            },
+            model_path=Path("/fake/ggml-large-v3-turbo.bin"),
+        )
+    body = r.md_path.read_text(encoding="utf-8")
+    assert 'whisper_version: "whisper.cpp v1.9.9-abc"' in body
+    assert 'whisper_model: "large-v3-turbo"' in body
+    assert 'model_sha256: "deadbeef1234"' in body
+    ev.reset_cache()
+
+
+def test_transcribe_engine_fingerprint_absent_when_detectors_fail(tmp_path: Path, monkeypatch):
+    """First-run scenario: whisper-cli missing + no TOFU pin yet. The
+    whisper_model key still appears (we always know it), but the other
+    two are quietly dropped."""
+    import core.engine_version as ev
+
+    ev.reset_cache()
+    monkeypatch.setattr(ev, "get_whisper_version", lambda *_a, **_k: None)
+    monkeypatch.setattr(ev, "get_model_fingerprint", lambda *_a, **_k: None)
+
+    mp3 = tmp_path / "ep.mp3"
+    mp3.write_bytes(b"x")
+    with patch("core.transcriber.subprocess.run", side_effect=_fake_whisper_ok):
+        r = transcribe_episode(
+            mp3_path=mp3,
+            output_dir=tmp_path / "out",
+            slug="s",
+            metadata={
+                "guid": "g",
+                "title": "T",
+                "show_slug": "d",
+                "pub_date": "2026-04-01",
+                "mp3_url": "u",
+            },
+            model_path=Path("/fake/ggml-large-v3-turbo.bin"),
+        )
+    body = r.md_path.read_text(encoding="utf-8")
+    assert "whisper_version:" not in body
+    assert "model_sha256:" not in body
+    assert 'whisper_model: "large-v3-turbo"' in body
+    ev.reset_cache()
+
+
 def test_default_mode_no_performance_flags(tmp_path: Path):
     mp3 = tmp_path / "ep.mp3"
     mp3.write_bytes(b"x")

@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -25,32 +26,51 @@ from PyQt6.QtWidgets import (
 
 _MODEL_DIR = Path.home() / ".config" / "open-wispr" / "models"
 
+# Sane lower bounds per whisper model (bytes). Anything less than this is
+# almost certainly a truncated/partial download — the real files from
+# huggingface are all multi-hundred-MB. Numbers are rough lower bounds
+# (~half the known ggml-*.bin size), not exact expected sizes.
+_MODEL_MIN_BYTES: dict[str, int] = {
+    "base": 70 * 1024 * 1024,  # real ~148 MB
+    "small": 200 * 1024 * 1024,  # real ~488 MB
+    "medium": 700 * 1024 * 1024,  # real ~1.5 GB
+    "large-v3": 1_400 * 1024 * 1024,  # real ~3.1 GB
+    "large-v3-turbo": 400 * 1024 * 1024,  # real ~809 MB
+}
+# Floor: below this we flag a partial download regardless of model pick.
+_MODEL_FLOOR_BYTES = 100 * 1024 * 1024
+
+
+def _model_path(name: str) -> Path:
+    return _MODEL_DIR / f"ggml-{name}.bin"
+
 
 def _model_installed(name: str) -> bool:
-    return (_MODEL_DIR / f"ggml-{name}.bin").exists()
+    return _model_path(name).exists()
+
+
+def _human_size(n: int) -> str:
+    """'1.5 GB', '340 MB', '512 KB'. Whisper models are always MB+, so
+    we don't bother with finer granularity than KB."""
+    step = 1024.0
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if n < step or unit == "TB":
+            if unit in ("B", "KB"):
+                return f"{int(n)} {unit}"
+            return f"{n:.1f} {unit}"
+        n /= step
+    return f"{n} B"  # unreachable
 
 
 def _theme_tokens() -> dict:
-    """Return the active theme's token dict — falls back to LIGHT defaults
-    if the ThemeManager hasn't been installed yet."""
-    try:
-        from ui.themes import manager
-        from ui.themes.tokens import LIGHT
+    """Backwards-compatible shim around `ui.themes.current_tokens()`.
 
-        tm = manager()
-        return tm.tokens() if tm is not None else LIGHT
-    except Exception:
-        # Last-resort fallback so settings_pane imports cleanly in tests.
-        return {
-            "accent": "#b47a3a",
-            "accent_tint": "rgba(180,122,58,0.12)",
-            "surface": "#ffffff",
-            "surface_alt": "#f4f2ee",
-            "ink": "#1a1a1a",
-            "ink_3": "#777777",
-            "line": "#d8d4cb",
-            "ok": "#4a8a5a",
-        }
+    Kept so in-file call sites don't churn, but the canonical accessor now
+    lives on `ui.themes` so every UI module can share one implementation.
+    """
+    from ui.themes import current_tokens
+
+    return current_tokens()
 
 
 def _section(title: str) -> QLabel:
@@ -224,7 +244,7 @@ class SettingsPane(QWidget):
         self.model.currentTextChanged.connect(self._on_model_changed)
         model_row.addWidget(self.model)
         self.model_status = QLabel()
-        self.model_status.setStyleSheet("color: #888; font-style: italic;")
+        self.model_status.setStyleSheet(f"color: {_theme_tokens()['ink_3']}; font-style: italic;")
         model_row.addWidget(self.model_status, stretch=1)
         self._add_field(
             f4,
@@ -279,6 +299,22 @@ class SettingsPane(QWidget):
             hint_kind="info",
         )
 
+        # Engine/model drift row — compares the fingerprint of the current
+        # whisper-cli + pinned model against the one recorded on the most
+        # recent successful transcribe.
+        self._drift_row_widget = QWidget()
+        drift_row = QHBoxLayout(self._drift_row_widget)
+        drift_row.setContentsMargins(0, 0, 0, 0)
+        self._drift_label = QLabel("")
+        self._drift_label.setWordWrap(True)
+        drift_row.addWidget(self._drift_label, stretch=1)
+        self._drift_button = QPushButton()
+        self._drift_button.setVisible(False)
+        self._drift_button.clicked.connect(self._on_retranscribe_all_clicked)
+        drift_row.addWidget(self._drift_button)
+        self._add_field(f4, "Engine/model drift", self._drift_row_widget)
+        self._refresh_drift_row()
+
         root.addLayout(f4)
 
         # ── Storage & retention ────────────────────────────────
@@ -320,7 +356,7 @@ class SettingsPane(QWidget):
 
         # ── Save indicator ─────────────────────────────────────
         self._saved_label = QLabel("")
-        self._saved_label.setStyleSheet("color: #5a8a4a; font-size: 11px;")
+        self._saved_label.setStyleSheet(f"color: {_theme_tokens()['ok']}; font-size: 11px;")
         root.addWidget(self._saved_label)
 
         # ── Automation & remote control ────────────────────────
@@ -411,33 +447,197 @@ class SettingsPane(QWidget):
         btn.setText("✓ Copied")
         QTimer.singleShot(1400, lambda: btn.setText(original))
 
+    # ── engine/model drift ────────────────────────────────────
+
+    def _current_engine_fingerprint(self) -> dict[str, str]:
+        from core.engine_version import current_fingerprint
+
+        return current_fingerprint(self.model.currentText())
+
+    def _last_transcribed_fingerprint(self) -> dict[str, str] | None:
+        """Read the stored fingerprint from state.meta, or None if never set
+        (clean install / no successful transcribes yet)."""
+        import json
+
+        blob = self.ctx.state.get_meta("last_transcribed_version")
+        if not blob:
+            return None
+        try:
+            data = json.loads(blob)
+            return data if isinstance(data, dict) else None
+        except (json.JSONDecodeError, TypeError):
+            return None
+
+    def _count_done_transcripts(self) -> int:
+        """Count episodes currently in the 'done' state — the pool that
+        a drift re-transcribe would re-queue."""
+        from core.state import EpisodeStatus
+
+        with self.ctx.state._conn() as c:
+            row = c.execute(
+                "SELECT COUNT(*) AS n FROM episodes WHERE status = ?",
+                (EpisodeStatus.DONE.value,),
+            ).fetchone()
+            return int(row["n"]) if row else 0
+
+    def _refresh_drift_row(self) -> None:
+        """Update the drift hint label + button visibility.
+
+        Gracefully no-ops when whisper-cli isn't installed yet (first-run
+        wizard unfinished): we treat that as "no signal", show an info
+        line, and hide the action button.
+        """
+        tokens = _theme_tokens()
+        current = self._current_engine_fingerprint()
+        last = self._last_transcribed_fingerprint()
+
+        # First-run / no-transcripts-yet → no drift signal to show.
+        if last is None:
+            self._drift_label.setText(
+                "ⓘ No transcripts yet — drift check will activate after the first run."
+            )
+            self._drift_label.setStyleSheet(
+                f"color: {tokens['ink_3']}; font-size: 11px; font-style: italic;"
+            )
+            self._drift_button.setVisible(False)
+            return
+
+        # If whisper-cli isn't currently available, we can't compare — say
+        # so rather than falsely claiming "all good" or "drift".
+        if "whisper_version" not in current and "whisper_version" in last:
+            self._drift_label.setText(
+                "ⓘ whisper-cli not detected — install it to enable drift checks."
+            )
+            self._drift_label.setStyleSheet(
+                f"color: {tokens['ink_3']}; font-size: 11px; font-style: italic;"
+            )
+            self._drift_button.setVisible(False)
+            return
+
+        # Compare the triple that matters. Missing keys on either side
+        # compare equal only if both are missing.
+        keys = ("whisper_version", "whisper_model", "model_sha256")
+        drifted = any(current.get(k) != last.get(k) for k in keys)
+
+        if not drifted:
+            self._drift_label.setText("✓ Engine + model match last transcribe batch")
+            self._drift_label.setStyleSheet(f"color: {tokens['ok']}; font-size: 11px;")
+            self._drift_button.setVisible(False)
+            return
+
+        n = self._count_done_transcripts()
+        self._drift_label.setText(
+            f"⚠ Engine or model upgraded since last batch "
+            f"(was {last.get('whisper_model', '?')}/"
+            f"{(last.get('model_sha256') or '?')[:8]})"
+        )
+        self._drift_label.setStyleSheet(f"color: {tokens['warn']}; font-size: 11px;")
+        self._drift_button.setText(f"Re-transcribe all ({n} transcripts)")
+        self._drift_button.setEnabled(n > 0)
+        self._drift_button.setVisible(True)
+
+    def _on_retranscribe_all_clicked(self) -> None:
+        n = self._count_done_transcripts()
+        if n == 0:
+            return
+        ans = QMessageBox.question(
+            self,
+            "Re-transcribe all?",
+            f"This will reset {n} completed transcripts back to 'pending' and "
+            f"bump their priority so they re-run on the next check. "
+            f"The existing transcripts will be overwritten. Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if ans != QMessageBox.StandardButton.Yes:
+            return
+        from core.state import EpisodeStatus
+
+        with self.ctx.state._conn() as c:
+            c.execute(
+                "UPDATE episodes SET status = ?, priority = 3 WHERE status = ?",
+                (EpisodeStatus.PENDING.value, EpisodeStatus.DONE.value),
+            )
+        # Hide the drift warning until the next successful batch updates
+        # state.meta — the user has taken action.
+        self._drift_label.setText(
+            f"✓ Queued {n} transcripts for re-transcription — they'll run on the next check."
+        )
+        tokens = _theme_tokens()
+        self._drift_label.setStyleSheet(f"color: {tokens['ok']}; font-size: 11px;")
+        self._drift_button.setVisible(False)
+
     def _on_model_changed(self, text: str) -> None:
         self._schedule_save()
         self._update_model_status()
+        self._refresh_drift_row()
         if not _model_installed(text):
             self._download_model(text)
 
     def _update_model_status(self) -> None:
         name = self.model.currentText()
-        if _model_installed(name):
-            self.model_status.setText("● installed")
-            self.model_status.setStyleSheet("color: #5a8a4a; font-style: normal;")
-        else:
+        tokens = _theme_tokens()
+        if not _model_installed(name):
             self.model_status.setText("○ not installed — will download on next use")
-            self.model_status.setStyleSheet("color: #a06030; font-style: italic;")
+            self.model_status.setStyleSheet(f"color: {tokens['ink_3']}; font-style: italic;")
+            return
+
+        path = _model_path(name)
+        try:
+            size = path.stat().st_size
+        except OSError as e:
+            self.model_status.setText(f"⚠ cannot stat model: {e}")
+            self.model_status.setStyleSheet(f"color: {tokens['danger']};")
+            return
+
+        # Look up pinned TOFU hash + pinned size (if recorded).
+        pinned_hash: str | None = None
+        pinned_size: int | None = None
+        try:
+            from core.security import get_pinned_hash, get_pinned_size
+
+            pinned_hash = get_pinned_hash(name)
+            pinned_size = get_pinned_size(name)
+        except Exception:
+            # Pin file missing/corrupt — treat as unpinned, still show size.
+            pass
+
+        min_bytes = _MODEL_MIN_BYTES.get(name, _MODEL_FLOOR_BYTES)
+        partial = size < min_bytes
+        size_drift = pinned_size is not None and size != pinned_size
+
+        size_str = _human_size(size)
+        if partial:
+            expected = _human_size(min_bytes)
+            self.model_status.setText(f"⚠ partial download · {size_str} · expected ≥{expected}")
+            self.model_status.setStyleSheet(f"color: {tokens['danger']}; font-style: normal;")
+            return
+        if size_drift:
+            expected = _human_size(pinned_size)
+            self.model_status.setText(
+                f"⚠ size drift · {size_str} · pinned at {expected} — re-verify"
+            )
+            self.model_status.setStyleSheet(f"color: {tokens['warn']}; font-style: normal;")
+            return
+
+        pin_frag = f" · pinned {pinned_hash[:8]}…" if pinned_hash else " · unpinned"
+        self.model_status.setText(f"● installed · {size_str}{pin_frag}")
+        self.model_status.setStyleSheet(f"color: {tokens['ok']}; font-style: normal;")
 
     def _download_model(self, name: str) -> None:
         from core.model_download import download_model_async
 
+        tokens = _theme_tokens()
         self.model_status.setText("⏳ downloading…")
-        self.model_status.setStyleSheet("color: #606090;")
+        self.model_status.setStyleSheet(f"color: {tokens['accent']};")
 
         def on_done(ok: bool, err: str):
             if ok:
                 self._update_model_status()
             else:
+                tk = _theme_tokens()
                 self.model_status.setText(f"✖ {err}")
-                self.model_status.setStyleSheet("color: #a04040;")
+                self.model_status.setStyleSheet(f"color: {tk['danger']};")
 
         download_model_async(name, on_done)
 

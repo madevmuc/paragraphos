@@ -5,11 +5,14 @@ Two-pass design:
 * Pass 1 — refresh feeds concurrently (ThreadPoolExecutor), persist
   manifests, size the queue, and emit ``queue_sized``.
 * Pass 2 — two cooperating QThreads drive the per-episode work:
-  ``_DownloadWorker`` downloads MP3s (with a per-host concurrency cap) and
-  pushes ``DownloadOutcome``s onto a bounded ``queue.Queue`` that provides
+  ``_DownloadPool`` fans out MP3 downloads across ``N`` worker threads
+  (``settings.download_concurrency``) subject to a per-host concurrency
+  cap (``settings.download_concurrency_per_host``), and pushes
+  ``DownloadOutcome``s onto a bounded ``queue.Queue`` that provides
   natural backpressure. ``_TranscribeWorker`` drains the queue and runs
-  whisper. The two phases overlap so the next episode is downloading while
-  the previous one is being transcribed.
+  whisper serially (it is CPU-bound). The two phases overlap so the
+  next episode is downloading while the previous one is being
+  transcribed.
 
 All outward signals emitted by ``CheckAllThread`` (``progress``,
 ``queue_sized``, ``episode_done``, ``finished_all``) are preserved exactly
@@ -43,14 +46,30 @@ from core.state import EpisodeStatus
 _SHUTDOWN = object()
 
 
-class _DownloadWorker(QThread):
-    """Pulls `pending` episodes, downloads MP3s, pushes to the transcribe queue.
+class _DownloadPool(QThread):
+    """Dispatches `pending` episodes across ``N`` download worker threads.
 
-    Blocks on ``out_q.put()`` when the queue is full — that backpressure
-    keeps disk usage bounded even when transcription is the slow phase.
-    A per-host counter (``host_counter`` + ``host_lock``) prevents more
-    than ``host_cap`` concurrent downloads against the same CDN, which
-    is important when two feeds share a podcast host.
+    The dispatcher is itself a ``QThread`` so the orchestrator can
+    ``wait()`` on it exactly like before, but the per-episode work runs
+    on plain ``threading.Thread`` workers pulling from a shared input
+    queue. A per-host counter (``host_counter`` + ``host_lock``) still
+    caps concurrent downloads against the same CDN at ``host_cap`` —
+    that used to be trivially satisfied (one download at a time) and now
+    actually throttles parallel fan-out across multi-CDN watchlists.
+
+    The first emitted progress line for a show (``# slug``) previously
+    relied on serial ordering. With parallel workers we guard the
+    "already announced" set with a lock and emit each slug at most once,
+    on whichever worker picks it up first.
+
+    End-of-stream handling: each worker decrements a shared
+    ``remaining`` counter when it exits; the worker that drops it to
+    zero pushes the single ``_SHUTDOWN`` sentinel onto the transcribe
+    queue. That keeps the transcribe-side drain logic unchanged (it
+    still breaks on exactly one sentinel).
+
+    ``out_q.put()`` blocking on a full queue still provides backpressure
+    from the (serial) transcribe phase.
     """
 
     progress = pyqtSignal(str)
@@ -65,6 +84,7 @@ class _DownloadWorker(QThread):
         host_lock,
         host_cap: int,
         stop_flag: threading.Event,
+        workers: int,
     ):
         super().__init__()
         self._pending = pending  # list[(show, ep_num, ep)]
@@ -74,10 +94,22 @@ class _DownloadWorker(QThread):
         self._host_lock = host_lock
         self._host_cap = max(int(host_cap or 1), 1)
         self._stop = stop_flag
+        self._n_workers = max(int(workers or 1), 1)
+
+        # Shared dispatcher state.
+        self._in_q: _queue.Queue = _queue.Queue()
+        self._announced: set[str] = set()
+        self._announced_lock = threading.Lock()
+        self._remaining_lock = threading.Lock()
+        self._remaining = self._n_workers
 
     def _acquire_host_slot(self, host: str) -> bool:
-        """Busy-wait (with msleep) until the host has a free slot. Returns
-        False if stop was requested while waiting."""
+        """Wait (sleeping briefly) until the host has a free slot.
+
+        Returns False if stop was requested while waiting. Called from
+        plain ``threading.Thread`` workers, so we sleep on the stop
+        event rather than calling ``QThread.msleep``.
+        """
         while True:
             if self._stop.is_set():
                 return False
@@ -85,26 +117,38 @@ class _DownloadWorker(QThread):
                 if self._host_counter[host] < self._host_cap:
                     self._host_counter[host] += 1
                     return True
-            self.msleep(100)
+            # Wake early if stop is set.
+            if self._stop.wait(0.1):
+                return False
 
     def _release_host_slot(self, host: str) -> None:
         with self._host_lock:
             self._host_counter[host] = max(0, self._host_counter[host] - 1)
 
-    def run(self) -> None:  # noqa: C901
+    def _announce_show(self, slug: str) -> None:
+        with self._announced_lock:
+            if slug in self._announced:
+                return
+            self._announced.add(slug)
+        self.progress.emit(f"# {slug}")
+
+    def _worker_loop(self) -> None:
         try:
-            current_slug = None
-            for show, ep_num, ep in self._pending:
+            while True:
                 if self._stop.is_set():
                     self.progress.emit("stopped between episodes")
-                    break
-                if show.slug != current_slug:
-                    self.progress.emit(f"# {show.slug}")
-                    current_slug = show.slug
+                    return
+                try:
+                    item = self._in_q.get_nowait()
+                except _queue.Empty:
+                    return
+                show, ep_num, ep = item
+
+                self._announce_show(show.slug)
 
                 host = urlparse(ep["mp3_url"]).netloc or "?"
                 if not self._acquire_host_slot(host):
-                    break
+                    return
                 try:
                     pctx = self._pctx_for(show)
                     self.progress.emit(f"  ↓ {ep['title'][:80]}")
@@ -114,13 +158,35 @@ class _DownloadWorker(QThread):
                 finally:
                     self._release_host_slot(host)
 
-                # Attach show/ep metadata the transcribe worker needs for
-                # progress reporting (episode_done payload).
+                # Attach show/ep metadata the transcribe worker needs
+                # for progress reporting (episode_done payload).
                 self._out_q.put((show, ep, outcome))
         finally:
-            # Always signal end-of-stream, even on exception / stop, so the
-            # transcribe worker isn't left blocked on get().
-            self._out_q.put(_SHUTDOWN)
+            # Only the last worker standing pushes the end-of-stream
+            # sentinel so the transcribe worker sees exactly one.
+            with self._remaining_lock:
+                self._remaining -= 1
+                last = self._remaining == 0
+            if last:
+                self._out_q.put(_SHUTDOWN)
+
+    def run(self) -> None:
+        # Prime the input queue once; workers drain it concurrently.
+        for item in self._pending:
+            self._in_q.put(item)
+
+        threads: list[threading.Thread] = []
+        for i in range(self._n_workers):
+            t = threading.Thread(
+                target=self._worker_loop,
+                name=f"dl-worker-{i}",
+                daemon=True,
+            )
+            t.start()
+            threads.append(t)
+
+        for t in threads:
+            t.join()
 
 
 class _TranscribeWorker(QThread):
@@ -356,7 +422,7 @@ class CheckAllThread(QThread):
         host_lock = threading.Lock()
         q: _queue.Queue = _queue.Queue(maxsize=dl_conc)
 
-        dl = _DownloadWorker(
+        dl = _DownloadPool(
             pending=all_pending,
             pctx_for=self._pctx_for,
             out_q=q,
@@ -364,6 +430,7 @@ class CheckAllThread(QThread):
             host_lock=host_lock,
             host_cap=host_cap,
             stop_flag=self._stop_event,
+            workers=dl_conc,
         )
         tr = _TranscribeWorker(
             in_q=q,

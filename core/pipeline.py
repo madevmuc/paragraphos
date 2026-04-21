@@ -175,6 +175,21 @@ def transcribe_phase(outcome: DownloadOutcome, ctx: PipelineContext) -> Pipeline
     ctx.state.record_completion(guid, result.word_count, _duration_from_srt(result.srt_path))
     ctx.state.set_status(guid, EpisodeStatus.DONE)
 
+    # Record the engine+model fingerprint of this successful transcribe so
+    # Settings can flag drift when whisper-cli or the model is upgraded.
+    try:
+        import json
+
+        from core.engine_version import current_fingerprint
+
+        ctx.state.set_meta(
+            "last_transcribed_version",
+            json.dumps(current_fingerprint(ctx.model_name)),
+        )
+    except Exception:
+        # Never let fingerprint bookkeeping break a successful transcribe.
+        pass
+
     # Retention
     if ctx.delete_mp3_after:
         try:

@@ -37,7 +37,14 @@ from PyQt6.QtWidgets import (
 )
 
 from core.stats import compute_show_stats
+from ui.prioritize import (
+    PRIORITY_RUN_NEXT,
+    PRIORITY_RUN_NOW,
+    bump_priority,
+    can_bump,
+)
 from ui.retranscribe import retranscribe_episode
+from ui.themes import current_tokens
 from ui.widgets.pill import Pill
 
 # Episode-status → Pill-kind mapping. `done` is the canonical success
@@ -130,9 +137,10 @@ class ShowDetailsDialog(QDialog):
         art = QLabel()
         art.setFixedSize(64, 64)
         art.setFrameShape(QFrame.Shape.StyledPanel)
+        _t = current_tokens()
         art.setStyleSheet(
-            "QLabel { background: palette(alternate-base);"
-            " border: 1px solid palette(mid); border-radius: 6px; }"
+            f"QLabel {{ background: {_t['surface_alt']};"
+            f" border: 1px solid {_t['line']}; border-radius: 6px; }}"
         )
         art.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # Show model has no artwork URL field in this repo; placeholder only.
@@ -155,11 +163,11 @@ class ShowDetailsDialog(QDialog):
         meta_text = f"{self.show_.slug} · {s.total} eps · {s.done} done · {s.pending} pending"
         meta = QLabel(meta_text)
         meta.setProperty("class", "muted")
-        meta.setStyleSheet("color: palette(mid); font-size: 11px;")
+        meta.setStyleSheet(f"color: {_t['ink_3']}; font-size: 11px;")
         text_col.addWidget(meta)
 
         feed = QLabel(self.show_.rss)
-        feed.setStyleSheet("color: palette(mid); font-family: Menlo, monospace; font-size: 11px;")
+        feed.setStyleSheet(f"color: {_t['ink_3']}; font-family: Menlo, monospace; font-size: 11px;")
         feed.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         text_col.addWidget(feed)
         text_col.addStretch(1)
@@ -282,13 +290,14 @@ class ShowDetailsDialog(QDialog):
         grid.addWidget(self._label("Last checked"), r, 0)
         last_checked = self._fmt_last_checked()
         self.last_checked_lbl = QLabel(last_checked)
-        self.last_checked_lbl.setStyleSheet("color: palette(mid);")
+        _t = current_tokens()
+        self.last_checked_lbl.setStyleSheet(f"color: {_t['ink_3']};")
         grid.addWidget(self.last_checked_lbl, r, 1)
         r += 1
 
         grid.addWidget(self._label("Backlog"), r, 0)
         self.backlog_lbl = QLabel(self._fmt_backlog())
-        self.backlog_lbl.setStyleSheet("color: palette(mid);")
+        self.backlog_lbl.setStyleSheet(f"color: {_t['ink_3']};")
         grid.addWidget(self.backlog_lbl, r, 1)
         r += 1
 
@@ -373,7 +382,7 @@ class ShowDetailsDialog(QDialog):
         r += 1
 
         hint = QLabel("Comma-separated hints (names, jargon, places). Improves recognition.")
-        hint.setStyleSheet("color: palette(mid); font-size: 11px;")
+        hint.setStyleSheet(f"color: {current_tokens()['ink_3']}; font-size: 11px;")
         hint.setWordWrap(True)
         inner.addWidget(hint, r, 1)
         r += 1
@@ -419,8 +428,10 @@ class ShowDetailsDialog(QDialog):
         for i, r in enumerate(rows):
             date_item = QTableWidgetItem((r["pub_date"] or "")[:10])
             date_item.setFont(QFont("Menlo"))
-            # Stash guid on the date cell — retrievable from the context menu.
+            # Stash guid + status on the date cell — retrievable from the
+            # context menu to gate priority-bump actions.
             date_item.setData(Qt.ItemDataRole.UserRole, r["guid"])
+            date_item.setData(Qt.ItemDataRole.UserRole + 1, r["status"] or "")
             tbl.setItem(i, 0, date_item)
             tbl.setItem(i, 1, QTableWidgetItem(r["title"] or ""))
             status = (r["status"] or "").lower()
@@ -455,11 +466,22 @@ class ShowDetailsDialog(QDialog):
         guid = date_item.data(Qt.ItemDataRole.UserRole)
         if not guid:
             return
+        status = date_item.data(Qt.ItemDataRole.UserRole + 1) or ""
         menu = QMenu(self)
         menu.addAction(
             "Re-transcribe this episode",
             lambda g=guid: self._retranscribe(g),
         )
+        if can_bump(status):
+            menu.addSeparator()
+            menu.addAction(
+                "Run next",
+                lambda g=guid: self._bump(g, PRIORITY_RUN_NEXT),
+            )
+            menu.addAction(
+                "Run now",
+                lambda g=guid: self._bump(g, PRIORITY_RUN_NOW),
+            )
         md_path = self._md_path_for(guid)
         if md_path is not None:
             bak = md_path.with_suffix(".md.bak")
@@ -494,6 +516,15 @@ class ShowDetailsDialog(QDialog):
         # Refresh backlog label so the user sees the bump take effect.
         self.backlog_lbl.setText(self._fmt_backlog())
 
+    def _bump(self, guid: str, priority: int) -> None:
+        bump_priority(self.ctx, guid, priority)
+        # The recent-episodes table is ordered by pub_date so a priority
+        # bump doesn't visually reorder rows here — but the backlog label
+        # (pending/failed counts) is what the user watches on this dialog,
+        # and the Queue tab (if visible elsewhere) will reorder on its
+        # next refresh.
+        self.backlog_lbl.setText(self._fmt_backlog())
+
     # ── footer ───────────────────────────────────────────────
 
     def _build_footer(self) -> QHBoxLayout:
@@ -502,7 +533,7 @@ class ShowDetailsDialog(QDialog):
 
         remove = QPushButton("Remove")
         remove.setProperty("role", "ghost")
-        remove.setStyleSheet("QPushButton { color: #b04040; }")
+        remove.setStyleSheet(f"QPushButton {{ color: {current_tokens()['danger']}; }}")
         remove.clicked.connect(self._remove)
         row.addWidget(remove)
 

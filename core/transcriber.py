@@ -44,6 +44,16 @@ MIN_WPM_GUARD = 30
 STALE_YEARS = 1
 
 
+def _model_name_from_path(model_path: Path) -> str:
+    """Reverse ``ggml-<name>.bin`` → ``<name>``.
+
+    Kept tolerant: if the caller passed a weirdly-named model file we just
+    return the stem so the fingerprint helper has *something* to key on.
+    """
+    stem = model_path.stem  # drops .bin
+    return stem[5:] if stem.startswith("ggml-") else stem
+
+
 class TranscriptionError(RuntimeError):
     pass
 
@@ -55,12 +65,20 @@ class TranscribeResult:
     word_count: int
 
 
-def _fmt_frontmatter(meta: Mapping[str, str]) -> str:
+def _fmt_frontmatter(meta: Mapping[str, str], engine: Mapping[str, str] | None = None) -> str:
     lines = ["---"]
     for key in ("guid", "show_slug", "title", "pub_date", "mp3_url"):
         v = meta.get(key, "")
         lines.append(f'{key}: "{v}"')
     lines.append(f'transcribed_at: "{datetime.now(timezone.utc).isoformat()}"')
+    # Engine fingerprint — lets the UI detect whisper/model upgrades and
+    # offer a bulk re-transcribe. Missing fields are skipped so we never
+    # write a `null`-valued line.
+    if engine:
+        for key in ("whisper_version", "whisper_model", "model_sha256"):
+            v = engine.get(key)
+            if v:
+                lines.append(f'{key}: "{v}"')
     lines.append("---")
     return "\n".join(lines) + "\n\n"
 
@@ -100,6 +118,19 @@ def transcribe_episode(
     whisper-cli's `-p N` audio-split parallelism for long episodes.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Capture engine fingerprint BEFORE spawning whisper — (1) so tests that
+    # mock subprocess.run to inspect the transcribe argv see the real
+    # transcribe call as the LAST captured invocation, not the version
+    # probe, and (2) because the version probe is cached per-process so
+    # we pay the cost at most once anyway.
+    try:
+        from core.engine_version import current_fingerprint
+
+        engine = current_fingerprint(_model_name_from_path(model_path), whisper_bin=whisper_bin)
+    except Exception:
+        engine = {}
+
     with tempfile.TemporaryDirectory() as td:
         stem = Path(td) / slug
         cmd = [
@@ -185,7 +216,10 @@ def transcribe_episode(
         md_path = output_dir / f"{slug}.md"
         srt_dest = output_dir / f"{slug}.srt"
         md_path.write_text(
-            _fmt_frontmatter(metadata) + _banner(metadata.get("pub_date", "")) + text + "\n",
+            _fmt_frontmatter(metadata, engine)
+            + _banner(metadata.get("pub_date", ""))
+            + text
+            + "\n",
             encoding="utf-8",
         )
         srt_dest.write_bytes(srt_src.read_bytes())

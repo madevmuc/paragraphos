@@ -41,6 +41,11 @@ class AppContext:
     library: LibraryIndex
     queue: QueueRunState = None  # type: ignore[assignment]
     _observer: object = None
+    # GitHub-release update info — populated asynchronously by core.updater
+    # when a newer version is detected. Used by MainWindow to show an
+    # "update available" banner with a Download button.
+    update_available_tag: str = ""
+    update_available_url: str = ""
 
     @classmethod
     def load(cls, data_dir: Path) -> "AppContext":

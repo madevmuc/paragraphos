@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import QDateTime, QLocale, Qt, QTimer
-from PyQt6.QtGui import QKeySequence, QShortcut
+from PyQt6.QtCore import QDateTime, QLocale, QSettings, Qt, QTimer, QUrl
+from PyQt6.QtGui import QDesktopServices, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QPushButton,
     QStackedWidget,
     QStatusBar,
     QVBoxLayout,
@@ -71,10 +72,50 @@ class MainWindow(QMainWindow):
         central = QWidget()
         outer = QVBoxLayout(central)
         outer.setContentsMargins(0, 0, 0, 0)
-        self.banner = QLabel()
+        # Banner is a QWidget (not a bare QLabel) so it can host an action
+        # button (Download) and a dismiss button alongside the message.
+        # Two logical states:
+        #   "compile" — transcripts newer than last wiki compile
+        #   "update"  — new Paragraphos release available
+        self.banner = QWidget()
+        self._banner_state: str = ""  # "", "compile", or "update"
+        self._update_tag: str = ""
+        self._update_url: str = ""
+        bl = QHBoxLayout(self.banner)
+        bl.setContentsMargins(12, 8, 12, 8)
+        bl.setSpacing(10)
+        self.banner_label = QLabel()
+        self.banner_label.setWordWrap(True)
+        bl.addWidget(self.banner_label, stretch=1)
+        self.banner_action_btn = QPushButton()
+        self.banner_action_btn.setVisible(False)
+        self.banner_action_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.banner_action_btn.clicked.connect(self._on_banner_action)
+        bl.addWidget(self.banner_action_btn)
+        self.banner_dismiss_btn = QPushButton("✕")
+        self.banner_dismiss_btn.setFlat(True)
+        self.banner_dismiss_btn.setFixedWidth(24)
+        self.banner_dismiss_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.banner_dismiss_btn.setToolTip("Dismiss")
+        self.banner_dismiss_btn.clicked.connect(self._dismiss_banner)
+        bl.addWidget(self.banner_dismiss_btn)
         self._apply_banner_style()
         self.banner.setVisible(False)
         outer.addWidget(self.banner)
+
+        # Re-paint the banner when the system appearance flips. The banner
+        # paints itself via inline QSS (outside the global stylesheet) so it
+        # would otherwise stick on whichever mode was active at construction.
+        try:
+            from ui.themes import manager as _theme_mgr
+
+            _tm = _theme_mgr()
+            if _tm is not None:
+                _tm.themeChanged.connect(lambda _mode: self._apply_banner_style())
+        except Exception:
+            # Manager not installed (tests) — no live updates, but the
+            # banner still paints correctly at startup.
+            pass
 
         body = QWidget()
         root = QHBoxLayout(body)
@@ -146,6 +187,8 @@ class MainWindow(QMainWindow):
             ("Ctrl+R", self.shows_tab.start_check),
             ("Ctrl+.", self.shows_tab._stop),
             ("Ctrl+L", lambda: self.log_dock.setVisible(not self.log_dock.isVisible())),
+            ("?", lambda: self._show_cheatsheet()),
+            ("Ctrl+/", lambda: self._show_cheatsheet()),
         ):
             QShortcut(
                 QKeySequence(key) if isinstance(key, str) else QKeySequence(key), self, activated=fn
@@ -173,20 +216,58 @@ class MainWindow(QMainWindow):
         self._counts_timer.start(2000)
 
     def _apply_banner_style(self) -> None:
-        """Choose banner colors that work in both light and dark macOS modes."""
-        palette_color = self.palette().window().color()
-        lightness = palette_color.lightnessF()
-        if lightness < 0.5:
-            # Dark mode: dark amber bg, soft cream text, subtle border
-            self.banner.setStyleSheet(
-                "background:#4a3f00; color:#ffe7a0; padding:8px 12px; "
-                "border:1px solid #8a6b00; border-radius:4px;"
-            )
+        """Choose banner colors that work in both light and dark macOS modes.
+
+        Colors are now derived from theme tokens so the banner tracks live
+        appearance changes (macOS Appearance flip) via the ThemeManager
+        signal — not just whatever scheme was active at window construction.
+
+        Update-available uses `accent` (ochre in light / purple in dark) so
+        it visually anchors to a different hue than the amber compile
+        reminder, which uses `warn`.
+        """
+        from ui.themes import current_tokens, manager
+
+        t = current_tokens()
+        tm = manager()
+        dark = tm.scheme() == "dark" if tm is not None else False
+        self.banner.setObjectName("appBanner")
+        if self._banner_state == "update":
+            # Accent-tinted card. Use `accent_tint` for the panel bg and
+            # `accent` for the action button; `ink` / `ink_2` keep label
+            # contrast readable in both modes.
+            bg = t["accent_tint"]
+            fg = t["ink"]
+            border = t["accent"]
+            btn_bg = t["accent"]
+            btn_fg = "#ffffff"
         else:
-            self.banner.setStyleSheet(
-                "background:#fff7d0; color:#3a2d00; padding:8px 12px; "
-                "border:1px solid #e0c870; border-radius:4px;"
-            )
+            # compile / default — warn family (amber).
+            warn = t["warn"]
+            if dark:
+                # Translucent warn wash — matches the pill_fail_bg pattern
+                # used elsewhere in the design system.
+                bg = "rgba(240, 185, 85, 0.14)"
+                fg = t["warn"]
+                border = warn
+                btn_bg = warn
+                btn_fg = t["bg"]
+            else:
+                bg = "rgba(184, 134, 74, 0.14)"
+                fg = t["ink"]
+                border = warn
+                btn_bg = warn
+                btn_fg = "#ffffff"
+        self.banner.setStyleSheet(
+            f"QWidget#appBanner {{ background:{bg}; border:1px solid {border}; "
+            f"border-radius:4px; }} "
+            f"QWidget#appBanner QLabel {{ color:{fg}; background:transparent; border:none; }} "
+            f"QWidget#appBanner QPushButton {{ color:{btn_fg}; background:{btn_bg}; "
+            f"border:none; padding:4px 10px; border-radius:3px; }} "
+            f"QWidget#appBanner QPushButton:hover {{ opacity:0.9; }} "
+            f'QWidget#appBanner QPushButton[flat="true"] {{ background:transparent; '
+            f"color:{fg}; }} "
+        )
 
     def _on_nav(self, key: str) -> None:
         idx = self._nav_index.get(key)
@@ -197,6 +278,21 @@ class MainWindow(QMainWindow):
             if hasattr(w, "refresh"):
                 w.refresh()
             self._refresh_banner()
+
+    def _show_cheatsheet(self) -> None:
+        # Toggle: re-pressing the trigger while the dialog is open closes it
+        # (handled in the dialog's keyPressEvent for `?`; for Cmd+/ we just
+        # re-open which raises the existing instance).
+        existing = getattr(self, "_cheatsheet_dlg", None)
+        if existing is not None and existing.isVisible():
+            existing.close()
+            return
+        from ui.shortcut_cheatsheet import ShortcutCheatsheet
+
+        self._cheatsheet_dlg = ShortcutCheatsheet(self)
+        self._cheatsheet_dlg.show()
+        self._cheatsheet_dlg.raise_()
+        self._cheatsheet_dlg.activateWindow()
 
     def _update_sidebar_counts(self) -> None:
         try:
@@ -216,16 +312,19 @@ class MainWindow(QMainWindow):
     def _refresh_status_bar(self) -> None:
         from datetime import datetime, timedelta
 
+        from ui.themes import current_tokens
+
+        t = current_tokens()
         q = self.ctx.queue
         if not q.running:
             paused = self.ctx.state.get_meta("queue_paused") == "1"
             if paused:
                 self.status_label.setText(
-                    "<span style='color:#a06030;'>● queue paused</span> "
+                    f"<span style='color:{t['warn']};'>● queue paused</span> "
                     "— click Start on any tab to resume"
                 )
             else:
-                self.status_label.setText("<span style='color:#888;'>● idle</span>")
+                self.status_label.setText(f"<span style='color:{t['ink_3']};'>● idle</span>")
             return
         elapsed = (datetime.now() - q.started_at).total_seconds() if q.started_at else 0
         remaining = q.total - q.done
@@ -233,7 +332,7 @@ class MainWindow(QMainWindow):
         eta_sec = avg * remaining if avg else 0
         finish_at = datetime.now() + timedelta(seconds=eta_sec) if eta_sec else None
         parts = [
-            "<span style='color:#4a7aa0;'>● running</span>",
+            f"<span style='color:{t['accent']};'>● running</span>",
             f"<b>{q.done}/{q.total}</b>",
         ]
         if q.started_at:
@@ -249,8 +348,17 @@ class MainWindow(QMainWindow):
         self.status_label.setText(" · ".join(parts))
 
     def _refresh_banner(self) -> None:
+        # Update-available takes priority over the wiki-compile reminder —
+        # a new release is a one-click action the user cares about more.
+        tag = getattr(self.ctx, "update_available_tag", "") or self._update_tag
+        url = getattr(self.ctx, "update_available_url", "") or self._update_url
+        if tag and url and not self._is_update_dismissed(tag):
+            self._show_update_state(tag, url)
+            return
+
         output_root = Path(self.ctx.settings.output_root).expanduser()
         if not output_root.exists():
+            self._banner_state = ""
             self.banner.setVisible(False)
             return
         last_compiled_mtime = 0.0
@@ -264,10 +372,60 @@ class MainWindow(QMainWindow):
             if md.stat().st_mtime > last_compiled_mtime:
                 new_count += 1
         if new_count > 0:
-            self.banner.setText(
+            self._banner_state = "compile"
+            self.banner_label.setText(
                 f"📝 {new_count} transcripts newer than last wiki compile "
                 f"— run the 'Compile' workflow in Claude to pull them into the wiki."
             )
+            self.banner_action_btn.setVisible(False)
+            self._apply_banner_style()
             self.banner.setVisible(True)
         else:
+            self._banner_state = ""
             self.banner.setVisible(False)
+
+    # ---------- update-available banner ----------
+
+    def show_update_banner(self, tag: str, url: str) -> None:
+        """Public hook: called from ParagraphosApp when core.updater
+        detects a newer GitHub release. Idempotent — storing the (tag, url)
+        on the window + AppContext so banner survives tab navigation."""
+        self._update_tag = tag
+        self._update_url = url
+        self.ctx.update_available_tag = tag
+        self.ctx.update_available_url = url
+        self._refresh_banner()
+
+    def _show_update_state(self, tag: str, url: str) -> None:
+        self._banner_state = "update"
+        self._update_tag = tag
+        self._update_url = url
+        self.banner_label.setText(
+            f"⬆️  Paragraphos {tag} is available — you're on v{self._local_version()}."
+        )
+        self.banner_action_btn.setText(f"Download {tag}")
+        self.banner_action_btn.setVisible(True)
+        self._apply_banner_style()
+        self.banner.setVisible(True)
+
+    @staticmethod
+    def _local_version() -> str:
+        from core.version import VERSION
+
+        return VERSION
+
+    def _on_banner_action(self) -> None:
+        if self._banner_state == "update" and self._update_url:
+            QDesktopServices.openUrl(QUrl(self._update_url))
+
+    def _dismiss_banner(self) -> None:
+        if self._banner_state == "update" and self._update_tag:
+            # Persist per-tag so the next release re-surfaces the banner.
+            s = QSettings("madevmuc", "Paragraphos")
+            s.setValue("updater/dismissed_tag", self._update_tag)
+        self.banner.setVisible(False)
+        self._banner_state = ""
+
+    def _is_update_dismissed(self, tag: str) -> bool:
+        s = QSettings("madevmuc", "Paragraphos")
+        return s.value("updater/dismissed_tag", "", type=str) == tag
