@@ -20,6 +20,7 @@ from core.version import VERSION
 APP = ["app.py"]
 OPTIONS = {
     "argv_emulation": False,
+    "iconfile": "assets/AppIcon.icns",
     "plist": {
         "CFBundleName": "Paragraphos",
         "CFBundleDisplayName": "Paragraphos",

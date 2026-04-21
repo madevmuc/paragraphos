@@ -516,6 +516,12 @@ def _is_descendant(widget, ancestor) -> bool:
 def main() -> int:
     qapp = ParagraphosQApplication(sys.argv)
     qapp.setQuitOnLastWindowClosed(False)
+
+    # App / dock / window icon — bundled AppIcon.icns.
+    _icon_path = Path(__file__).resolve().parent / "assets" / "AppIcon.icns"
+    if _icon_path.exists():
+        qapp.setWindowIcon(QIcon(str(_icon_path)))
+
     # Install the theme manager BEFORE any widget construction — widgets
     # subscribe to its themeChanged signal at __init__ time.
     from ui.themes import install_manager
