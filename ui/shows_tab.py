@@ -213,12 +213,20 @@ class ShowsTab(QWidget):
             self.table.setItem(row, 3, QTableWidgetItem(str(total)))
             self.table.setItem(row, 4, QTableWidgetItem(str(done)))
             self.table.setItem(row, 5, QTableWidgetItem(str(pend)))
-            # Feed column hosts a Pill widget (starts idle "?"); filled in
-            # on demand by _check_feed_health.
+            # Feed column hosts a Pill widget. Seed its state from the
+            # last recorded feed_health meta (written by backoff.on_success
+            # / on_failure during any check run); falls back to "?" if no
+            # check has run yet for this show.
             pill_container = QWidget()
             h = QHBoxLayout(pill_container)
             h.setContentsMargins(2, 2, 2, 2)
-            pill = Pill("?", kind="idle")
+            stored = self.ctx.state.get_meta(f"feed_health:{show.slug}") or ""
+            if stored == "ok":
+                pill = Pill("ok", kind="ok")
+            elif stored == "fail":
+                pill = Pill("fail", kind="fail")
+            else:
+                pill = Pill("?", kind="idle")
             h.addWidget(pill)
             self.table.setCellWidget(row, FEED_COL, pill_container)
             self._feed_pills[show.slug] = pill

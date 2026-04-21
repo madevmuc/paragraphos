@@ -16,6 +16,9 @@ _THRESHOLD = 3
 def on_success(state, slug: str) -> None:
     state.set_meta(f"feed_fail_count:{slug}", "0")
     state.set_meta(f"feed_backoff_until:{slug}", "")
+    # Record health so the Shows-tab Feed column can render without a
+    # separate health sweep.
+    state.set_meta(f"feed_health:{slug}", "ok")
 
 
 def on_failure(state, slug: str) -> int:
@@ -27,6 +30,7 @@ def on_failure(state, slug: str) -> int:
         days = _STAGES_DAYS[stage_idx]
         until = datetime.now(timezone.utc) + timedelta(days=days)
         state.set_meta(f"feed_backoff_until:{slug}", until.isoformat())
+    state.set_meta(f"feed_health:{slug}", "fail")
     return count
 
 
