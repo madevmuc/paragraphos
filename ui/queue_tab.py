@@ -90,7 +90,13 @@ class QueueTab(QWidget):
                 "Finish ≈",
             ]
         )
-        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        _hdr = self.table.horizontalHeader()
+        _hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        # Columns whose value width depends on content (e.g. 'transcribing
+        # · 42%' for status, 'h:mm:ss' for long audio) should auto-fit so
+        # the live % isn't clipped mid-render.
+        for _col in (0, 1, 2, 4, 5, 6, 7):
+            _hdr.setSectionResizeMode(_col, QHeaderView.ResizeMode.ResizeToContents)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._on_context_menu)
         v.addWidget(self.table)
