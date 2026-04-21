@@ -37,6 +37,12 @@ from PyQt6.QtWidgets import (
 )
 
 from core.stats import compute_show_stats
+from ui.prioritize import (
+    PRIORITY_RUN_NEXT,
+    PRIORITY_RUN_NOW,
+    bump_priority,
+    can_bump,
+)
 from ui.retranscribe import retranscribe_episode
 from ui.widgets.pill import Pill
 
@@ -419,8 +425,10 @@ class ShowDetailsDialog(QDialog):
         for i, r in enumerate(rows):
             date_item = QTableWidgetItem((r["pub_date"] or "")[:10])
             date_item.setFont(QFont("Menlo"))
-            # Stash guid on the date cell — retrievable from the context menu.
+            # Stash guid + status on the date cell — retrievable from the
+            # context menu to gate priority-bump actions.
             date_item.setData(Qt.ItemDataRole.UserRole, r["guid"])
+            date_item.setData(Qt.ItemDataRole.UserRole + 1, r["status"] or "")
             tbl.setItem(i, 0, date_item)
             tbl.setItem(i, 1, QTableWidgetItem(r["title"] or ""))
             status = (r["status"] or "").lower()
@@ -455,11 +463,22 @@ class ShowDetailsDialog(QDialog):
         guid = date_item.data(Qt.ItemDataRole.UserRole)
         if not guid:
             return
+        status = date_item.data(Qt.ItemDataRole.UserRole + 1) or ""
         menu = QMenu(self)
         menu.addAction(
             "Re-transcribe this episode",
             lambda g=guid: self._retranscribe(g),
         )
+        if can_bump(status):
+            menu.addSeparator()
+            menu.addAction(
+                "Run next",
+                lambda g=guid: self._bump(g, PRIORITY_RUN_NEXT),
+            )
+            menu.addAction(
+                "Run now",
+                lambda g=guid: self._bump(g, PRIORITY_RUN_NOW),
+            )
         md_path = self._md_path_for(guid)
         if md_path is not None:
             bak = md_path.with_suffix(".md.bak")
@@ -492,6 +511,15 @@ class ShowDetailsDialog(QDialog):
     def _retranscribe(self, guid: str) -> None:
         retranscribe_episode(self.ctx, guid)
         # Refresh backlog label so the user sees the bump take effect.
+        self.backlog_lbl.setText(self._fmt_backlog())
+
+    def _bump(self, guid: str, priority: int) -> None:
+        bump_priority(self.ctx, guid, priority)
+        # The recent-episodes table is ordered by pub_date so a priority
+        # bump doesn't visually reorder rows here — but the backlog label
+        # (pending/failed counts) is what the user watches on this dialog,
+        # and the Queue tab (if visible elsewhere) will reorder on its
+        # next refresh.
         self.backlog_lbl.setText(self._fmt_backlog())
 
     # ── footer ───────────────────────────────────────────────

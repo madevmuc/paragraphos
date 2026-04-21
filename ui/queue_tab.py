@@ -17,6 +17,12 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ui.prioritize import (
+    PRIORITY_RUN_NEXT,
+    PRIORITY_RUN_NOW,
+    bump_priority,
+    can_bump,
+)
 from ui.retranscribe import retranscribe_episode
 from ui.widgets.queue_hero import QueueHero
 
@@ -234,7 +240,7 @@ class QueueTab(QWidget):
                 "SELECT show_slug, pub_date, title, status, guid "
                 "FROM episodes "
                 "WHERE status IN ('pending','downloading','downloaded','transcribing') "
-                "ORDER BY status DESC, pub_date DESC LIMIT 500"
+                "ORDER BY status DESC, priority DESC, pub_date DESC LIMIT 500"
             ).fetchall()
         self.table.setRowCount(0)
         for r in rows:
@@ -262,16 +268,37 @@ class QueueTab(QWidget):
         guid = item.data(Qt.ItemDataRole.UserRole)
         if not guid:
             return
+        status_item = self.table.item(index.row(), 4)
+        status = status_item.text() if status_item is not None else ""
         menu = QMenu(self)
         menu.addAction(
             "Re-transcribe this episode",
             lambda g=guid: self._retranscribe(g),
         )
+        if can_bump(status):
+            menu.addSeparator()
+            menu.addAction(
+                "Run next",
+                lambda g=guid: self._bump(g, PRIORITY_RUN_NEXT),
+            )
+            menu.addAction(
+                "Run now",
+                lambda g=guid: self._bump(g, PRIORITY_RUN_NOW),
+            )
         menu.exec(self.table.viewport().mapToGlobal(pos))
 
     def _retranscribe(self, guid: str) -> None:
         retranscribe_episode(self.ctx, guid)
         self.refresh()
+
+    def _bump(self, guid: str, priority: int) -> None:
+        bump_priority(self.ctx, guid, priority)
+        # Force a full rebuild so the new sort order is reflected immediately,
+        # bypassing the 3-second refresh coalescing.
+        import time
+
+        self._last_table_refresh = time.monotonic()
+        self._refresh_table()
 
 
 def _fmt_duration(sec: float) -> str:
