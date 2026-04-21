@@ -214,7 +214,10 @@ class MainWindow(QMainWindow):
         self._refresh_status_bar()
 
         self._refresh_banner()
-        self.resize(1100, 720)
+        # Restore last-session window size from QSettings; fall back to
+        # 95% of the primary screen for first launch. Store on close so
+        # the next run reopens at the same dimensions.
+        self._restore_geometry()
 
         # Sidebar counts: once at startup, then periodically so they stay
         # fresh after checks finish, retries, etc.
@@ -222,6 +225,37 @@ class MainWindow(QMainWindow):
         self._counts_timer = QTimer(self)
         self._counts_timer.timeout.connect(self._update_sidebar_counts)
         self._counts_timer.start(2000)
+
+    def _restore_geometry(self) -> None:
+        """Re-open at last-session size/position; default 95% of screen."""
+        from PyQt6.QtCore import QSettings
+        from PyQt6.QtGui import QGuiApplication
+
+        qs = QSettings("madevmuc", "Paragraphos")
+        saved = qs.value("window/geometry")
+        if saved:
+            try:
+                self.restoreGeometry(saved)
+                return
+            except Exception:
+                pass
+        # First launch — fill 95% of the available screen area.
+        screen = QGuiApplication.primaryScreen()
+        if screen is None:
+            self.resize(1100, 720)
+            return
+        avail = screen.availableGeometry()
+        w = int(avail.width() * 0.95)
+        h = int(avail.height() * 0.95)
+        self.resize(w, h)
+        # Centre on screen.
+        self.move(avail.x() + (avail.width() - w) // 2, avail.y() + (avail.height() - h) // 2)
+
+    def closeEvent(self, event) -> None:  # noqa: N802 — Qt override
+        from PyQt6.QtCore import QSettings
+
+        QSettings("madevmuc", "Paragraphos").setValue("window/geometry", self.saveGeometry())
+        super().closeEvent(event)
 
     def _apply_banner_style(self) -> None:
         """Choose banner colors that work in both light and dark macOS modes.
