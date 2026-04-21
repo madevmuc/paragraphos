@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -67,6 +67,32 @@ _LANGUAGES = [
     ("中文", "zh"),
     ("Auto-detect", "auto"),
 ]
+
+
+class _FeedMetadataThread(QThread):
+    """Short-lived worker: fetches RSS channel metadata off the UI thread.
+
+    Emits `ok(dict)` on success or `err(str)` on failure. The dialog owns the
+    instance (kept as `self._metadata_thread`) so it isn't GC'd mid-flight.
+    """
+
+    ok = pyqtSignal(dict)
+    err = pyqtSignal(str)
+
+    def __init__(self, url: str, timeout: float = 15.0, parent=None):
+        super().__init__(parent)
+        self._url = url
+        self._timeout = timeout
+
+    def run(self) -> None:  # noqa: D401 — QThread entry
+        from core.rss import feed_metadata
+
+        try:
+            meta = feed_metadata(self._url, timeout=self._timeout)
+        except Exception as exc:  # noqa: BLE001 — surfaced via signal
+            self.err.emit(str(exc))
+            return
+        self.ok.emit(meta or {})
 
 
 class ShowDetailsDialog(QDialog):
@@ -126,7 +152,7 @@ class ShowDetailsDialog(QDialog):
         text_col.addWidget(title)
 
         s = compute_show_stats(self.ctx.state, self.slug)
-        meta_text = f"{self.show_.slug} · {s.total} eps · " f"{s.done} done · {s.pending} pending"
+        meta_text = f"{self.show_.slug} · {s.total} eps · {s.done} done · {s.pending} pending"
         meta = QLabel(meta_text)
         meta.setProperty("class", "muted")
         meta.setStyleSheet("color: palette(mid); font-size: 11px;")
@@ -150,27 +176,33 @@ class ShowDetailsDialog(QDialog):
         return row
 
     def _refresh_from_feed(self) -> None:
-        """Pull channel metadata from the feed URL and update editable fields.
+        """Pull channel metadata off-thread and update editable fields.
 
-        Runs synchronously on the UI thread — feed_metadata is a short HEAD-
-        plus-parse hop and the alternative (a throwaway QThread) buys little
-        here. The button is disabled while the request is in flight.
+        `feed_metadata` can block up to 15 s on slow CDNs, which would freeze
+        the dialog if run on the UI thread. We spin up a short-lived
+        `_FeedMetadataThread` and apply the result (or surface the error) in
+        slots that run back on the UI thread.
         """
-        from core.rss import feed_metadata
+        # Guard against double-click while a previous refresh is still
+        # in-flight.
+        existing = getattr(self, "_metadata_thread", None)
+        if existing is not None and existing.isRunning():
+            return
 
         self._refresh_btn.setEnabled(False)
         self._refresh_btn.setText("Fetching…")
-        try:
-            meta = feed_metadata(self.rss_edit.text().strip(), timeout=15.0)
-        except Exception as exc:
-            QMessageBox.warning(
-                self,
-                "Refresh failed",
-                f"Could not fetch feed metadata:\n{exc}",
-            )
-            self._refresh_btn.setEnabled(True)
-            self._refresh_btn.setText("Refresh from feed")
-            return
+
+        thread = _FeedMetadataThread(self.rss_edit.text().strip(), timeout=15.0, parent=self)
+        thread.ok.connect(self._on_refresh_ok)
+        thread.err.connect(self._on_refresh_err)
+        # Drop the reference once the thread is finished so we can start a new
+        # one on the next click.
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(lambda: setattr(self, "_metadata_thread", None))
+        self._metadata_thread = thread
+        thread.start()
+
+    def _on_refresh_ok(self, meta: dict) -> None:
         # Apply — only overwrite fields the feed actually supplied.
         title_changed = False
         if meta.get("title") and meta["title"] != self._title_edit.text():
@@ -186,9 +218,36 @@ class ShowDetailsDialog(QDialog):
             self._advanced_box.setChecked(True)
         self._refresh_btn.setEnabled(True)
         self._refresh_btn.setText("✓ Refreshed")
-        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(1400, self._reset_refresh_btn_label)
 
-        QTimer.singleShot(1400, lambda: self._refresh_btn.setText("Refresh from feed"))
+    def _on_refresh_err(self, message: str) -> None:
+        QMessageBox.warning(
+            self,
+            "Refresh failed",
+            f"Could not fetch feed metadata:\n{message}",
+        )
+        self._refresh_btn.setEnabled(True)
+        self._refresh_btn.setText("Refresh from feed")
+
+    def _reset_refresh_btn_label(self) -> None:
+        # Guarded: dialog may have been closed before the QTimer fires.
+        if self._refresh_btn is not None:
+            self._refresh_btn.setText("Refresh from feed")
+
+    def closeEvent(self, event) -> None:  # noqa: N802 — Qt override
+        """Ensure any in-flight metadata fetch is reaped before the dialog dies."""
+        thread = getattr(self, "_metadata_thread", None)
+        if thread is not None and thread.isRunning():
+            # Disconnect slots so the thread's result can't touch a widget
+            # that's being torn down.
+            try:
+                thread.ok.disconnect()
+                thread.err.disconnect()
+            except (TypeError, RuntimeError):
+                pass
+            thread.quit()
+            thread.wait(2000)
+        super().closeEvent(event)
 
     # ── form grid ────────────────────────────────────────────
 
@@ -313,7 +372,7 @@ class ShowDetailsDialog(QDialog):
         inner.addWidget(self._whisper_prompt_edit, r, 1)
         r += 1
 
-        hint = QLabel("Comma-separated hints (names, jargon, places). " "Improves recognition.")
+        hint = QLabel("Comma-separated hints (names, jargon, places). Improves recognition.")
         hint.setStyleSheet("color: palette(mid); font-size: 11px;")
         hint.setWordWrap(True)
         inner.addWidget(hint, r, 1)
