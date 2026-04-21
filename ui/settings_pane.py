@@ -217,6 +217,16 @@ class SettingsPane(QWidget):
             hint="recommended — runs immediately on wake if a check was missed",
             hint_kind="good",
         )
+        self.auto_start = QCheckBox()
+        self.auto_start.setChecked(self.ctx.settings.auto_start_queue)
+        self.auto_start.stateChanged.connect(self._schedule_save)
+        self._add_field(
+            f2,
+            "Auto-start queue on launch",
+            self.auto_start,
+            hint="start checking + transcribing automatically when you open Paragraphos",
+            hint_kind="good",
+        )
         root.addLayout(f2)
 
         # ── Notifications ──────────────────────────────────────
@@ -679,6 +689,7 @@ class SettingsPane(QWidget):
         s.output_root = self.output.text()
         s.daily_check_time = self.time.time().toString("HH:mm")
         s.catch_up_missed = self.catchup.isChecked()
+        s.auto_start_queue = self.auto_start.isChecked()
         s.notify_on_success = self.notify.isChecked()
         s.mp3_retention_days = self.retention.value()
         s.delete_mp3_after_transcribe = self.del_mp3.isChecked()
