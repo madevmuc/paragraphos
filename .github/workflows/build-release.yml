@@ -4,14 +4,20 @@ on:
   push:
     tags: ['v*']
 
+# softprops/action-gh-release needs contents:write to generate release
+# notes via the GitHub API. Without this the workflow errors with
+# "Resource not accessible by integration" on the notes endpoint.
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
@@ -28,7 +34,7 @@ jobs:
         run: ./scripts/build-dmg.sh "${GITHUB_REF_NAME#v}"
 
       - name: Upload release artefact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: Paragraphos-dmg-${{ github.ref_name }}
           path: dist/*.dmg
