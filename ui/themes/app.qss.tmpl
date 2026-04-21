@@ -130,10 +130,18 @@ QLabel[class="heading"] {{ font-size: 14px; font-weight: 600; color: {ink}; }}
     color: {ink};
     font-weight: 500;
 }}
+/* Count chip: force transparent background so it inherits the row's
+   active-state tint. Qt paints QLabel with an opaque palette(window)
+   fill by default, which in dark mode reads as a black box on top of
+   the accent-tint selected row. */
+#SidebarItem QLabel {{
+    background: transparent;
+}}
 #SidebarItem QLabel.count {{
     font-family: Menlo, Monaco, 'SF Mono', monospace;
     font-size: 11px;
     color: {ink_3};
+    background: transparent;
 }}
 
 /* Queue hero card */
