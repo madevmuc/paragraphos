@@ -528,22 +528,20 @@ class ShowDetailsDialog(QDialog):
         inner.addWidget(self._language_combo, r, 1)
         r += 1
 
-        inner.addWidget(self._label("Whisper prompt"), r, 0)
-        # Stack the edit + its hint in a sub-layout so the hint can't
-        # overlap the text edit when rows collapse.
-        prompt_col = QVBoxLayout()
-        prompt_col.setContentsMargins(0, 0, 0, 0)
-        prompt_col.setSpacing(3)
+        # Whisper-prompt edit occupies its own row; the hint sits as a
+        # standalone row below it in column 1 only. This avoids the
+        # sub-VBox variant whose wrapping widget underreported its
+        # height to the grid and let the hint draw on top of the edit.
+        inner.addWidget(self._label("Whisper prompt"), r, 0, Qt.AlignmentFlag.AlignTop)
         self._whisper_prompt_edit = QPlainTextEdit(self.show_.whisper_prompt or "")
         self._whisper_prompt_edit.setFixedHeight(80)
-        prompt_col.addWidget(self._whisper_prompt_edit)
+        inner.addWidget(self._whisper_prompt_edit, r, 1)
+        r += 1
+
         hint = QLabel("Comma-separated hints (names, jargon, places). Improves recognition.")
         hint.setStyleSheet(f"color: {current_tokens()['ink_3']}; font-size: 11px;")
         hint.setWordWrap(True)
-        prompt_col.addWidget(hint)
-        prompt_wrap = QWidget()
-        prompt_wrap.setLayout(prompt_col)
-        inner.addWidget(prompt_wrap, r, 1)
+        inner.addWidget(hint, r, 1)
         r += 1
 
         # Collapse/expand children when the group is toggled. Widgets added
