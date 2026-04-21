@@ -75,6 +75,7 @@ def _build_icon() -> QIcon:
 
 class ParagraphosApp(QObject):
     notify = pyqtSignal(str, str, str)  # title, subtitle, body
+    update_available = pyqtSignal(str, str)  # tag, html_url — GUI-thread safe
 
     def __init__(self) -> None:
         super().__init__()
@@ -84,15 +85,14 @@ class ParagraphosApp(QObject):
         self._run_tally: dict[str, object] = {}
 
         # Non-blocking update check against GitHub releases. Runs in a
-        # daemon thread; surfaces a one-shot tray notification if newer.
+        # daemon thread; emit through a signal so the UI sees it on the GUI
+        # thread regardless of where the HTTP callback fires.
         from core.updater import check_for_update
 
+        self.update_available.connect(self._on_update_available)
         check_for_update(
             local_version=_LOCAL_VERSION,
-            on_update_available=lambda tag, url: self.tray.showMessage(
-                "Paragraphos update available",
-                f"{tag} is out — you have v{_LOCAL_VERSION}. Click to open the release page.",
-            ),
+            on_update_available=lambda tag, url: self.update_available.emit(tag, url),
             repo=self.ctx.settings.github_repo,
         )
 
@@ -170,6 +170,20 @@ class ParagraphosApp(QObject):
         )
         self.tray.setContextMenu(self._tray_menu)
 
+    def _on_update_available(self, tag: str, url: str) -> None:
+        """GUI-thread receiver for the updater's async callback. Stores
+        the (tag, url) on AppContext so any later-opened MainWindow can
+        still find it, surfaces an in-window banner with a Download button,
+        and fires a one-shot tray notification."""
+        self.ctx.update_available_tag = tag
+        self.ctx.update_available_url = url
+        if self._window is not None:
+            self._window.show_update_banner(tag, url)
+        self.tray.showMessage(
+            "Paragraphos update available",
+            f"{tag} is out — you have v{_LOCAL_VERSION}. Click the Download button in the window.",
+        )
+
     def _on_theme_changed(self, _mode: str) -> None:
         """Re-render the tray icon so its glyph color flips with the
         menu-bar appearance. Cheap — just re-draws a 22/44 px pixmap.
@@ -194,6 +208,12 @@ class ParagraphosApp(QObject):
             # existed, hand the thread over so the Stop button works.
             if self._thread and self._thread.isRunning():
                 self._window.shows_tab.attach_external_thread(self._thread)
+            # If an update was detected before the window existed, surface
+            # the banner now that there's a window to show it in.
+            if self.ctx.update_available_tag and self.ctx.update_available_url:
+                self._window.show_update_banner(
+                    self.ctx.update_available_tag, self.ctx.update_available_url
+                )
         self._window.show()
         self._window.raise_()
         self._window.activateWindow()
