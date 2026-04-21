@@ -329,7 +329,14 @@ class MainWindow(QMainWindow):
         elapsed = (datetime.now() - q.started_at).total_seconds() if q.started_at else 0
         remaining = q.total - q.done
         avg = q.effective_avg_sec
-        eta_sec = avg * remaining if avg else 0
+        # Prefer duration-based ETA (pending audio × realtime factor) to
+        # match Queue hero + Queue tab header. Falls back to the legacy
+        # episode-count × avg path when no duration data is available.
+        duration_eta = q.duration_based_eta_sec
+        if duration_eta > 0:
+            eta_sec = duration_eta
+        else:
+            eta_sec = avg * remaining if avg else 0
         finish_at = datetime.now() + timedelta(seconds=eta_sec) if eta_sec else None
         parts = [
             f"<span style='color:{t['accent']};'>● running</span>",
