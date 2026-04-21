@@ -1,8 +1,12 @@
 """Render the tray icon as a live `done/total` fraction during a run.
 
 Idle: `P` glyph. Running: draws `3/12` (or current counter) into a
-22×22 / 44×44 pixmap via QPainter. Dark-mode detection via
-QApplication.palette().windowText() lightness.
+22×22 / 44×44 pixmap via QPainter.
+
+Menu-bar appearance is **independent of app theme** — a light-mode app
+can be running under a dark menu bar (rare) or vice-versa. The handoff
+is explicit: source of truth is `QGuiApplication.styleHints().colorScheme()`,
+not `palette(windowText)` or the window theme.
 """
 
 from __future__ import annotations
@@ -10,8 +14,7 @@ from __future__ import annotations
 from typing import Optional
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtGui import QColor, QFont, QGuiApplication, QIcon, QPainter, QPixmap
 
 
 class IconRenderer:
@@ -19,14 +22,16 @@ class IconRenderer:
         self._base = base_size
 
     def _fg(self) -> QColor:
-        # On macOS the menu-bar icon tints against the current appearance.
-        # Use palette windowText lightness as a proxy; dark text in light
-        # mode, light text in dark mode.
-        app = QApplication.instance()
-        if app is None:
-            return QColor(30, 30, 30)
-        c = app.palette().windowText().color()
-        return c
+        """Near-black on a light menu bar, near-white on a dark one.
+
+        Uses `styleHints().colorScheme()` — the menu bar always follows
+        the system appearance even if individual apps force a theme
+        override. Values from handoff lines 162–164.
+        """
+        scheme = QGuiApplication.styleHints().colorScheme()
+        if scheme == Qt.ColorScheme.Dark:
+            return QColor(0xEC, 0xEC, 0xEC)
+        return QColor(0x1A, 0x1A, 0x1A)
 
     def _draw(self, text: str, pm: QPixmap) -> None:
         pm.fill(QColor(0, 0, 0, 0))

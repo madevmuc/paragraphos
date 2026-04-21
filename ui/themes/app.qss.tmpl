@@ -1,0 +1,166 @@
+/* Paragraphos — shared QSS template.
+ *
+ * Rendered at runtime via str.format_map against LIGHT or DARK from
+ * ui/themes/tokens.py. Every {{placeholder}} must correspond to a key
+ * in both token dicts (see ui/themes/tokens.py) — missing keys raise
+ * KeyError at load_qss time, which is loud on purpose.
+ *
+ * Spacing, font sizes and radii stay in-line rather than tokenised —
+ * they don't flip with theme.
+ */
+
+/* Global baseline — give every widget the right bg/fg so unstyled
+ * surfaces don't inherit the default light palette in dark mode. */
+QWidget {{
+    background: {bg};
+    color: {ink};
+}}
+
+/* Menus keep the native translucent look — macOS renders them. */
+QMenu {{
+    background: {surface};
+    color: {ink};
+    border: 1px solid {line};
+}}
+QMenu::item:selected {{
+    background: {accent_tint};
+    color: {ink};
+}}
+
+/* Inputs */
+QLineEdit, QPlainTextEdit, QTextEdit, QSpinBox, QComboBox {{
+    background: {surface};
+    color: {ink};
+    border: 1px solid {line};
+    border-radius: 5px;
+    padding: 3px 6px;
+    selection-background-color: {accent_tint};
+    selection-color: {ink};
+}}
+QComboBox::drop-down {{ border: none; }}
+
+/* Tables — keep native row selection, tweak grid color so it is visible
+ * on the dark bg. */
+QTableView, QTableWidget, QTreeView, QListView {{
+    background: {surface};
+    alternate-background-color: {surface_alt};
+    color: {ink};
+    gridline-color: {line_soft};
+    border: 1px solid {line};
+    border-radius: 6px;
+    selection-background-color: {accent_tint};
+    selection-color: {ink};
+}}
+QHeaderView::section {{
+    background: {surface_alt};
+    color: {ink_2};
+    border: none;
+    border-bottom: 1px solid {line};
+    padding: 4px 8px;
+}}
+
+/* Buttons — native unless role-tagged. */
+QPushButton {{
+    background: {surface};
+    color: {ink};
+    border: 1px solid {line};
+    border-radius: 5px;
+    padding: 4px 10px;
+}}
+QPushButton:hover {{ background: {surface_alt}; }}
+QPushButton:disabled {{ color: {ink_3}; }}
+
+QPushButton[role="primary"] {{
+    background: {accent};
+    color: #ffffff;
+    border: 1px solid {accent};
+    border-radius: 5px;
+    padding: 4px 12px;
+    font-weight: 600;
+}}
+QPushButton[role="primary"]:hover {{ background: {accent_hover}; border-color: {accent_hover}; }}
+QPushButton[role="ghost"] {{
+    background: transparent;
+    color: {ink};
+    border: 1px solid {line};
+    border-radius: 5px;
+    padding: 4px 12px;
+}}
+
+/* Pills — one QSS row per kind, pulling from pill_* tokens. */
+QLabel#Pill {{
+    padding: 2px 8px;
+    border-radius: 5px;
+    font-size: 11px;
+    font-weight: 500;
+    background: {pill_idle_bg};
+    color: {pill_idle_fg};
+}}
+QLabel#Pill[kind="ok"]       {{ background: {pill_ok_bg};      color: {pill_ok_fg}; }}
+QLabel#Pill[kind="running"]  {{ background: {pill_running_bg}; color: {pill_running_fg}; }}
+QLabel#Pill[kind="fail"]     {{ background: {pill_fail_bg};    color: {pill_fail_fg}; }}
+QLabel#Pill[kind="idle"]     {{ background: {pill_idle_bg};    color: {pill_idle_fg}; }}
+
+/* Mini-labels / muted / heading / mono helpers. */
+QLabel[class="mini-label"] {{
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    color: {ink_3};
+    text-transform: uppercase;
+}}
+QLabel[class="mono"] {{
+    font-family: Menlo, Monaco, 'SF Mono', monospace;
+}}
+QLabel[class="muted"] {{ color: {ink_3}; }}
+QLabel[class="heading"] {{ font-size: 14px; font-weight: 600; color: {ink}; }}
+
+/* Sidebar */
+#Sidebar {{
+    background: {surface_alt};
+    border-right: 1px solid {line};
+}}
+#SidebarItem {{
+    padding: 6px 10px;
+    border-radius: 5px;
+    color: {ink};
+}}
+#SidebarItem[active="true"] {{
+    background: {accent_tint};
+    color: {ink};
+    font-weight: 500;
+}}
+#SidebarItem QLabel.count {{
+    font-family: Menlo, Monaco, 'SF Mono', monospace;
+    font-size: 11px;
+    color: {ink_3};
+}}
+
+/* Queue hero card */
+QFrame#QueueHeroCard {{
+    background: {surface};
+    border: 1.5px solid {line};
+    border-radius: 10px;
+    padding: 14px;
+}}
+
+/* Menu-bar tray progress strip — used inside the QWidgetAction. */
+QProgressBar#TrayProgress {{
+    border: none;
+    background: {line_soft};
+    border-radius: 3px;
+}}
+QProgressBar#TrayProgress::chunk {{
+    background: {accent};
+    border-radius: 3px;
+}}
+
+/* Always-dark panels — log viewer, first-run terminal strip. */
+QPlainTextEdit#TerminalPanel, QTextEdit#TerminalPanel, QLabel#TerminalPanel {{
+    background: {terminal_bg};
+    color: {terminal_fg};
+    border: 1px solid {line};
+    border-radius: 6px;
+    font-family: Menlo, Monaco, 'SF Mono', monospace;
+    font-size: 11px;
+}}
