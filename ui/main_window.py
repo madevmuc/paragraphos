@@ -184,7 +184,7 @@ class MainWindow(QMainWindow):
         # QShortcuts guarantee they work even when no menu-item is focused).
         for key, fn in (
             (QKeySequence.StandardKey.Preferences, lambda: self._on_nav("settings")),
-            ("Ctrl+R", self.shows_tab.start_check),
+            ("Ctrl+R", lambda: self.shows_tab.start_check(force=True)),
             ("Ctrl+.", self.shows_tab._stop),
             ("Ctrl+L", lambda: self.log_dock.setVisible(not self.log_dock.isVisible())),
             ("?", lambda: self._show_cheatsheet()),

@@ -272,12 +272,25 @@ class CheckAllThread(QThread):
     queue_sized = pyqtSignal(int)
     finished_all = pyqtSignal()
 
-    def __init__(self, ctx, settings: Settings, *, only_slug: str | None = None, limit: int = 0):
+    def __init__(
+        self,
+        ctx,
+        settings: Settings,
+        *,
+        only_slug: str | None = None,
+        limit: int = 0,
+        force: bool = False,
+    ):
         super().__init__()
         self.ctx = ctx
         self.settings = settings
         self.only_slug = only_slug
         self.limit = limit
+        # force=True bypasses the per-feed backoff filter in pass 1a so a
+        # user-initiated Start click can retry a parked feed immediately.
+        # Scheduler / background callers leave this False so the 1/3/7-day
+        # backoff still protects against hammering broken feeds.
+        self.force = force
         self._stop = False
         self._stop_event = threading.Event()
 
@@ -319,7 +332,7 @@ class CheckAllThread(QThread):
         for show in targets:
             if self._stop:
                 break
-            if backoff.in_backoff(self.ctx.state, show.slug):
+            if not self.force and backoff.in_backoff(self.ctx.state, show.slug):
                 self.progress.emit(f"skip {show.slug} (in backoff after repeated feed failures)")
                 continue
             if self.ctx.state.get_meta(f"show_paused:{show.slug}") == "1":

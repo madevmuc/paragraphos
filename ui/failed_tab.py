@@ -211,4 +211,4 @@ class FailedTab(QWidget):
         # MainWindow exposes .shows_tab, go through it so Stop button wires up.
         win = self.window()
         if hasattr(win, "shows_tab") and not self.ctx.queue.running:
-            win.shows_tab.start_check()
+            win.shows_tab.start_check(force=True)

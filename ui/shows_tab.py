@@ -317,16 +317,25 @@ class ShowsTab(QWidget):
         self.refresh()
 
     def _check(self, only_slug: str | None = None):
-        self.start_check(only_slug=only_slug or None)
+        # Any call routed through _check comes from a user-visible control
+        # (toolbar "Check" button, per-row action, keyboard shortcut) —
+        # treat those as "I said retry now" and bypass feed backoff.
+        self.start_check(only_slug=only_slug or None, force=True)
 
-    def start_check(self, *, only_slug: str | None = None) -> bool:
+    def start_check(self, *, only_slug: str | None = None, force: bool = False) -> bool:
         """Public entry: start a check and update button state.
+
+        ``force=True`` bypasses per-feed backoff — pass it for user-initiated
+        starts (toolbar button, tray "Check now", keyboard shortcut). The
+        scheduler path leaves it False so parked feeds stay parked until
+        their backoff window expires.
+
         Returns False if another check is already running."""
         from ui.worker_thread import CheckAllThread
 
         if self._thread and self._thread.isRunning():
             return False
-        self._thread = CheckAllThread(self.ctx, self.ctx.settings, only_slug=only_slug)
+        self._thread = CheckAllThread(self.ctx, self.ctx.settings, only_slug=only_slug, force=force)
         self._thread.progress.connect(self._log)
         self._thread.queue_sized.connect(self._on_queue_sized)
         self._thread.episode_done.connect(self._on_ep_done)
@@ -401,7 +410,7 @@ class ShowsTab(QWidget):
     def _resume(self):
         self.ctx.state.set_meta("queue_paused", "0")
         self._log("queue resumed — starting check…")
-        self.start_check()
+        self.start_check(force=True)
 
     def _check_done(self):
         self.stop_btn.setEnabled(False)

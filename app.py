@@ -164,7 +164,7 @@ class ParagraphosApp(QObject):
             current_title=current_title,
             eta_sec=eta_sec,
             on_open=self.open_window,
-            on_check_now=self._run_check,
+            on_check_now=lambda: self._run_check(force=True),
             on_import_opml=self._import_opml,
             on_quit=self.quit_with_confirm,
         )
@@ -219,15 +219,21 @@ class ParagraphosApp(QObject):
         self._window.activateWindow()
 
     def _run_check_on_gui_thread(self) -> None:
+        # Scheduled fire (APScheduler cron) — keep force=False so parked
+        # feeds stay parked until their 1/3/7-day backoff window expires.
         QTimer.singleShot(0, self._run_check)
 
-    def _run_check(self) -> None:
+    def _run_check(self, *, force: bool = False) -> None:
         # If the window exists, delegate to ShowsTab.start_check() — that path
         # wires the Stop button correctly. Otherwise fall back to owning the
         # thread ourselves (e.g. a scheduler firing before the user opens the
         # window).
+        #
+        # ``force`` only propagates meaningfully to user-initiated entry
+        # points (tray "Check now"). Scheduler / startup catch-up call this
+        # with the default False so feed backoff is respected.
         if self._window is not None:
-            started = self._window.shows_tab.start_check()
+            started = self._window.shows_tab.start_check(force=force)
             if not started:
                 self.tray.showMessage("Paragraphos", "A check is already running.")
                 return
@@ -236,7 +242,7 @@ class ParagraphosApp(QObject):
             if self._thread and self._thread.isRunning():
                 self.tray.showMessage("Paragraphos", "A check is already running.")
                 return
-            self._thread = CheckAllThread(self.ctx, self.ctx.settings)
+            self._thread = CheckAllThread(self.ctx, self.ctx.settings, force=force)
             self._thread.start()
         # Whatever the source, connect app-level notification hooks.
         self._thread.episode_done.connect(self._on_episode_done)
