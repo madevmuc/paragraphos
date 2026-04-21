@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [main]
 
+# Opt every JS action in this workflow into the Node 24 runtime.
+# Silences the "Node 20 deprecated" warning on any transitive action
+# that hasn't bumped its runs.using yet.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   test:
     runs-on: macos-14
