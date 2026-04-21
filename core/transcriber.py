@@ -98,6 +98,9 @@ def _banner(pub_date_str: str) -> str:
     return banner + "\n"
 
 
+_WHISPER_TS = __import__("re").compile(r"\[\s*(\d+):(\d+):(\d+)\.\d+\s*-->\s*\d+:\d+:\d+\.\d+\s*\]")
+
+
 def transcribe_episode(
     *,
     mp3_path: Path,
@@ -110,6 +113,7 @@ def transcribe_episode(
     model_path: Path = MODEL_PATH,
     fast_mode: bool = False,
     processors: int = 1,
+    progress_cb=None,
 ) -> TranscribeResult:
     """Run whisper-cli once and produce <output_dir>/<slug>.md and .srt.
 
@@ -154,22 +158,82 @@ def transcribe_episode(
             cmd += ["-p", str(processors)]
         if whisper_prompt:
             cmd += ["--prompt", whisper_prompt]
-        try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=WHISPER_TIMEOUT_SEC,
-            )
-        except subprocess.TimeoutExpired as te:
-            # whisper-cli occasionally hangs on corrupt audio. Don't let it
-            # block the whole queue for hours. subprocess.run will have
-            # killed the child already.
-            raise TranscriptionError(
-                f"whisper-cli timed out after {WHISPER_TIMEOUT_SEC}s  "
-                f"mp3={mp3_path.name}  slug={slug!r}\n"
-                f"  partial stderr: {(te.stderr or b'')[-300:]!r}"
-            ) from te
+        if progress_cb is None:
+            # Fast path — classic blocking subprocess.run. Existing
+            # tests mock subprocess.run to return a canned result; keep
+            # this branch intact so test fixtures stay valid.
+            try:
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=WHISPER_TIMEOUT_SEC,
+                )
+            except subprocess.TimeoutExpired as te:
+                raise TranscriptionError(
+                    f"whisper-cli timed out after {WHISPER_TIMEOUT_SEC}s  "
+                    f"mp3={mp3_path.name}  slug={slug!r}\n"
+                    f"  partial stderr: {(te.stderr or b'')[-300:]!r}"
+                ) from te
+        else:
+            # Streaming path — used by the GUI pipeline so the Queue tab
+            # can render a live % for the transcribing row. whisper-cli
+            # emits the `[HH:MM:SS.xxx --> …]` segment lines on STDOUT;
+            # fold stderr into stdout (stderr=STDOUT) so a single loop
+            # sees everything and we avoid the classic "parent blocks
+            # reading one pipe while child blocks writing the other"
+            # deadlock that killed the first cut of this.
+            import time as _time
+
+            out_tail: list[str] = []
+            try:
+                proc = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                )
+            except OSError as oe:
+                raise TranscriptionError(f"whisper-cli launch failed: {oe}") from oe
+
+            start = _time.monotonic()
+            try:
+                assert proc.stdout is not None
+                for line in proc.stdout:
+                    out_tail.append(line)
+                    if len(out_tail) > 400:
+                        del out_tail[: len(out_tail) - 400]
+                    m = _WHISPER_TS.search(line)
+                    if m:
+                        h, mi, s = (int(x) for x in m.groups())
+                        try:
+                            progress_cb(h * 3600 + mi * 60 + s)
+                        except Exception:
+                            pass
+                    if _time.monotonic() - start > WHISPER_TIMEOUT_SEC:
+                        proc.kill()
+                        raise TranscriptionError(
+                            f"whisper-cli timed out after {WHISPER_TIMEOUT_SEC}s  "
+                            f"mp3={mp3_path.name}  slug={slug!r}\n"
+                            f"  partial output: {''.join(out_tail)[-300:]!r}"
+                        )
+                proc.wait(timeout=30)
+            except subprocess.TimeoutExpired as te:
+                proc.kill()
+                raise TranscriptionError(
+                    f"whisper-cli timed out after {WHISPER_TIMEOUT_SEC}s  "
+                    f"mp3={mp3_path.name}  slug={slug!r}\n"
+                    f"  partial output: {''.join(out_tail)[-300:]!r}"
+                ) from te
+
+            class _R:
+                pass
+
+            result = _R()
+            result.returncode = proc.returncode
+            result.stdout = "".join(out_tail)
+            result.stderr = result.stdout  # merged; same buffer for error msgs
         if result.returncode != 0:
             raise TranscriptionError(
                 f"whisper-cli exit {result.returncode}  "
