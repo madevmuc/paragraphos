@@ -1,6 +1,6 @@
 # Paragraphos Changelog
 
-## v1.1.1 — 2026-04-21 (live progress + UX polish)
+## v1.1.2 — 2026-04-21 (live progress + UX polish)
 
 ### Queue & transcription
 - **Live transcribe %** — whisper-cli's segment timestamps are tailed
