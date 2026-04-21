@@ -131,7 +131,12 @@ class MainWindow(QMainWindow):
         for key, label in (("settings", "Settings"), ("logs", "Logs"), ("about", "About")):
             self.sidebar.add_item(key, label)
         self.sidebar.finish()
-        self.sidebar.set_active("shows")
+        # Default landing tab: Queue if there's work pending (so the
+        # user sees progress immediately), otherwise Shows. Computed
+        # below in _initial_tab — this early call is safe because it
+        # only reads the state DB, not any widget.
+        self._initial_tab_key = self._initial_tab()
+        self.sidebar.set_active(self._initial_tab_key)
         self.sidebar.navigate.connect(self._on_nav)
         root.addWidget(self.sidebar)
 
@@ -162,6 +167,9 @@ class MainWindow(QMainWindow):
             "logs": 4,
             "about": 5,
         }
+        # Honour the landing-tab choice — sidebar highlight was set
+        # earlier; now point the stack at the matching page.
+        self.stack.setCurrentIndex(self._nav_index[self._initial_tab_key])
         root.addWidget(self.stack, stretch=1)
 
         outer.addWidget(body, stretch=1)
@@ -268,6 +276,20 @@ class MainWindow(QMainWindow):
             f'QWidget#appBanner QPushButton[flat="true"] {{ background:transparent; '
             f"color:{fg}; }} "
         )
+
+    def _initial_tab(self) -> str:
+        """Pick the landing tab based on queue state. Returns a sidebar
+        key — 'queue' if any non-terminal episode exists, else 'shows'.
+        Failures (DB missing, fresh install) fall through to 'shows'."""
+        try:
+            with self.ctx.state._conn() as c:
+                n = c.execute(
+                    "SELECT COUNT(*) FROM episodes "
+                    "WHERE status IN ('pending','downloading','downloaded','transcribing')"
+                ).fetchone()[0]
+        except Exception:
+            return "shows"
+        return "queue" if n else "shows"
 
     def _on_nav(self, key: str) -> None:
         idx = self._nav_index.get(key)
