@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -310,6 +311,22 @@ class SettingsPane(QWidget):
             hint_kind="info",
         )
 
+        # Engine/model drift row — compares the fingerprint of the current
+        # whisper-cli + pinned model against the one recorded on the most
+        # recent successful transcribe.
+        self._drift_row_widget = QWidget()
+        drift_row = QHBoxLayout(self._drift_row_widget)
+        drift_row.setContentsMargins(0, 0, 0, 0)
+        self._drift_label = QLabel("")
+        self._drift_label.setWordWrap(True)
+        drift_row.addWidget(self._drift_label, stretch=1)
+        self._drift_button = QPushButton()
+        self._drift_button.setVisible(False)
+        self._drift_button.clicked.connect(self._on_retranscribe_all_clicked)
+        drift_row.addWidget(self._drift_button)
+        self._add_field(f4, "Engine/model drift", self._drift_row_widget)
+        self._refresh_drift_row()
+
         root.addLayout(f4)
 
         # ── Storage & retention ────────────────────────────────
@@ -442,9 +459,130 @@ class SettingsPane(QWidget):
         btn.setText("✓ Copied")
         QTimer.singleShot(1400, lambda: btn.setText(original))
 
+    # ── engine/model drift ────────────────────────────────────
+
+    def _current_engine_fingerprint(self) -> dict[str, str]:
+        from core.engine_version import current_fingerprint
+
+        return current_fingerprint(self.model.currentText())
+
+    def _last_transcribed_fingerprint(self) -> dict[str, str] | None:
+        """Read the stored fingerprint from state.meta, or None if never set
+        (clean install / no successful transcribes yet)."""
+        import json
+
+        blob = self.ctx.state.get_meta("last_transcribed_version")
+        if not blob:
+            return None
+        try:
+            data = json.loads(blob)
+            return data if isinstance(data, dict) else None
+        except (json.JSONDecodeError, TypeError):
+            return None
+
+    def _count_done_transcripts(self) -> int:
+        """Count episodes currently in the 'done' state — the pool that
+        a drift re-transcribe would re-queue."""
+        from core.state import EpisodeStatus
+
+        with self.ctx.state._conn() as c:
+            row = c.execute(
+                "SELECT COUNT(*) AS n FROM episodes WHERE status = ?",
+                (EpisodeStatus.DONE.value,),
+            ).fetchone()
+            return int(row["n"]) if row else 0
+
+    def _refresh_drift_row(self) -> None:
+        """Update the drift hint label + button visibility.
+
+        Gracefully no-ops when whisper-cli isn't installed yet (first-run
+        wizard unfinished): we treat that as "no signal", show an info
+        line, and hide the action button.
+        """
+        tokens = _theme_tokens()
+        current = self._current_engine_fingerprint()
+        last = self._last_transcribed_fingerprint()
+
+        # First-run / no-transcripts-yet → no drift signal to show.
+        if last is None:
+            self._drift_label.setText(
+                "ⓘ No transcripts yet — drift check will activate after the first run."
+            )
+            self._drift_label.setStyleSheet(
+                f"color: {tokens['ink_3']}; font-size: 11px; font-style: italic;"
+            )
+            self._drift_button.setVisible(False)
+            return
+
+        # If whisper-cli isn't currently available, we can't compare — say
+        # so rather than falsely claiming "all good" or "drift".
+        if "whisper_version" not in current and "whisper_version" in last:
+            self._drift_label.setText(
+                "ⓘ whisper-cli not detected — install it to enable drift checks."
+            )
+            self._drift_label.setStyleSheet(
+                f"color: {tokens['ink_3']}; font-size: 11px; font-style: italic;"
+            )
+            self._drift_button.setVisible(False)
+            return
+
+        # Compare the triple that matters. Missing keys on either side
+        # compare equal only if both are missing.
+        keys = ("whisper_version", "whisper_model", "model_sha256")
+        drifted = any(current.get(k) != last.get(k) for k in keys)
+
+        if not drifted:
+            self._drift_label.setText("✓ Engine + model match last transcribe batch")
+            self._drift_label.setStyleSheet(f"color: {tokens['ok']}; font-size: 11px;")
+            self._drift_button.setVisible(False)
+            return
+
+        n = self._count_done_transcripts()
+        self._drift_label.setText(
+            f"⚠ Engine or model upgraded since last batch "
+            f"(was {last.get('whisper_model', '?')}/"
+            f"{(last.get('model_sha256') or '?')[:8]})"
+        )
+        self._drift_label.setStyleSheet("color: #a06030; font-size: 11px;")
+        self._drift_button.setText(f"Re-transcribe all ({n} transcripts)")
+        self._drift_button.setEnabled(n > 0)
+        self._drift_button.setVisible(True)
+
+    def _on_retranscribe_all_clicked(self) -> None:
+        n = self._count_done_transcripts()
+        if n == 0:
+            return
+        ans = QMessageBox.question(
+            self,
+            "Re-transcribe all?",
+            f"This will reset {n} completed transcripts back to 'pending' and "
+            f"bump their priority so they re-run on the next check. "
+            f"The existing transcripts will be overwritten. Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if ans != QMessageBox.StandardButton.Yes:
+            return
+        from core.state import EpisodeStatus
+
+        with self.ctx.state._conn() as c:
+            c.execute(
+                "UPDATE episodes SET status = ?, priority = 3 WHERE status = ?",
+                (EpisodeStatus.PENDING.value, EpisodeStatus.DONE.value),
+            )
+        # Hide the drift warning until the next successful batch updates
+        # state.meta — the user has taken action.
+        self._drift_label.setText(
+            f"✓ Queued {n} transcripts for re-transcription — they'll run on the next check."
+        )
+        tokens = _theme_tokens()
+        self._drift_label.setStyleSheet(f"color: {tokens['ok']}; font-size: 11px;")
+        self._drift_button.setVisible(False)
+
     def _on_model_changed(self, text: str) -> None:
         self._schedule_save()
         self._update_model_status()
+        self._refresh_drift_row()
         if not _model_installed(text):
             self._download_model(text)
 
