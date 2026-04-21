@@ -77,8 +77,19 @@ class QueueTab(QWidget):
         self._refresh_tuning_hint()
 
         # Table of pending episodes
-        self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(["Show", "Pub Date", "Ep#", "Title", "Status"])
+        self.table = QTableWidget(0, 8)
+        self.table.setHorizontalHeaderLabels(
+            [
+                "Show",
+                "Pub Date",
+                "Ep#",
+                "Title",
+                "Status",
+                "Audio",
+                "Whisper",
+                "Finish ≈",
+            ]
+        )
         self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._on_context_menu)
@@ -291,9 +302,17 @@ class QueueTab(QWidget):
         return " · ".join(parts)
 
     def _refresh_table(self) -> None:
+        from datetime import datetime, timedelta
+
+        from core.stats import realtime_factor
+
+        rtf = realtime_factor(self.ctx.state)
+        cumulative_wall = 0.0  # seconds already committed above this row
+        now = datetime.now()
+
         with self.ctx.state._conn() as c:
             rows = c.execute(
-                "SELECT show_slug, pub_date, title, status, guid "
+                "SELECT show_slug, pub_date, title, status, guid, duration_sec "
                 "FROM episodes "
                 "WHERE status IN ('pending','downloading','downloaded','transcribing') "
                 # Active stages first (transcribing → downloaded →
@@ -324,6 +343,23 @@ class QueueTab(QWidget):
             self.table.setItem(row, 2, QTableWidgetItem(""))  # episode_number not in state
             self.table.setItem(row, 3, QTableWidgetItem(r["title"]))
             self.table.setItem(row, 4, QTableWidgetItem(r["status"]))
+
+            # Audio length (mm:ss or h:mm:ss)
+            dur_sec = int(r["duration_sec"] or 0)
+            self.table.setItem(row, 5, QTableWidgetItem(_fmt_hms(dur_sec) if dur_sec else "—"))
+            # Whisper wall-clock estimate (audio × realtime_factor)
+            whisper_sec = int(dur_sec * rtf) if dur_sec else 0
+            self.table.setItem(
+                row, 6, QTableWidgetItem(_fmt_hms(whisper_sec) if whisper_sec else "—")
+            )
+            # Finish ≈ — cumulative, so row N reflects "done after all
+            # earlier rows in the queue have finished".
+            if whisper_sec:
+                cumulative_wall += whisper_sec
+                finish_at = now + timedelta(seconds=cumulative_wall)
+                self.table.setItem(row, 7, QTableWidgetItem(_fmt_finish(finish_at)))
+            else:
+                self.table.setItem(row, 7, QTableWidgetItem("—"))
 
     # ── context menu ──────────────────────────────────────────
 
@@ -379,3 +415,25 @@ def _fmt_duration(sec: float) -> str:
     h = sec // 3600
     m = (sec % 3600) // 60
     return f"{h}h {m}m"
+
+
+def _fmt_hms(sec: int) -> str:
+    """Compact mm:ss for <1h, h:mm:ss otherwise."""
+    sec = max(0, int(sec))
+    h, rem = divmod(sec, 3600)
+    m, s = divmod(rem, 60)
+    if h:
+        return f"{h}:{m:02d}:{s:02d}"
+    return f"{m}:{s:02d}"
+
+
+def _fmt_finish(dt) -> str:
+    """HH:MM today; 'Mon HH:MM' when future day."""
+    from datetime import datetime
+
+    now = datetime.now()
+    if dt.date() == now.date():
+        return dt.strftime("%H:%M")
+    if (dt.date() - now.date()).days < 7:
+        return dt.strftime("%a %H:%M")
+    return dt.strftime("%b %d %H:%M")
