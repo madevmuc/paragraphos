@@ -123,7 +123,15 @@ class QueueHero(QWidget):
         elapsed = (now - started).total_seconds()
         avg = q.effective_avg_sec
         remaining = max(0, q.total - q.done)
-        eta_sec = avg * remaining if avg else 0
+        # Prefer duration-based ETA (pending audio × realtime factor) —
+        # more accurate than episode-count × avg when show episode
+        # lengths vary. Falls back to the legacy avg path for empty
+        # duration data (e.g. freshly imported feeds).
+        duration_eta = q.duration_based_eta_sec
+        if duration_eta > 0:
+            eta_sec = duration_eta
+        else:
+            eta_sec = avg * remaining if avg else 0
         finish = now + timedelta(seconds=eta_sec) if eta_sec else None
 
         def set_stat(key, value, sub=""):

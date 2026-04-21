@@ -24,12 +24,26 @@ class QueueRunState:
     historical_avg_sec: float = 0.0  # fallback before 1st live episode
     last_episode_title: str = ""
     last_episode_show: str = ""
+    # Duration-based ETA — summed audio seconds still to transcribe + the
+    # realtime factor (wall-clock / audio) for historical runs. Queue ETA
+    # = remaining_audio_sec * realtime_factor, which beats "episodes × avg"
+    # because shows have wildly different episode lengths.
+    remaining_audio_sec: int = 0
+    realtime_factor: float = 0.25
 
     @property
     def effective_avg_sec(self) -> float:
         """Best available estimate per episode — live rolling avg if we have
         one, historical DB average otherwise."""
         return self.avg_sec_per_episode or self.historical_avg_sec
+
+    @property
+    def duration_based_eta_sec(self) -> float:
+        """Remaining wall-clock time based on pending audio × realtime factor.
+        Returns 0 when we have no duration data (falls back to episode-avg)."""
+        if self.remaining_audio_sec <= 0 or self.realtime_factor <= 0:
+            return 0.0
+        return self.remaining_audio_sec * self.realtime_factor
 
 
 @dataclass
