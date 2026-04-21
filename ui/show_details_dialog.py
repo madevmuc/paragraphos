@@ -546,10 +546,19 @@ class ShowDetailsDialog(QDialog):
 
         # Collapse/expand children when the group is toggled. Widgets added
         # at this point are direct children of `box`; layout recalcs on
-        # visibility change.
+        # visibility change. Also grow / shrink the dialog so the expanded
+        # Advanced block doesn't collide with the episodes table below —
+        # the prompt edit's 80-px fixed height pushed the grid past the
+        # 560-px default and Qt squeezed rows into overlap.
         def _toggle(expanded: bool):
             for child in box.findChildren(QWidget):
                 child.setVisible(expanded)
+            # Grow vertically on expand; shrink back on collapse. Width
+            # stays put.
+            cur = self.size()
+            target_h = 760 if expanded else 560
+            if cur.height() != target_h:
+                self.resize(cur.width(), target_h)
 
         box.toggled.connect(_toggle)
         _toggle(False)
