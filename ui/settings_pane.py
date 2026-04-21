@@ -24,6 +24,28 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+
+class _FieldContainer(QWidget):
+    """Wrapper that propagates heightForWidth from its child layout up
+    to QFormLayout so wrapped hint labels don't get clipped by a row
+    height sized against the one-line sizeHint."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        sp = QSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+        sp.setHeightForWidth(True)
+        self.setSizePolicy(sp)
+
+    def hasHeightForWidth(self) -> bool:
+        return True
+
+    def heightForWidth(self, w: int) -> int:
+        lay = self.layout()
+        if lay is None:
+            return super().heightForWidth(w)
+        return lay.heightForWidth(w)
+
+
 _MODEL_DIR = Path.home() / ".config" / "open-wispr" / "models"
 
 # Sane lower bounds per whisper model (bytes). Anything less than this is
@@ -75,9 +97,13 @@ def _theme_tokens() -> dict:
 
 def _section(title: str) -> QLabel:
     lbl = QLabel(f"<b>{title}</b>")
+    tokens = _theme_tokens()
+    # Use primary ink so headlines are readable on both light and dark
+    # backgrounds (palette(mid) was too close to the window bg in dark
+    # mode). Border stays muted to keep the divider subtle.
     lbl.setStyleSheet(
-        "padding:10px 0 4px 0; color:palette(mid); "
-        "border-bottom:1px solid palette(mid); margin-top:8px;"
+        f"padding:10px 0 4px 0; color:{tokens['ink']}; font-size:13px; "
+        f"border-bottom:1px solid {tokens['line']}; margin-top:8px;"
     )
     return lbl
 
@@ -686,10 +712,7 @@ class SettingsPane(QWidget):
         if hint is None:
             form.addRow(label, widget)
             return
-        container = QWidget()
-        # Make sure the container reports its full height back to
-        # QFormLayout; otherwise wrapped hint labels overlap the next row.
-        container.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.MinimumExpanding)
+        container = _FieldContainer()
         v = QVBoxLayout(container)
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(2)
@@ -697,7 +720,11 @@ class SettingsPane(QWidget):
         prefix = "✓ " if hint_kind == "good" else "ⓘ "
         h = QLabel(prefix + hint)
         h.setWordWrap(True)
-        h.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.MinimumExpanding)
+        # Critical for QFormLayout: report height-for-width so wrapped
+        # hints don't get clipped by a row height sized for one line.
+        sp = QSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+        sp.setHeightForWidth(True)
+        h.setSizePolicy(sp)
         # Pull colors from the theme token dict — inline hex was invisible /
         # too dim in dark mode because Qt palette roles don't track our
         # ThemeManager.

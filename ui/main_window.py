@@ -373,9 +373,13 @@ class MainWindow(QMainWindow):
                 new_count += 1
         if new_count > 0:
             self._banner_state = "compile"
+            # Vendor-neutral copy: users run any AI coding assistant
+            # (Claude Code, Gemini CLI, Cursor, Copilot CLI, etc.) —
+            # don't assume Claude.
             self.banner_label.setText(
                 f"📝 {new_count} transcripts newer than last wiki compile "
-                f"— run the 'Compile' workflow in Claude to pull them into the wiki."
+                f"— run your AI assistant's 'Compile' workflow "
+                f"to pull them into the wiki."
             )
             self.banner_action_btn.setVisible(False)
             self._apply_banner_style()
