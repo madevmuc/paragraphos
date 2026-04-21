@@ -776,32 +776,16 @@ class SettingsPane(QWidget):
     # ── hint text ─────────────────────────────────────────────
 
     def _hw_detect(self):
-        """Return (mem_gb: float|None, perf_cores: int|None). None on detect failure."""
-        import subprocess
+        """Return (mem_gb, perf_cores) — delegates to core.hw."""
+        from core.hw import detect
 
-        try:
-            mem_bytes = int(
-                subprocess.check_output(["sysctl", "-n", "hw.memsize"]).decode().strip()
-            )
-            ncpu = int(
-                subprocess.check_output(["sysctl", "-n", "hw.perflevel0.physicalcpu"])
-                .decode()
-                .strip()
-            )
-        except Exception:
-            return (None, None)
-        return (mem_bytes / (1024**3), ncpu)
+        return detect()
 
     def _hw_recommendation_value(self) -> int:
         """Numeric worker count to seed the spinner (1-N)."""
-        mem_gb, ncpu = self._hw_detect()
-        if mem_gb is None or ncpu is None:
-            return 1
-        if mem_gb < 16:
-            return 1
-        if mem_gb <= 32 and ncpu >= 8:
-            return 2
-        return 3
+        from core.hw import recommended_parallel_workers
+
+        return recommended_parallel_workers()
 
     def _hw_recommendation_hint(self) -> str:
         """Full hint string: '2 (16 GB RAM, 8 perf cores detected)'."""
@@ -816,16 +800,10 @@ class SettingsPane(QWidget):
         return f"  recommended: {self._hw_recommendation_hint()}"
 
     def _multiproc_recommendation_value(self) -> int:
-        """Numeric whisper-cli -p N recommendation (1-4).
+        """Numeric whisper-cli -p N recommendation — delegates to core.hw."""
+        from core.hw import recommended_multiproc_split
 
-        whisper.cpp sees diminishing returns past 4 on Apple Silicon
-        (memory-bandwidth bound). Cap at min(perf_cores // 2, 4) so we
-        keep cores free for the OS + the parallel-workers path.
-        """
-        _, ncpu = self._hw_detect()
-        if ncpu is None:
-            return 1
-        return max(1, min(ncpu // 2, 4))
+        return recommended_multiproc_split()
 
     def _multiproc_recommendation_hint(self) -> str:
         rec = self._multiproc_recommendation_value()
