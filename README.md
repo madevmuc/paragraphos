@@ -43,8 +43,21 @@ later.
 
 ## Screenshots
 
-_Screenshots here once the Phase 6 design refresh lands. For now, see
-`docs/design-handoff/_screens/` for the target UI._
+**Shows — watchlist overview**
+![Shows tab](docs/screenshots/shows-tab.png)
+
+**Queue — live transcribe dashboard**
+Hero with progress ring, per-row Audio / Whisper / Finish columns, status
+cell shows live `transcribing · X%` on the active row.
+![Queue tab](docs/screenshots/queue-tab.png)
+
+**Show details — artwork, feed refresh, recent episodes**
+![Show details](docs/screenshots/show-details.png)
+
+**Settings — hardware-aware recommendations**
+Inline hints (`✓ recommended: N (16 GB RAM, 8 perf cores detected)`),
+auto-detected on macOS via `sysctl`. Full dark-mode polish.
+![Settings](docs/screenshots/settings.png)
 
 ## Installation
 
