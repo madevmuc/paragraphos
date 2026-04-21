@@ -49,6 +49,10 @@ class Settings(BaseModel):
     output_root: str = "~/dev/knowledge-hub/raw/transcripts"
     daily_check_time: str = "09:00"
     catch_up_missed: bool = True
+    # Auto-start queue when the app launches. On by default so opening
+    # Paragraphos begins work immediately; turn off if you prefer the
+    # queue to sit idle until you click Start.
+    auto_start_queue: bool = True
     notify_on_success: bool = True
     mp3_retention_days: int = 7
     delete_mp3_after_transcribe: bool = True
