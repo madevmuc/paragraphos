@@ -293,6 +293,8 @@ class ShowsTab(QWidget):
             return
         slug = self.table.item(row, 0).text()
         menu = QMenu(self)
+        details = QAction("Details / Informationen…", self)
+        details.triggered.connect(lambda: self._open_details_by_slug(slug))
         check_only = QAction(f"Check '{slug}' now", self)
         check_only.triggered.connect(lambda: self._check(only_slug=slug))
         stale_all = QAction(f"Mark all '{slug}' episodes stale", self)
@@ -303,12 +305,21 @@ class ShowsTab(QWidget):
         pause_label = f"Resume '{slug}'" if paused else f"Pause '{slug}'"
         pause_act = QAction(pause_label, self)
         pause_act.triggered.connect(lambda: self._toggle_show_pause(slug))
+        menu.addAction(details)
+        menu.addSeparator()
         menu.addAction(check_only)
         menu.addAction(stale_all)
         menu.addAction(toggle)
         menu.addSeparator()
         menu.addAction(pause_act)
         menu.exec(self.table.viewport().mapToGlobal(pos))
+
+    def _open_details_by_slug(self, slug: str) -> None:
+        from ui.show_details_dialog import ShowDetailsDialog
+
+        dlg = ShowDetailsDialog(self.ctx, slug, self)
+        if dlg.exec():
+            self.refresh()
 
     def _toggle_show_pause(self, slug: str) -> None:
         key = f"show_paused:{slug}"
