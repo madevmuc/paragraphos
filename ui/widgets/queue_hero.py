@@ -149,9 +149,14 @@ class QueueHero(QWidget):
 
         set_stat("started", started.strftime("%H:%M"), started.strftime("%a \u00b7 %b %d, %Y"))
         set_stat("elapsed", _fmt(elapsed))
+        from core.stats import has_realtime_history
+
+        has_history = has_realtime_history(self.ctx.state)
         if avg:
             suffix = "" if q.avg_sec_per_episode else "(est.)"
             set_stat("per_ep", f"{int(avg)}s", suffix)
+        elif not has_history:
+            set_stat("per_ep", "\u2014", "after 1st run")
         else:
             set_stat("per_ep", "\u2014")
         if finish:
@@ -172,7 +177,8 @@ class QueueHero(QWidget):
                 self.ep_title.setText("")
                 self.ep_title.setToolTip("")
         else:
-            set_stat("finish", "\u2014")
+            sub = "after 1st run" if not has_history else ""
+            set_stat("finish", "\u2014", sub)
 
 
 def _fmt(sec: float) -> str:

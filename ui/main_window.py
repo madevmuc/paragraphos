@@ -450,6 +450,14 @@ class MainWindow(QMainWindow):
             parts.append(f"{tag} {_fmt_elapsed(eta_sec)}")
             if finish_at:
                 parts.append(f"finish ≈ {_fmt_dt_locale(finish_at)}")
+        else:
+            from core.stats import has_realtime_history
+
+            if not has_realtime_history(self.ctx.state):
+                parts.append(
+                    f"<span style='color:{t['ink_3']};'>ETA available once the first "
+                    "episode completes</span>"
+                )
         self.status_label.setText(" · ".join(parts))
 
     def _refresh_banner(self) -> None:

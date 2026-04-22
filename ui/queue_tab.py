@@ -300,6 +300,7 @@ class QueueTab(QWidget):
             eta_sec = avg * remaining if avg else 0
         finish_at = datetime.now() + timedelta(seconds=eta_sec) if eta_sec else None
 
+        from core.stats import has_realtime_history
         from ui.main_window import _fmt_dt_locale
 
         parts = [
@@ -314,6 +315,8 @@ class QueueTab(QWidget):
             parts.append(f"{eta_tag}: {_fmt_duration(eta_sec)}")
             if finish_at:
                 parts.append(f"finish ≈ {_fmt_dt_locale(finish_at)}")
+        elif not has_realtime_history(self.ctx.state):
+            parts.append("<i>ETA available once the first episode completes</i>")
         return " · ".join(parts)
 
     def _refresh_table(self) -> None:

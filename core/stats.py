@@ -201,6 +201,20 @@ def realtime_factor(state, *, sample_limit: int = 50) -> float:
     return total_wall / total_audio
 
 
+def has_realtime_history(state) -> bool:
+    """True iff at least one completed episode has the wall-clock + audio
+    duration we need to compute a real ETA. Lets the UI distinguish a
+    ``realtime_factor()`` return based on live data from the 0.25 fallback
+    so users aren't shown a confidently-wrong finish time on first run."""
+    with state._conn() as c:
+        row = c.execute(
+            "SELECT 1 FROM episodes "
+            "WHERE status='done' AND attempted_at IS NOT NULL "
+            "AND completed_at IS NOT NULL AND duration_sec > 0 LIMIT 1"
+        ).fetchone()
+    return row is not None
+
+
 def pending_duration_sum(state, *, show_slug: str | None = None) -> int:
     """Sum of duration_sec across pending + downloading + downloaded
     episodes — i.e. audio still to transcribe."""
