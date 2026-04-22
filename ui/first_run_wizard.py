@@ -104,6 +104,21 @@ class StepRow(QWidget):
         self._set_sub(sub)
         self.action_btn.setVisible(False)
 
+    def set_waiting(self, reason: str) -> None:
+        """Locked row: predecessor isn't ready yet. No action button."""
+        self.pill.setText("waiting")
+        self.pill.set_kind("idle")
+        self._set_sub(reason)
+        self.action_btn.setVisible(False)
+
+    def set_sub_line(self, text: str) -> None:
+        """Update only the sub-copy line — lets the brew stdout feed tick
+        without disturbing the pill state. Truncates at 80 chars so a very
+        long path doesn't blow up the row width."""
+        if len(text) > 80:
+            text = text[:77] + "…"
+        self._set_sub(text)
+
 
 class FirstRunWizard(QDialog):
     progress_sig = pyqtSignal(str, int, int)
