@@ -130,6 +130,39 @@ def test_add_yt_channel_persists_show(tmp_path, monkeypatch):
     assert yt.artwork_url == "https://example.com/cover.jpg"
 
 
+def test_resolve_thread_emits_step_signals(tmp_path, monkeypatch):
+    """The resolve thread must emit at least one `step` signal for the UI."""
+    monkeypatch.setattr("core.ytdlp.is_installed", lambda: True)
+    monkeypatch.setattr(
+        "core.youtube_meta.resolve_handle_to_channel_id",
+        lambda h: "UCabc1234567890123456789",
+    )
+    monkeypatch.setattr(
+        "core.youtube_meta.fetch_channel_preview",
+        lambda cid: {"channel_id": cid, "title": "T", "video_count": 1, "artwork_url": ""},
+    )
+    # Wrap the thread class so we can attach our spy BEFORE start() is called.
+    import ui.add_show_dialog as mod
+
+    real_cls = mod._YoutubeResolveThread
+    steps: list = []
+
+    class _Spy(real_cls):  # type: ignore[misc, valid-type]
+        def start(self, *a, **kw):  # noqa: D401
+            self.step.connect(lambda c, t, lbl: steps.append((c, t, lbl)))
+            return super().start(*a, **kw)
+
+    monkeypatch.setattr(mod, "_YoutubeResolveThread", _Spy)
+    dlg = _make_dialog(tmp_path, Settings(sources_youtube=True))
+    dlg._activate_youtube_mode()
+    dlg.youtube_url_input.setText("https://www.youtube.com/@somehandle")
+    dlg._on_youtube_url_resolve()
+    _wait_for_resolve(dlg)
+    # Handle path emits two step signals (resolve + preview).
+    assert len(steps) >= 1
+    assert hasattr(dlg, "yt_progress")
+
+
 def test_install_gate_when_ytdlp_missing(tmp_path, monkeypatch):
     monkeypatch.setattr("core.ytdlp.is_installed", lambda: False)
     dlg = _make_dialog(tmp_path, Settings(sources_youtube=True))

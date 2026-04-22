@@ -13,7 +13,7 @@ class YoutubeMetaError(RuntimeError):
     """yt-dlp returned an error or unparseable output."""
 
 
-def _run_ytdlp(args: List[str], timeout: int = 60) -> str:
+def _run_ytdlp(args: List[str], timeout: int = 120) -> str:
     if not ytdlp.is_installed():
         raise YoutubeMetaError("yt-dlp not installed")
     cmd = [str(ytdlp.ytdlp_path()), *args]
@@ -30,7 +30,8 @@ def resolve_handle_to_channel_id(handle: str) -> str:
             "--print",
             "%(channel_id)j",
             f"https://www.youtube.com/@{handle}",
-        ]
+        ],
+        timeout=120,
     )
     line = out.strip().splitlines()[0]
     parsed = json.loads(line) if line.startswith('"') else json.loads(out.strip())
@@ -48,7 +49,8 @@ def fetch_channel_preview(channel_id: str) -> Dict[str, object]:
             "0",
             "--dump-single-json",
             f"https://www.youtube.com/channel/{channel_id}",
-        ]
+        ],
+        timeout=180,
     )
     data = json.loads(out)
     thumbs = data.get("thumbnails") or []
@@ -69,5 +71,5 @@ def enumerate_channel_videos(channel_id: str, *, limit: int | None = None) -> Li
     ]
     if limit:
         args[1:1] = ["--playlist-end", str(limit)]
-    out = _run_ytdlp(args, timeout=180)
+    out = _run_ytdlp(args, timeout=300)
     return [json.loads(line) for line in out.splitlines() if line.strip()]

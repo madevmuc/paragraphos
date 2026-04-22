@@ -41,6 +41,19 @@ def test_enumerate_channel_videos_parses_flat_playlist(tmp_path, monkeypatch):
         assert vids[0]["title"] == "First"
 
 
+def test_default_timeouts_are_generous():
+    """Smoke: each public meta call must allow at least 90s for yt-dlp."""
+    import inspect
+
+    import core.youtube_meta as ym
+
+    src = inspect.getsource(ym)
+    # Bumped per-call timeouts: 120/180/300.
+    assert "timeout=120" in src
+    assert "timeout=180" in src
+    assert "timeout=300" in src
+
+
 def test_fetch_channel_preview_returns_dict(tmp_path, monkeypatch):
     _setup_fake_ytdlp(tmp_path, monkeypatch)
     payload = {

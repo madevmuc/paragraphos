@@ -6,6 +6,7 @@ seeding logic (backlog strategy, manifest upsert).
 
 from __future__ import annotations
 
+import time
 from typing import Optional
 from urllib.parse import urlparse
 
@@ -20,6 +21,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QRadioButton,
     QStackedWidget,
@@ -111,6 +113,7 @@ class _YoutubeResolveThread(QThread):
     """
 
     done = pyqtSignal(dict)  # {ok, preview, error}
+    step = pyqtSignal(int, int, str)  # (current_step, total_steps, label)
 
     def __init__(self, parsed_kind: str, parsed_value: str, parent=None):
         super().__init__(parent)
@@ -120,10 +123,12 @@ class _YoutubeResolveThread(QThread):
     def run(self) -> None:
         out: dict = {"ok": False}
         try:
+            self.step.emit(1, 2, "Resolving channel ID…")
             if self.parsed_kind == "handle":
                 cid = _youtube_meta.resolve_handle_to_channel_id(self.parsed_value)
             else:  # "channel_id"
                 cid = self.parsed_value
+            self.step.emit(2, 2, "Fetching channel info…")
             preview = _youtube_meta.fetch_channel_preview(cid)
             out.update({"ok": True, "preview": preview})
         except Exception as e:  # noqa: BLE001
@@ -838,6 +843,20 @@ class AddShowDialog(QDialog):
         self.yt_status.setVisible(False)
         v.addWidget(self.yt_status, 0, Qt.AlignmentFlag.AlignLeft)
 
+        # Indeterminate marquee — visible only while a resolve is in flight,
+        # so the user can see the app isn't frozen during the yt-dlp wait.
+        self.yt_progress = QProgressBar()
+        self.yt_progress.setRange(0, 0)
+        self.yt_progress.setTextVisible(False)
+        self.yt_progress.setVisible(False)
+        v.addWidget(self.yt_progress)
+
+        # Live-tick state for the resolve progress UI.
+        self._yt_resolve_timer: Optional[QTimer] = None
+        self._yt_resolve_started_at: float = 0.0
+        self._yt_resolve_step_label: str = ""
+        self._yt_resolve_step_idx: tuple = (0, 2)
+
         # Preview card.
         self.yt_card = QFrame()
         self.yt_card.setObjectName("YoutubePreviewCard")
@@ -939,9 +958,16 @@ class AddShowDialog(QDialog):
             self._yt_add_btn.setEnabled(False)
             return
 
-        self.yt_status.setText("Resolving (yt-dlp can take 5–30s)…")
+        # Initial status — the step signal will overwrite this almost
+        # immediately, but seed it so the user sees motion before the
+        # first emit reaches the GUI thread.
+        self._yt_resolve_started_at = time.monotonic()
+        self._yt_resolve_step_label = "Resolving channel ID…"
+        self._yt_resolve_step_idx = (1, 2)
+        self._refresh_yt_resolve_status()
         self.yt_status.set_kind("running")
         self.yt_status.setVisible(True)
+        self.yt_progress.setVisible(True)
         self._yt_add_btn.setEnabled(False)
         self._yt_resolve_btn.setEnabled(False)
         self.youtube_url_input.setEnabled(False)
@@ -949,10 +975,31 @@ class AddShowDialog(QDialog):
         # Off-thread: yt-dlp HTTP calls would otherwise block the GUI thread
         # and macOS would SIGTERM the unresponsive process.
         self._yt_resolve_thread = _YoutubeResolveThread(parsed.kind, parsed.value, self)
+        self._yt_resolve_thread.step.connect(self._on_youtube_resolve_step)
         self._yt_resolve_thread.done.connect(self._on_youtube_resolve_done)
         self._yt_resolve_thread.start()
 
+        # 1 Hz live-elapsed counter so the user sees the seconds tick by.
+        self._yt_resolve_timer = QTimer(self)
+        self._yt_resolve_timer.timeout.connect(self._refresh_yt_resolve_status)
+        self._yt_resolve_timer.start(1000)
+
+    def _on_youtube_resolve_step(self, current: int, total: int, label: str) -> None:
+        self._yt_resolve_step_idx = (current, total)
+        self._yt_resolve_step_label = label
+        self._refresh_yt_resolve_status()
+
+    def _refresh_yt_resolve_status(self) -> None:
+        elapsed = int(time.monotonic() - self._yt_resolve_started_at)
+        cur, total = self._yt_resolve_step_idx
+        self.yt_status.setText(f"Step {cur}/{total}: {self._yt_resolve_step_label} ({elapsed}s)")
+
     def _on_youtube_resolve_done(self, out: dict) -> None:
+        # Stop the elapsed-second ticker + hide the marquee.
+        if getattr(self, "_yt_resolve_timer", None) is not None:
+            self._yt_resolve_timer.stop()
+            self._yt_resolve_timer = None
+        self.yt_progress.setVisible(False)
         # Re-enable input/resolve regardless of outcome.
         self._yt_resolve_btn.setEnabled(True)
         self.youtube_url_input.setEnabled(True)
