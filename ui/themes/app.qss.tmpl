@@ -127,6 +127,38 @@ QPushButton[role="ghost"] {{
     padding: 4px 12px;
 }}
 
+/* QMessageBox — explicit styling because Qt drops the native palette on
+   the dialog body in dark mode, leaving low-contrast text. Cover the
+   message label, the informative-text label, and the button bar. */
+QMessageBox {{
+    background: {bg};
+    color: {ink};
+}}
+QMessageBox QLabel {{
+    background: transparent;
+    color: {ink};
+}}
+QMessageBox QPushButton {{
+    background: {surface};
+    color: {ink};
+    border: 1px solid {line};
+    border-radius: 5px;
+    padding: 5px 14px;
+    min-width: 70px;
+}}
+QMessageBox QPushButton:hover {{
+    background: {surface_alt};
+}}
+QMessageBox QPushButton:default {{
+    background: {accent};
+    color: #ffffff;
+    border: 1px solid {accent};
+}}
+QMessageBox QPushButton:default:hover {{
+    background: {accent_hover};
+    border: 1px solid {accent_hover};
+}}
+
 /* Pills — one QSS row per kind, pulling from pill_* tokens. */
 QLabel#Pill {{
     padding: 2px 8px;
