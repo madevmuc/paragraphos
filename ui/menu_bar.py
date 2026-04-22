@@ -171,7 +171,7 @@ def build_menu_bar(window) -> QMenuBar:
     a.triggered.connect(lambda: _open_log_folder(window))
     h.addAction(a)
     a = QAction("Re-run setup guide…", window)
-    a.triggered.connect(lambda: _rerun_setup(window))
+    a.triggered.connect(lambda: rerun_setup(window))
     h.addAction(a)
 
     return mb
@@ -434,7 +434,7 @@ def _show_shortcuts(window) -> None:
     )
 
 
-def _rerun_setup(window) -> None:
+def rerun_setup(window) -> None:
     """Re-open the guided setup dialog on user request.
 
     The dialog's Finish button flips ``setup_completed`` back to True;

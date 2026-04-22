@@ -85,3 +85,15 @@ def test_podcasts_off_with_youtube_on_persists(tmp_path):
     pane._do_save()
     assert ctx.settings.sources_podcasts is False
     assert ctx.settings.sources_youtube is True
+
+
+def test_settings_has_rerun_setup_button(tmp_path):
+    """The settings pane exposes a button that re-opens the setup dialog."""
+    pane, _ctx, _app = _make_pane(tmp_path)
+    from PyQt6.QtWidgets import QPushButton
+
+    buttons = pane.findChildren(QPushButton)
+    labels = [b.text() for b in buttons]
+    assert any("setup" in label.lower() for label in labels), (
+        f"no Re-run setup button; saw: {labels}"
+    )

@@ -512,7 +512,33 @@ class SettingsPane(QWidget):
         copy_btn.clicked.connect(lambda: self._copy_agent_prompt_with_feedback(copy_btn))
         root.addWidget(copy_btn)
 
+        # ── Setup guide ────────────────────────────────────────
+        # Mirrors the Help → Re-run setup guide… menu entry. Two entry
+        # points because users go looking in Settings for "change my
+        # transcripts folder / Obsidian wiring" before they think of the
+        # menu bar.
+        setup_group = QGroupBox("Setup guide")
+        setup_group.setObjectName("setup_group")
+        sg_layout = QVBoxLayout(setup_group)
+        setup_hint = QLabel(
+            "Re-open the guided setup to change the transcripts folder or Obsidian wiring."
+        )
+        setup_hint.setStyleSheet("color: palette(placeholder-text); font-size: 11px;")
+        setup_hint.setWordWrap(True)
+        sg_layout.addWidget(setup_hint)
+        self.rerun_setup_btn = QPushButton("Re-run setup guide…")
+        self.rerun_setup_btn.clicked.connect(self._on_rerun_setup_clicked)
+        sg_layout.addWidget(self.rerun_setup_btn, alignment=Qt.AlignmentFlag.AlignLeft)
+        root.addWidget(setup_group)
+
         root.addStretch()
+
+    def _on_rerun_setup_clicked(self) -> None:
+        """Re-open the guided setup dialog. Delegates to the same helper
+        as the Help menu entry so the two entry points stay in sync."""
+        from ui.menu_bar import rerun_setup
+
+        rerun_setup(self.window())
 
     # ── actions ───────────────────────────────────────────────
 
