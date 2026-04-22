@@ -338,6 +338,11 @@ class QueueTab(QWidget):
                 # this CASE, a large 'pending' backlog would push in-flight
                 # rows past the LIMIT 500 cutoff and hide parallel workers
                 # from the UI.
+                # Active stages first (transcribing → downloaded →
+                # downloading); then pending in WORKER-PROCESSING order
+                # so the table reflects what runs next: priority DESC,
+                # pub_date ASC (oldest first within same priority — the
+                # worker fetches in this order via list_by_status).
                 "ORDER BY "
                 "  CASE status "
                 "    WHEN 'transcribing' THEN 0 "
@@ -345,7 +350,7 @@ class QueueTab(QWidget):
                 "    WHEN 'downloading'  THEN 2 "
                 "    ELSE 3 "
                 "  END, "
-                "  priority DESC, pub_date DESC"
+                "  priority DESC, pub_date ASC"
             ).fetchall()
         self.table.setRowCount(0)
         for r in rows:

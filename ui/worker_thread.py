@@ -439,6 +439,20 @@ class CheckAllThread(QThread):
             for ep in pending:
                 all_pending.append((show, ep_num_map.get(ep["guid"], "0000"), ep))
 
+        # Cross-show priority sort: a 'Run next' / 'Run now' bump on an
+        # episode in show X must actually run next, even if show X comes
+        # later in the per-show iteration order. Sort by:
+        #   priority DESC (10 = run-now > 5 = run-next > 0 = normal)
+        #   pub_date ASC (oldest first within same priority — matches the
+        #                 per-show fetch order so behaviour stays
+        #                 consistent for non-bumped queues).
+        all_pending.sort(
+            key=lambda triple: (
+                -int(triple[2].get("priority") or 0),
+                triple[2].get("pub_date") or "",
+            )
+        )
+
         total = len(all_pending)
         self.queue_sized.emit(total)
         self.progress.emit(f"queue sized: {total} episode(s) pending")
