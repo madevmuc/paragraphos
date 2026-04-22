@@ -35,6 +35,7 @@ class PipelineContext:
     model_name: str = "large-v3-turbo"
     fast_mode: bool = False
     processors: int = 1
+    save_srt: bool = True
 
 
 @dataclass(frozen=True)
@@ -177,6 +178,7 @@ def transcribe_phase(outcome: DownloadOutcome, ctx: PipelineContext) -> Pipeline
             model_path=model_path,
             fast_mode=ctx.fast_mode,
             processors=ctx.processors,
+            save_srt=ctx.save_srt,
             progress_cb=_write_progress,
         )
     except TranscriptionError as e:

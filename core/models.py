@@ -84,6 +84,9 @@ class Settings(BaseModel):
     # compile' banner. Empty string disables the banner.
     knowledge_hub_root: str = ""
     github_repo: str = "madevmuc/paragraphos"  # override if you forked
+    # Output formats — Markdown is always written; SRT is opt-in. Default
+    # True so upgraders see no behaviour change on first launch.
+    save_srt: bool = True
 
     @field_validator("daily_check_time")
     @classmethod

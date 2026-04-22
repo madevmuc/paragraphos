@@ -311,6 +311,7 @@ class CheckAllThread(QThread):
             model_name=self.settings.whisper_model,
             fast_mode=self.settings.whisper_fast_mode,
             processors=self.settings.whisper_multiproc,
+            save_srt=self.settings.save_srt,
         )
 
     def run(self) -> None:

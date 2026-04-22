@@ -210,6 +210,33 @@ class SettingsPane(QWidget):
         # widgets (output / obsidian_path / obsidian_name) exist.
         self._refresh_obsidian_preview()
 
+        # ── Output formats ─────────────────────────────────────
+        # Markdown is always saved. SRT is opt-in — it carries per-segment
+        # timestamps so you can cite "at 12:34" in your notes. Keeping both
+        # default-on preserves behaviour for upgraders.
+        formats_box = QGroupBox("Output formats")
+        formats_layout = QVBoxLayout(formats_box)
+
+        md_cb = QCheckBox("Markdown (.md) — always saved")
+        md_cb.setChecked(True)
+        md_cb.setEnabled(False)
+        formats_layout.addWidget(md_cb)
+
+        self.save_srt_cb = QCheckBox("SRT subtitles (.srt)")
+        self.save_srt_cb.setChecked(bool(self.ctx.settings.save_srt))
+        self.save_srt_cb.toggled.connect(self._schedule_save)
+        formats_layout.addWidget(self.save_srt_cb)
+
+        formats_hint = QLabel(
+            "<span style='color: palette(placeholder-text); font-size: 11px;'>"
+            "SRT carries per-segment timestamps. Keep it on if you'd like to "
+            'quote passages with an <i>"at 12:34"</i> reference in your notes. '
+            "Transcripts (.md) are always saved.</span>"
+        )
+        formats_hint.setWordWrap(True)
+        formats_layout.addWidget(formats_hint)
+        root.addWidget(formats_box)
+
         # ── Schedule & monitoring ──────────────────────────────
         root.addWidget(_section("Schedule & monitoring"))
         f2 = QFormLayout()
@@ -754,6 +781,7 @@ class SettingsPane(QWidget):
         s.whisper_multiproc = self.multiproc.value()
         s.notify_mode = self.notify_mode.currentData() or "per_episode"
         s.log_retention_days = self.log_retention.value()
+        s.save_srt = self.save_srt_cb.isChecked()
         s.save(self.ctx.data_dir / "settings.yaml")
         from datetime import datetime
 

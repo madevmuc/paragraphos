@@ -113,6 +113,7 @@ def transcribe_episode(
     model_path: Path = MODEL_PATH,
     fast_mode: bool = False,
     processors: int = 1,
+    save_srt: bool = True,
     progress_cb=None,
 ) -> TranscribeResult:
     """Run whisper-cli once and produce <output_dir>/<slug>.md and .srt.
@@ -300,5 +301,11 @@ def transcribe_episode(
             + "\n",
             encoding="utf-8",
         )
-        srt_dest.write_bytes(srt_src.read_bytes())
+        # SRT is opt-in. Markdown is always saved; SRT carries per-segment
+        # timestamps and is only useful if the user wants to quote passages
+        # with an "at 12:34" reference. When disabled we leave srt_dest
+        # un-written — downstream consumers (e.g. core.stats._duration_from_srt)
+        # already handle a non-existent SRT path gracefully.
+        if save_srt:
+            srt_dest.write_bytes(srt_src.read_bytes())
         return TranscribeResult(md_path=md_path, srt_path=srt_dest, word_count=words)
