@@ -723,11 +723,18 @@ class ShowDetailsDialog(QDialog):
 
     def _bump(self, guid: str, priority: int) -> None:
         bump_priority(self.ctx, guid, priority)
+        # Kick the worker so the bump takes effect immediately. Without
+        # this, set_priority just updates SQL and the episode sits idle
+        # until the next scheduled check (could be hours away).
+        shows_tab = self.parent()
+        if shows_tab is not None and hasattr(shows_tab, "start_check"):
+            try:
+                shows_tab.start_check(only_slug=self.slug, force=True)
+            except Exception:
+                pass
         # The recent-episodes table is ordered by pub_date so a priority
         # bump doesn't visually reorder rows here — but the backlog label
-        # (pending/failed counts) is what the user watches on this dialog,
-        # and the Queue tab (if visible elsewhere) will reorder on its
-        # next refresh.
+        # (pending/failed counts) is what the user watches on this dialog.
         self.backlog_lbl.setText(self._fmt_backlog())
 
     # ── footer ───────────────────────────────────────────────

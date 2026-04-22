@@ -424,6 +424,13 @@ class QueueTab(QWidget):
 
     def _bump(self, guid: str, priority: int) -> None:
         bump_priority(self.ctx, guid, priority)
+        # Kick the worker so the bump takes effect immediately. Without
+        # this, the priority is set in SQL but the worker only re-queries
+        # on its next scheduled pass.
+        try:
+            self._shows_tab().start_check(force=True)
+        except Exception:
+            pass
         # Force a full rebuild so the new sort order is reflected immediately,
         # bypassing the 3-second refresh coalescing.
         import time
