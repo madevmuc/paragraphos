@@ -14,6 +14,7 @@ from PyQt6.QtCore import QObject, QRunnable, Qt, QThread, QThreadPool, QTimer, p
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
     QButtonGroup,
+    QComboBox,
     QDialog,
     QFormLayout,
     QFrame,
@@ -774,22 +775,79 @@ class AddShowDialog(QDialog):
     # Common: backlog toggle, button row, save funnel                    #
     # ------------------------------------------------------------------ #
 
-    def _backlog_row(self, key: str, default: str = "Last 5") -> QHBoxLayout:
-        row = QHBoxLayout()
-        row.addWidget(QLabel("Backlog:"))
+    def _backlog_row(self, key: str, default: str = "Last 5") -> QVBoxLayout:
+        """Two-row backlog selector: count radios + time-window dropdown.
+
+        Returns a QVBoxLayout containing both rows. Mutually exclusive:
+        picking a time window deselects radios; picking a radio resets the
+        time dropdown to '— none —'.
+        """
+        wrapper = QVBoxLayout()
+        wrapper.setContentsMargins(0, 0, 0, 0)
+
+        radios_row = QHBoxLayout()
+        radios_row.addWidget(QLabel("Backlog:"))
         grp = QButtonGroup(self)
         grp.setExclusive(True)
-        for label in ("Last 5", "Last 10", "All"):
+        for label in ("Most recent", "Last 5", "Last 10", "Last 20", "Last 50", "All"):
             b = QRadioButton(label)
             if label == default:
                 b.setChecked(True)
             grp.addButton(b)
-            row.addWidget(b)
-        row.addStretch(1)
+            radios_row.addWidget(b)
+        radios_row.addStretch(1)
+        wrapper.addLayout(radios_row)
+
+        time_row = QHBoxLayout()
+        time_row.addWidget(QLabel("Or by time:"))
+        combo = QComboBox()
+        combo.addItem("— none —", userData=None)
+        for label, days in (
+            ("Last 7 days", 7),
+            ("Last 30 days", 30),
+            ("Last 6 months", 183),
+            ("Last 12 months", 365),
+        ):
+            combo.addItem(label, userData=days)
+        time_row.addWidget(combo)
+        time_row.addStretch(1)
+        wrapper.addLayout(time_row)
+
+        # Mutual exclusion wiring.
+        def _on_time_changed(_idx: int) -> None:
+            if combo.currentData() is None:
+                return
+            grp.setExclusive(False)
+            for btn in grp.buttons():
+                btn.setChecked(False)
+            grp.setExclusive(True)
+
+        def _on_radio_toggled(checked: bool) -> None:
+            if not checked:
+                return
+            if combo.currentIndex() != 0:
+                combo.blockSignals(True)
+                combo.setCurrentIndex(0)
+                combo.blockSignals(False)
+
+        combo.currentIndexChanged.connect(_on_time_changed)
+        for b in grp.buttons():
+            b.toggled.connect(_on_radio_toggled)
+
         setattr(self, f"_backlog_grp_{key}", grp)
-        return row
+        setattr(self, f"_backlog_time_{key}", combo)
+        return wrapper
 
     def _backlog_choice(self, key: str) -> str:
+        """Return one of:
+        - 'All'
+        - 'Most recent'
+        - 'Last N' (5/10/20/50)
+        - 'Time:N' where N is the time-window in days (7/30/183/365)
+        """
+        combo: QComboBox = getattr(self, f"_backlog_time_{key}", None)
+        if combo is not None and combo.currentData() is not None:
+            return f"Time:{int(combo.currentData())}"
         grp: QButtonGroup = getattr(self, f"_backlog_grp_{key}")
         btn = grp.checkedButton()
         return btn.text() if btn else "Last 5"
@@ -876,11 +934,14 @@ class AddShowDialog(QDialog):
         v.addWidget(self.yt_card)
 
         # Backfill choice (default: Only new).
+        # Two rows: count-based radios + a time-range dropdown. Picking a
+        # time range clears the radios; picking a radio clears the time
+        # range — mutually exclusive on the user's intent.
         bf_row = QHBoxLayout()
         bf_row.addWidget(QLabel("Backfill:"))
         self._yt_backfill_grp = QButtonGroup(self)
         self._yt_backfill_grp.setExclusive(True)
-        for label in ("All", "Only new", "Last 20", "Last 50"):
+        for label in ("All", "Only new", "Most recent", "Last 20", "Last 50"):
             b = QRadioButton(label)
             if label == "Only new":
                 b.setChecked(True)
@@ -888,6 +949,26 @@ class AddShowDialog(QDialog):
             bf_row.addWidget(b)
         bf_row.addStretch(1)
         v.addLayout(bf_row)
+
+        time_row = QHBoxLayout()
+        time_row.addWidget(QLabel("Or by time:"))
+        self._yt_time_combo = QComboBox()
+        self._yt_time_combo.addItem("— none —", userData=None)
+        for label, days in (
+            ("Last 7 days", 7),
+            ("Last 30 days", 30),
+            ("Last 6 months", 183),
+            ("Last 12 months", 365),
+        ):
+            self._yt_time_combo.addItem(label, userData=days)
+        # Mutual exclusion: picking a time range deselects radios; picking
+        # a radio resets the dropdown to "— none —".
+        self._yt_time_combo.currentIndexChanged.connect(self._on_yt_time_changed)
+        for b in self._yt_backfill_grp.buttons():
+            b.toggled.connect(self._on_yt_radio_toggled)
+        time_row.addWidget(self._yt_time_combo)
+        time_row.addStretch(1)
+        v.addLayout(time_row)
 
         v.addStretch(1)
 
@@ -1025,6 +1106,30 @@ class AddShowDialog(QDialog):
         btn = self._yt_backfill_grp.checkedButton()
         return btn.text() if btn else "Only new"
 
+    def _yt_time_window_days(self) -> int | None:
+        """Return the selected time-window in days, or None if 'none'."""
+        return self._yt_time_combo.currentData()
+
+    def _on_yt_time_changed(self, _idx: int) -> None:
+        """Picking a time window deselects the count radios."""
+        if self._yt_time_combo.currentData() is None:
+            return
+        # Uncheck all radios so _yt_backfill_choice falls back to "Only new"
+        # (its default sentinel) which we ignore when a time window is set.
+        self._yt_backfill_grp.setExclusive(False)
+        for b in self._yt_backfill_grp.buttons():
+            b.setChecked(False)
+        self._yt_backfill_grp.setExclusive(True)
+
+    def _on_yt_radio_toggled(self, checked: bool) -> None:
+        """Picking a count radio resets the time dropdown to 'none'."""
+        if not checked:
+            return
+        if self._yt_time_combo.currentIndex() != 0:
+            self._yt_time_combo.blockSignals(True)
+            self._yt_time_combo.setCurrentIndex(0)
+            self._yt_time_combo.blockSignals(False)
+
     def _add_from_youtube(self) -> None:
         preview = self._loaded_yt_preview
         if not preview:
@@ -1037,14 +1142,24 @@ class AddShowDialog(QDialog):
             return
         slug = slugify(title)
 
-        # Decide enumeration limit based on backfill choice.
+        # Decide enumeration limit. Time-window selection takes precedence
+        # over the count radios (the two are mutually exclusive in the UI).
+        time_window_days = self._yt_time_window_days()
         choice = self._yt_backfill_choice()
-        if choice == "All":
+
+        if time_window_days is not None:
+            # Fetch a generous slice (videos come newest-first; we filter
+            # client-side and stop once we hit the cutoff). 500 covers the
+            # vast majority of channels for a 12-month window.
+            limit = 500
+        elif choice == "All":
             limit = None
         elif choice == "Last 20":
             limit = 20
         elif choice == "Last 50":
             limit = 50
+        elif choice == "Most recent":
+            limit = 1  # actually transcribe this one (vs "Only new" which marks-as-done)
         else:  # "Only new"
             limit = 1  # seed the most recent video so future runs see a baseline
 
@@ -1053,6 +1168,13 @@ class AddShowDialog(QDialog):
         except Exception as e:  # noqa: BLE001
             QMessageBox.warning(self, "Error", f"Failed to enumerate videos: {e}")
             return
+
+        # Apply time-window filter after enumeration.
+        if time_window_days is not None:
+            import time as _time
+
+            cutoff = _time.time() - time_window_days * 86400
+            videos = [v for v in videos if (v.get("timestamp") or 0) >= cutoff]
 
         # Build a manifest the existing _do_save funnel understands.
         manifest = []
@@ -1071,13 +1193,20 @@ class AddShowDialog(QDialog):
                 }
             )
 
-        # "Only new" semantics: mark seeded baseline as done so the next run
-        # only picks up videos newer than the channel's current head.
-        backlog_mode = (
-            "All"
-            if choice == "All"
-            else ("Last 5" if choice == "Only new" else choice.replace("Last ", "Last "))
-        )
+        # Backlog mode controls whether seeded items get marked done as a
+        # baseline ("Only new") or stay pending ("All", "Most recent",
+        # "Last N", time windows). "Only new" is the only one that should
+        # mark anything as done — the rest are explicit user picks for
+        # what should actually transcribe. Time windows already filtered
+        # the manifest above, so everything left should transcribe.
+        if time_window_days is not None:
+            backlog_mode = "All"
+        elif choice == "All":
+            backlog_mode = "All"
+        elif choice == "Only new":
+            backlog_mode = "Last 5"  # seed + mark-as-done
+        else:  # "Most recent" / "Last 20" / "Last 50"
+            backlog_mode = "All"
 
         show_dict = {
             "slug": slug,
@@ -1133,6 +1262,18 @@ class AddShowDialog(QDialog):
         mode = show.get("backlog") or "Last 5"
         if mode == "All":
             pass  # leave everything pending
+        elif mode == "Most recent":
+            # Keep only the latest 1 pending; mark older as done.
+            with self.ctx.state._conn() as c:
+                c.execute(
+                    """
+                    UPDATE episodes SET status='done'
+                    WHERE show_slug=? AND guid NOT IN (
+                        SELECT guid FROM episodes WHERE show_slug=?
+                        ORDER BY pub_date DESC LIMIT 1
+                    )""",
+                    (slug, slug),
+                )
         elif mode.startswith("Last "):
             n = int(mode.split()[1])
             with self.ctx.state._conn() as c:
@@ -1145,5 +1286,46 @@ class AddShowDialog(QDialog):
                     )""",
                     (slug, slug, n),
                 )
+        elif mode.startswith("Time:"):
+            # Mark every episode older than the cutoff as done. Pub-date
+            # format varies across feeds (RFC 2822, ISO 8601, YouTube
+            # YYYYMMDD); parse defensively in Python and update by guid.
+            from datetime import datetime, timedelta, timezone
+            from email.utils import parsedate_to_datetime
+
+            days = int(mode.split(":", 1)[1])
+            cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+            def _parse(pd: str) -> datetime | None:
+                if not pd:
+                    return None
+                try:
+                    dt = parsedate_to_datetime(pd)
+                    if dt is not None:
+                        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+                except (TypeError, ValueError):
+                    pass
+                try:
+                    return datetime.fromisoformat(pd.replace("Z", "+00:00"))
+                except ValueError:
+                    pass
+                if len(pd) == 8 and pd.isdigit():  # YouTube YYYYMMDD
+                    try:
+                        return datetime.strptime(pd, "%Y%m%d").replace(tzinfo=timezone.utc)
+                    except ValueError:
+                        pass
+                return None
+
+            stale_guids = [
+                ep["guid"] for ep in manifest if (_parse(ep.get("pubDate", "")) or cutoff) < cutoff
+            ]
+            if stale_guids:
+                with self.ctx.state._conn() as c:
+                    placeholders = ",".join("?" for _ in stale_guids)
+                    c.execute(
+                        f"UPDATE episodes SET status='done' "
+                        f"WHERE show_slug=? AND guid IN ({placeholders})",
+                        (slug, *stale_guids),
+                    )
 
         self.accept()
