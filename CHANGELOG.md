@@ -1,5 +1,39 @@
 # Paragraphos Changelog
 
+## v1.2.0 — 2026-04-22 (YouTube ingestion)
+
+### Added
+- **YouTube channels as first-class shows.** Subscribe to a channel
+  and Paragraphos polls its hidden RSS feed; new videos transcribe
+  automatically. Channel discovery + backfill via yt-dlp.
+- **Captions-first transcript path.** Uploader-provided captions are
+  fetched and converted (VTT → SRT) instantly; whisper takes over
+  when no captions are available.
+- **Per-channel transcript-source override** in Show Details:
+  Captions / Always whisper / Use auto-captions if no manual.
+- **yt-dlp lazy install + weekly self-update.** Installed to
+  `~/Library/Application Support/Paragraphos/bin/yt-dlp` on first
+  YouTube use; `yt-dlp -U` runs once a week on launch.
+- **Sources filter in Settings.** Uncheck YouTube to hide all
+  YouTube UI and skip the yt-dlp install. At least one source must
+  remain checked.
+- **Re-run setup guide button** in Settings (mirrors the existing
+  Help → Re-run setup guide menu entry).
+
+### Changed
+- `core/export.py` gains a unified `render_episode_markdown()` used
+  by the YouTube transcript writer; the existing podcast renderer
+  in `core/transcriber.py` is unchanged.
+- `core/pipeline.PipelineContext` gains optional `source`,
+  `youtube_channel_id`, `youtube_transcript_pref`, and
+  `youtube_default_transcript_source` fields.
+
+### Internal
+- New modules: `core/sources.py`, `core/youtube.py`,
+  `core/youtube_meta.py`, `core/youtube_captions.py`,
+  `core/youtube_audio.py`, `core/ytdlp.py`,
+  `ui/ytdlp_install_dialog.py`.
+
 ## v1.1.9 — 2026-04-22 (onboarding + search polish)
 
 ### Added
