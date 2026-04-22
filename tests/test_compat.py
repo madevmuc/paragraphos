@@ -1,6 +1,8 @@
 from unittest.mock import patch
 
-from core.compat import CompatStatus, check_compat
+import pytest
+
+from core.compat import CompatStatus, _parse_macos_major_minor, check_compat
 
 
 def _patch(arch="arm64", mac=("13.4.0", ("", "", ""), ""), mem_gb=16, free_gb=20):
@@ -45,3 +47,28 @@ def test_low_disk_is_advisory_not_blocking():
         s = check_compat()
     assert s.all_blocking_ok
     assert any("disk" in a.lower() for a in s.advisories)
+
+
+@pytest.mark.parametrize(
+    "ver,expected",
+    [
+        ("13.4.0", (13, 4)),
+        ("14", (14, 0)),
+        ("", (0, 0)),
+        ("banana", (0, 0)),
+    ],
+)
+def test_parse_macos_major_minor(ver, expected):
+    assert _parse_macos_major_minor(ver) == expected
+
+
+def test_empty_mac_ver_does_not_block():
+    with patch.multiple(
+        "core.compat",
+        _machine=lambda: "arm64",
+        _mac_ver=lambda: ("", ("", "", ""), ""),
+        _total_memory_gb=lambda: 16,
+        _free_disk_gb=lambda: 20,
+    ):
+        s = check_compat()
+    assert s.all_blocking_ok

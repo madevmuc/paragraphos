@@ -34,10 +34,10 @@ def _total_memory_gb() -> float:
     except Exception:
         import subprocess
 
-        out = subprocess.run(["sysctl", "-n", "hw.memsize"], capture_output=True, text=True)
         try:
+            out = subprocess.run(["sysctl", "-n", "hw.memsize"], capture_output=True, text=True)
             return int(out.stdout.strip()) / (1024**3)
-        except ValueError:
+        except (OSError, ValueError):
             return 0.0
 
 
@@ -74,11 +74,12 @@ def check_compat() -> CompatStatus:
         s.blocking_reasons.append(f"Apple Silicon required — this Mac reports arch '{arch}'.")
 
     mac = _mac_ver()[0]
-    major, minor = _parse_macos_major_minor(mac)
-    if (major, minor) < MIN_MACOS:
-        s.blocking_reasons.append(
-            f"macOS {MIN_MACOS[0]}.{MIN_MACOS[1]}+ required — this Mac reports {mac}."
-        )
+    if mac:
+        major, minor = _parse_macos_major_minor(mac)
+        if (major, minor) < MIN_MACOS:
+            s.blocking_reasons.append(
+                f"macOS {MIN_MACOS[0]}.{MIN_MACOS[1]}+ required — this Mac reports {mac}."
+            )
 
     ram = _total_memory_gb()
     if 0 < ram < ADVISORY_MIN_RAM_GB:
