@@ -449,27 +449,36 @@ class SettingsPane(QWidget):
 
     # ── actions ───────────────────────────────────────────────
 
+    def _default_picker_dir(self, current: str) -> str:
+        """When the user's saved path is empty or missing, start the picker
+        at ~/Desktop instead of wherever Qt's last-used happens to be —
+        fresh-install disorientation."""
+        p = Path(current).expanduser() if current else None
+        if p is not None and p.exists():
+            return str(p)
+        return str(Path.home() / "Desktop")
+
     def _pick_dir(self):
-        start = str(Path(self.output.text()).expanduser())
+        start = self._default_picker_dir(self.output.text())
         d = QFileDialog.getExistingDirectory(self, "Pick output root", start)
         if d:
             self.output.setText(d)
 
     def _pick_kb_root(self):
-        start = str(Path(self.kb_root.text() or "~").expanduser())
+        start = self._default_picker_dir(self.kb_root.text())
         d = QFileDialog.getExistingDirectory(self, "Pick knowledge-hub root", start)
         if d:
             self.kb_root.setText(d)
 
     def _pick_obsidian(self):
-        start = str(Path(self.obsidian_path.text()).expanduser())
+        start = self._default_picker_dir(self.obsidian_path.text())
         d = QFileDialog.getExistingDirectory(self, "Pick Obsidian vault", start)
         if d:
             self.obsidian_path.setText(d)
             self.obsidian_name.setText(Path(d).name)
 
     def _pick_export(self):
-        start = str(Path(self.export_root.text()).expanduser())
+        start = self._default_picker_dir(self.export_root.text())
         d = QFileDialog.getExistingDirectory(self, "Pick export root", start)
         if d:
             self.export_root.setText(d)
