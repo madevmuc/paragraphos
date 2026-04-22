@@ -44,3 +44,22 @@ def test_settings_time_validation():
         Settings(daily_check_time="25:99")
     with pytest.raises(ValueError):
         Settings(daily_check_time="9am")
+
+
+def test_show_source_defaults_to_podcast():
+    from core.models import Show
+
+    s = Show(slug="x", title="X", rss="https://x/feed.xml")
+    assert s.source == "podcast"
+
+
+def test_show_source_accepts_youtube():
+    from core.models import Show
+
+    s = Show(
+        slug="x",
+        title="X",
+        rss="https://youtube.com/feeds/videos.xml?channel_id=UC...",
+        source="youtube",
+    )
+    assert s.source == "youtube"

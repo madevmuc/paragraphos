@@ -25,6 +25,10 @@ class Show(BaseModel):
     # watchlist.yaml files — ShowDetailsDialog falls back to a 🎙 placeholder
     # when the feed didn't expose artwork.
     artwork_url: str = ""
+    # Source discriminator: "podcast" (RSS feed) or "youtube" (channel
+    # RSS at /feeds/videos.xml?channel_id=UC...). Defaults to "podcast"
+    # for backward compat with existing watchlist.yaml files.
+    source: str = "podcast"
 
 
 class Watchlist(BaseModel):
