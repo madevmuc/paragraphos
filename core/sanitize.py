@@ -34,3 +34,14 @@ def sanitize_filename(name: str, max_bytes: int = 200) -> str:
     if len(encoded) > max_bytes:
         s = encoded[:max_bytes].decode("utf-8", errors="ignore").rstrip()
     return s or "_"
+
+
+def slugify(title: str) -> str:
+    """Pure-kebab slug: NFKD-strip diacritics, lowercase, non-alphanum
+    runs collapse to a single '-', trimmed. Returns 'show' on empty /
+    collapsed input."""
+    normalised = unicodedata.normalize("NFKD", title or "")
+    ascii_only = normalised.encode("ascii", "ignore").decode("ascii")
+    lowered = ascii_only.lower()
+    collapsed = re.sub(r"[^a-z0-9]+", "-", lowered).strip("-")
+    return collapsed or "show"
