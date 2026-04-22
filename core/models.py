@@ -103,6 +103,10 @@ class Settings(BaseModel):
     # Empty string means never run; helper triggers an update if older
     # than 7 days. See ui.main_window.maybe_self_update_ytdlp.
     ytdlp_last_self_update_at: str = ""
+    # Default YouTube transcript source for shows that don't override
+    # via Show.youtube_transcript_pref. One of:
+    # "captions" | "whisper" | "auto-captions".
+    youtube_default_transcript_source: str = "captions"
 
     @field_validator("daily_check_time")
     @classmethod

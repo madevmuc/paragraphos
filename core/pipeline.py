@@ -36,6 +36,15 @@ class PipelineContext:
     fast_mode: bool = False
     processors: int = 1
     save_srt: bool = True
+    # YouTube-source dispatch (Theme A). When ``source == "youtube"`` the
+    # pipeline routes the episode through the captions-first / whisper-
+    # fallback branch instead of the standard MP3-download path. The
+    # remaining YouTube fields are populated per-show by
+    # ui.worker_thread._pctx_for(show); they are ignored for podcast shows.
+    source: str = "podcast"
+    youtube_transcript_pref: str = ""  # "" → fall back to default below
+    youtube_default_transcript_source: str = "captions"
+    youtube_channel_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -227,7 +236,167 @@ def process_episode(
     guid: str, ctx: PipelineContext, *, episode_number: str = "0000"
 ) -> PipelineResult:
     """Serial dedup → download → transcribe → retention (kept for CLI/tests)."""
+    if ctx.source == "youtube":
+        return _process_youtube_episode(guid, ctx, episode_number=episode_number)
     outcome = download_phase(guid, ctx, episode_number=episode_number)
     if outcome.result is not None:
         return outcome.result
     return transcribe_phase(outcome, ctx)
+
+
+def _process_youtube_episode(
+    guid: str, ctx: PipelineContext, *, episode_number: str = "0000"
+) -> PipelineResult:
+    """YouTube dispatch: captions-first, whisper-fallback.
+
+    For ``Show.source == "youtube"`` episodes the dedup check still runs,
+    but the download/transcribe sequence is replaced with:
+
+      1. If pref is ``captions`` or ``auto-captions``, try
+         :func:`core.youtube_captions.fetch_manual_captions`. On success,
+         render `.md` via :func:`core.export.render_episode_markdown` and
+         skip whisper entirely.
+      2. Otherwise (or on caption failure) download MP3 audio via
+         :func:`core.youtube_audio.download_audio` and reuse the existing
+         :func:`core.transcriber.transcribe_episode` path. Then overwrite
+         the `.md` with the YouTube-aware renderer so frontmatter carries
+         ``source: youtube`` + ``youtube_id`` + ``transcript_source``.
+    """
+    from core import youtube as yt_url
+    from core import youtube_audio, youtube_captions
+    from core.export import render_episode_markdown
+    from core.security import safe_path_within
+    from core.youtube_captions import NoCaptionsAvailable
+
+    ep = ctx.state.get_episode(guid)
+    if ep is None:
+        raise ValueError(f"unknown guid {guid}")
+
+    slug = build_slug(ep["pub_date"], ep["title"], episode_number)
+
+    # Dedup — same key as podcast path.
+    dup = ctx.library.check_dedup(guid=guid, filename_key=slug)
+    if dup.matched:
+        ctx.state.set_status(guid, EpisodeStatus.DONE)
+        return PipelineResult("skipped", guid, f"dedup/{dup.reason} → {dup.path}")
+
+    try:
+        parsed = yt_url.parse_youtube_url(ep["mp3_url"])
+    except yt_url.YoutubeUrlError as e:
+        err = f"bad youtube url: {e}"
+        ctx.state.set_status(guid, EpisodeStatus.FAILED, error_text=err)
+        return PipelineResult("failed", guid, err)
+    if parsed.kind != "video":
+        err = f"YouTube episode without video URL: {ep['mp3_url']!r}"
+        ctx.state.set_status(guid, EpisodeStatus.FAILED, error_text=err)
+        return PipelineResult("failed", guid, err)
+    vid = parsed.value
+
+    pref = ctx.youtube_transcript_pref or ctx.youtube_default_transcript_source or "captions"
+
+    show_dir = ctx.output_root / ep["show_slug"]
+    show_dir.mkdir(parents=True, exist_ok=True)
+    work_dir = show_dir / "_yt" / slug
+    work_dir.mkdir(parents=True, exist_ok=True)
+    safe_path_within(ctx.output_root, work_dir)
+    safe_path_within(ctx.output_root, show_dir / f"{slug}.md")
+
+    transcript_source: str | None = None
+    srt_path: Path | None = None
+
+    if pref in ("captions", "auto-captions"):
+        ctx.state.set_status(guid, EpisodeStatus.DOWNLOADING)
+        try:
+            srt_path = youtube_captions.fetch_manual_captions(
+                vid,
+                work_dir / "video",
+                lang=ctx.language or "en",
+                auto_ok=(pref == "auto-captions"),
+            )
+            transcript_source = pref
+        except NoCaptionsAvailable:
+            srt_path = None
+
+    if srt_path is None:
+        # Whisper fallback (or pref == "whisper").
+        audio_dir = show_dir / "audio"
+        audio_dir.mkdir(parents=True, exist_ok=True)
+        mp3_path = audio_dir / f"{slug}.mp3"
+        safe_path_within(ctx.output_root, mp3_path)
+        try:
+            _guard_disk(audio_dir)
+            ctx.state.set_status(guid, EpisodeStatus.DOWNLOADING)
+            youtube_audio.download_audio(vid, mp3_path)
+        except DiskSpaceError as e:
+            ctx.state.set_status(guid, EpisodeStatus.PENDING)
+            return PipelineResult("failed", guid, f"disk: {e}")
+        except Exception as e:
+            err = f"youtube audio download failed [{type(e).__name__}]: {e}"
+            logger.error("yt audio failed: %s (guid=%s)", ep["show_slug"], guid, exc_info=True)
+            ctx.state.set_status(guid, EpisodeStatus.FAILED, error_text=err)
+            return PipelineResult("failed", guid, err)
+        ctx.state.set_status(guid, EpisodeStatus.DOWNLOADED)
+
+        # Hand off to the existing whisper path; reuse its progress
+        # bookkeeping and SRT/MD writing. We then overwrite the MD with
+        # the YouTube-aware frontmatter.
+        ctx.state.set_status(guid, EpisodeStatus.TRANSCRIBING)
+        from pathlib import Path as _P
+
+        model_path = _P.home() / ".config/open-wispr/models" / f"ggml-{ctx.model_name}.bin"
+        try:
+            wresult = transcribe_episode(
+                mp3_path=mp3_path,
+                output_dir=show_dir,
+                slug=slug,
+                metadata=ep,
+                whisper_prompt=ctx.whisper_prompt,
+                language=ctx.language,
+                model_path=model_path,
+                fast_mode=ctx.fast_mode,
+                processors=ctx.processors,
+                save_srt=True,  # always need SRT for YouTube re-render
+            )
+        except TranscriptionError as e:
+            err = f"transcribe failed: {e}"
+            ctx.state.set_status(guid, EpisodeStatus.FAILED, error_text=err)
+            return PipelineResult("failed", guid, err)
+        srt_path = wresult.srt_path
+        transcript_source = "whisper"
+
+        if ctx.delete_mp3_after:
+            try:
+                mp3_path.unlink()
+            except OSError:
+                pass
+
+    # Render YouTube-aware markdown + write SRT next to it.
+    md_text = render_episode_markdown(
+        show_slug=ep["show_slug"],
+        title=ep["title"],
+        srt_text=srt_path.read_text(encoding="utf-8"),
+        source="youtube",
+        youtube_id=vid,
+        channel_id=ctx.youtube_channel_id or None,
+        transcript_source=transcript_source,
+    )
+    md_out = show_dir / f"{slug}.md"
+    srt_out = show_dir / f"{slug}.srt"
+    md_out.write_text(md_text, encoding="utf-8")
+    if ctx.save_srt:
+        srt_out.write_text(srt_path.read_text(encoding="utf-8"), encoding="utf-8")
+
+    ctx.library.add(md_out)
+    try:
+        from core.stats import _duration_from_srt
+
+        ctx.state.record_completion(guid, len(md_text.split()), _duration_from_srt(srt_path))
+    except Exception:
+        ctx.state.record_completion(guid, len(md_text.split()))
+    ctx.state.set_status(guid, EpisodeStatus.DONE)
+    try:
+        ctx.state.set_meta(f"transcribe_pct:{guid}", "")
+    except Exception:
+        pass
+
+    return PipelineResult("transcribed", guid, str(md_out))
