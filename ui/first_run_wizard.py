@@ -178,7 +178,25 @@ class FirstRunWizard(QDialog):
         v.addLayout(footer)
 
         self.progress_sig.connect(self._on_progress)
+
+        # Guard rails: each brew install fires exactly once per wizard session.
+        # _refresh can run many times (Recheck button, tick after another install,
+        # etc.) — without these flags it would spawn overlapping `brew install`
+        # invocations, and brew holds a global lock so the second call fails.
+        self._whisper_started = False
+        self._ffmpeg_started = False
+
         QTimer.singleShot(0, self._refresh)
+        QTimer.singleShot(0, self._autostart_on_open)
+
+    def _autostart_on_open(self) -> None:
+        """Kick off the work that has no prerequisites — model download runs
+        over plain HTTPS, no brew / sudo dependency. Homebrew itself still
+        needs an explicit user click (Terminal + sudo). whisper-cpp and
+        ffmpeg auto-chain via _refresh once brew is detected."""
+        status = deps.check()
+        if not status.model:
+            self._download_model()
 
     def _on_recheck_clicked(self) -> None:
         """Recheck with visible feedback — flashes the button text so the
@@ -217,21 +235,22 @@ class FirstRunWizard(QDialog):
         if status.whisper_cli:
             self.whisper_row.set_ok()
         elif status.brew:
-            self.whisper_row.set_missing(
-                "brew install",
-                self._install_whisper,
-                reason="whisper-cpp binary not found at /opt/homebrew/bin/whisper-cli.",
-            )
+            if not self._whisper_started:
+                self._whisper_started = True
+                self._install_whisper()
+            # If already running, _install_whisper has set the row's state; leave as-is.
         else:
-            self.whisper_row.set_idle("waiting for Homebrew")
+            self.whisper_row.set_waiting("waiting for Homebrew")
         if status.ffmpeg:
             self.ffmpeg_row.set_ok()
+        elif status.brew and status.whisper_cli:
+            if not self._ffmpeg_started:
+                self._ffmpeg_started = True
+                self._install_ffmpeg()
         elif status.brew:
-            self.ffmpeg_row.set_missing(
-                "brew install", self._install_ffmpeg, reason="ffmpeg binary not found."
-            )
+            self.ffmpeg_row.set_waiting("waiting for whisper-cpp to finish")
         else:
-            self.ffmpeg_row.set_idle("waiting for Homebrew")
+            self.ffmpeg_row.set_waiting("waiting for Homebrew")
         if status.model:
             self.model_row.set_ok()
         else:

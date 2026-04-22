@@ -30,3 +30,88 @@ def test_step_row_set_sub_line_truncates_long_input():
     row.set_sub_line(long)
     assert len(row.subcopy.text()) <= 80
     assert row.subcopy.text().endswith("…")
+
+
+def test_wizard_auto_starts_model_download_when_missing(monkeypatch):
+    _ = QApplication.instance() or QApplication([])
+
+    from core import deps
+    from ui import first_run_wizard as wiz
+
+    # brew present, whisper+ffmpeg+model missing.
+    monkeypatch.setattr(
+        deps,
+        "check",
+        lambda: deps.DepStatus(brew=True, whisper_cli=False, ffmpeg=False, model=False),
+    )
+
+    started = {"model": False, "whisper": False}
+    monkeypatch.setattr(
+        wiz.FirstRunWizard, "_download_model", lambda self: started.__setitem__("model", True)
+    )
+    monkeypatch.setattr(
+        wiz.FirstRunWizard, "_install_whisper", lambda self: started.__setitem__("whisper", True)
+    )
+    monkeypatch.setattr(wiz.FirstRunWizard, "_install_ffmpeg", lambda self: None)
+
+    w = wiz.FirstRunWizard()
+    # Drive the two singleShot(0, ...) callbacks — _refresh + _autostart_on_open.
+    # Keep `w` in scope until after processEvents so the dialog isn't GC'd
+    # before its singleShot timers fire.
+    app = QApplication.instance()
+    app.processEvents()
+    assert w is not None
+
+    assert started["model"] is True
+    assert started["whisper"] is True  # auto-chained because brew is present
+
+
+def test_wizard_fires_whisper_only_once(monkeypatch):
+    _ = QApplication.instance() or QApplication([])
+
+    from core import deps
+    from ui import first_run_wizard as wiz
+
+    monkeypatch.setattr(
+        deps,
+        "check",
+        lambda: deps.DepStatus(brew=True, whisper_cli=False, ffmpeg=False, model=True),
+    )
+
+    calls = {"whisper": 0}
+    monkeypatch.setattr(
+        wiz.FirstRunWizard,
+        "_install_whisper",
+        lambda self: calls.__setitem__("whisper", calls["whisper"] + 1),
+    )
+    monkeypatch.setattr(wiz.FirstRunWizard, "_install_ffmpeg", lambda self: None)
+    monkeypatch.setattr(wiz.FirstRunWizard, "_download_model", lambda self: None)
+
+    w = wiz.FirstRunWizard()
+    w._refresh()
+    w._refresh()
+    w._refresh()
+
+    assert calls["whisper"] == 1
+
+
+def test_wizard_ffmpeg_waits_for_whisper(monkeypatch):
+    _ = QApplication.instance() or QApplication([])
+
+    from core import deps
+    from ui import first_run_wizard as wiz
+
+    # brew ok, whisper STILL missing, ffmpeg missing.
+    monkeypatch.setattr(
+        deps,
+        "check",
+        lambda: deps.DepStatus(brew=True, whisper_cli=False, ffmpeg=False, model=True),
+    )
+    monkeypatch.setattr(wiz.FirstRunWizard, "_install_whisper", lambda self: None)
+    monkeypatch.setattr(wiz.FirstRunWizard, "_install_ffmpeg", lambda self: None)
+    monkeypatch.setattr(wiz.FirstRunWizard, "_download_model", lambda self: None)
+
+    w = wiz.FirstRunWizard()
+    w._refresh()
+
+    assert "waiting for whisper-cpp" in w.ffmpeg_row.subcopy.text().lower()
