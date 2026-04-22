@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QFrame,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -159,24 +160,33 @@ class SettingsPane(QWidget):
         exp_row.addWidget(exp_pick)
         self._add_field(f1, "Export ZIP target", self._row_widget(exp_row))
 
+        # Obsidian fields live in their own group box so the vault path,
+        # vault name, picker, and a live write-target preview are visually
+        # grouped rather than mixed into the generic folder list.
         self.obsidian_path = QLineEdit(self.ctx.settings.obsidian_vault_path)
         self.obsidian_path.textChanged.connect(self._schedule_save)
-        obs_row = QHBoxLayout()
-        obs_row.addWidget(self.obsidian_path)
-        obs_pick = QPushButton("Browse…")
-        obs_pick.clicked.connect(self._pick_obsidian)
-        obs_row.addWidget(obs_pick)
-        self._add_field(
-            f1,
-            "Obsidian vault path",
-            self._row_widget(obs_row),
-            hint='auto-fills vault name from folder ("wiki")',
-            hint_kind="info",
-        )
-
+        self.obsidian_path.textChanged.connect(self._refresh_obsidian_preview)
         self.obsidian_name = QLineEdit(self.ctx.settings.obsidian_vault_name)
         self.obsidian_name.textChanged.connect(self._schedule_save)
-        self._add_field(f1, "Obsidian vault name", self.obsidian_name)
+        self.obsidian_name.textChanged.connect(self._refresh_obsidian_preview)
+        self.output.textChanged.connect(self._refresh_obsidian_preview)
+
+        obsidian_box = QGroupBox("Obsidian")
+        obsidian_layout = QFormLayout(obsidian_box)
+        obs_row = QHBoxLayout()
+        obs_row.addWidget(self.obsidian_path)
+        _pick = QPushButton("Pick…")
+        _pick.clicked.connect(self._pick_obsidian)
+        obs_row.addWidget(_pick)
+        obs_row_w = QWidget()
+        obs_row.setContentsMargins(0, 0, 0, 0)
+        obs_row_w.setLayout(obs_row)
+        obsidian_layout.addRow("Vault path", obs_row_w)
+        obsidian_layout.addRow("Vault name", self.obsidian_name)
+        self.obsidian_preview = QLabel("")
+        self.obsidian_preview.setStyleSheet("color: palette(placeholder-text); font-size: 11px;")
+        self.obsidian_preview.setWordWrap(True)
+        obsidian_layout.addRow("", self.obsidian_preview)
 
         self.kb_root = QLineEdit(self.ctx.settings.knowledge_hub_root)
         self.kb_root.textChanged.connect(self._schedule_save)
@@ -194,6 +204,11 @@ class SettingsPane(QWidget):
             hint_kind=kb_kind,
         )
         root.addLayout(f1)
+        root.addWidget(obsidian_box)
+
+        # Populate the preview line once, now that all three source
+        # widgets (output / obsidian_path / obsidian_name) exist.
+        self._refresh_obsidian_preview()
 
         # ── Schedule & monitoring ──────────────────────────────
         root.addWidget(_section("Schedule & monitoring"))
@@ -476,6 +491,13 @@ class SettingsPane(QWidget):
         if d:
             self.obsidian_path.setText(d)
             self.obsidian_name.setText(Path(d).name)
+
+    def _refresh_obsidian_preview(self) -> None:
+        """Update the 'where transcripts land' preview line under the
+        Obsidian group box. Keeps the user anchored when they flip
+        between paths / vault names."""
+        path = self.output.text() or "<no output folder set>"
+        self.obsidian_preview.setText(f"Transcripts will be written to: {path}")
 
     def _pick_export(self):
         start = self._default_picker_dir(self.export_root.text())

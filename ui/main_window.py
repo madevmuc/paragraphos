@@ -469,6 +469,14 @@ class MainWindow(QMainWindow):
             self._show_update_state(tag, url)
             return
 
+        # Wiki-compile reminder only makes sense for Obsidian / knowledge-hub
+        # workflows. For plain-folder users, suppress it entirely.
+        if not (getattr(self.ctx.settings, "obsidian_vault_path", "") or ""):
+            if self._banner_state == "compile":
+                self._banner_state = ""
+                self.banner.setVisible(False)
+            return
+
         output_root = Path(self.ctx.settings.output_root).expanduser()
         if not output_root.exists():
             self._banner_state = ""
