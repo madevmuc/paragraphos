@@ -28,15 +28,24 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core import youtube_meta as _youtube_meta
+from core import ytdlp as _ytdlp
 from core.discovery import find_rss_from_url, search_itunes
 from core.models import Show
 from core.prompt_gen import suggest_whisper_prompt
 from core.rss import FeedHealth, build_manifest_with_url, feed_metadata
 from core.sanitize import slugify
+from core.sources import youtube_enabled
+from core.youtube import (
+    YoutubeUrlError,
+    parse_youtube_url,
+    rss_url_for_channel_id,
+)
 from ui.feed_probe import FeedProbeWorker
 from ui.themes import current_tokens
 from ui.widgets.pill import Pill
 from ui.widgets.show_results_table import ShowResultsTable
+from ui.ytdlp_install_dialog import YtdlpInstallDialog
 
 # --------------------------------------------------------------------------- #
 # Background fetchers                                                         #
@@ -167,11 +176,17 @@ class AddShowDialog(QDialog):
         mode_row = QHBoxLayout()
         self._mode_buttons = QButtonGroup(self)
         self._mode_buttons.setExclusive(True)
-        for key, label in (
+        modes = [
             ("name", "By name"),
             ("url", "By URL"),
             ("apple", "Paste Apple link"),
-        ):
+        ]
+        # Append the 4th mode only when YouTube ingestion is enabled in
+        # settings — keeps the dialog identical for podcast-only users.
+        self._yt_enabled = youtube_enabled(ctx.settings)
+        if self._yt_enabled:
+            modes.append(("youtube", "YouTube URL"))
+        for key, label in modes:
             b = QRadioButton(label)
             b.setProperty("mode", key)
             mode_row.addWidget(b)
@@ -186,7 +201,11 @@ class AddShowDialog(QDialog):
         self._page_name = self._build_name_page()
         self._page_url = self._build_url_page()
         self._page_apple = self._build_apple_page()
-        for p in (self._page_name, self._page_url, self._page_apple):
+        pages = [self._page_name, self._page_url, self._page_apple]
+        if self._yt_enabled:
+            self._page_youtube = self._build_youtube_page()
+            pages.append(self._page_youtube)
+        for p in pages:
             self._pages.addWidget(p)
         root.addWidget(self._pages, 1)
 
@@ -198,8 +217,10 @@ class AddShowDialog(QDialog):
         if not checked:
             return
         key = button.property("mode")
-        idx = {"name": 0, "url": 1, "apple": 2}.get(key, 0)
+        idx = {"name": 0, "url": 1, "apple": 2, "youtube": 3}.get(key, 0)
         self._pages.setCurrentIndex(idx)
+        if key == "youtube":
+            self._refresh_youtube_install_gate()
 
     # ------------------------------------------------------------------ #
     # Mode A — By name (iTunes search, preserved behavior)               #
@@ -753,6 +774,233 @@ class AddShowDialog(QDialog):
         return row
 
     # ------------------------------------------------------------------ #
+    # Mode D — YouTube URL                                               #
+    # ------------------------------------------------------------------ #
+
+    def _build_youtube_page(self) -> QWidget:
+        page = QWidget()
+        v = QVBoxLayout(page)
+        v.setContentsMargins(0, 0, 0, 0)
+
+        self._loaded_yt_preview: dict = {}
+
+        # Install gate — shown when yt-dlp is missing.
+        self._yt_install_btn = QPushButton("Install yt-dlp")
+        self._yt_install_btn.clicked.connect(self._open_ytdlp_installer)
+        self._yt_install_btn.setVisible(False)
+        v.addWidget(self._yt_install_btn, 0, Qt.AlignmentFlag.AlignLeft)
+
+        v.addWidget(QLabel("Paste a YouTube channel URL or video URL:"))
+        row = QHBoxLayout()
+        self.youtube_url_input = QLineEdit()
+        self.youtube_url_input.setPlaceholderText("Paste YouTube channel URL or video URL")
+        self.youtube_url_input.editingFinished.connect(self._on_youtube_url_resolve)
+        row.addWidget(self.youtube_url_input, 1)
+        self._yt_resolve_btn = QPushButton("Resolve")
+        self._yt_resolve_btn.clicked.connect(self._on_youtube_url_resolve)
+        row.addWidget(self._yt_resolve_btn)
+        v.addLayout(row)
+
+        self.yt_status = Pill("", kind="idle")
+        self.yt_status.setVisible(False)
+        v.addWidget(self.yt_status, 0, Qt.AlignmentFlag.AlignLeft)
+
+        # Preview card.
+        self.yt_card = QFrame()
+        self.yt_card.setObjectName("YoutubePreviewCard")
+        self.yt_card.setFrameShape(QFrame.Shape.StyledPanel)
+        self.yt_card.setVisible(False)
+        card_v = QVBoxLayout(self.yt_card)
+        self.yt_card_title = QLabel("")
+        f = self.yt_card_title.font()
+        f.setPointSize(f.pointSize() + 4)
+        f.setBold(True)
+        self.yt_card_title.setFont(f)
+        self.yt_card_title.setWordWrap(True)
+        card_v.addWidget(self.yt_card_title)
+        self.yt_card_meta = QLabel("")
+        self.yt_card_meta.setStyleSheet(f"color: {current_tokens()['ink_3']};")
+        card_v.addWidget(self.yt_card_meta)
+        v.addWidget(self.yt_card)
+
+        # Backfill choice (default: Only new).
+        bf_row = QHBoxLayout()
+        bf_row.addWidget(QLabel("Backfill:"))
+        self._yt_backfill_grp = QButtonGroup(self)
+        self._yt_backfill_grp.setExclusive(True)
+        for label in ("All", "Only new", "Last 20", "Last 50"):
+            b = QRadioButton(label)
+            if label == "Only new":
+                b.setChecked(True)
+            self._yt_backfill_grp.addButton(b)
+            bf_row.addWidget(b)
+        bf_row.addStretch(1)
+        v.addLayout(bf_row)
+
+        v.addStretch(1)
+
+        # Add / Cancel.
+        btn_row = QHBoxLayout()
+        btn_row.addStretch(1)
+        cancel = QPushButton("Cancel")
+        cancel.clicked.connect(self.reject)
+        btn_row.addWidget(cancel)
+        self._yt_add_btn = QPushButton("Add")
+        self._yt_add_btn.setDefault(True)
+        self._yt_add_btn.setEnabled(False)
+        self._yt_add_btn.clicked.connect(self._add_from_youtube)
+        btn_row.addWidget(self._yt_add_btn)
+        v.addLayout(btn_row)
+
+        return page
+
+    def _activate_youtube_mode(self) -> None:
+        """Programmatic switch into the YouTube tab (used by tests)."""
+        for b in self._mode_buttons.buttons():
+            if b.property("mode") == "youtube":
+                b.setChecked(True)
+                break
+
+    def _refresh_youtube_install_gate(self) -> None:
+        installed = _ytdlp.is_installed()
+        self._yt_install_btn.setVisible(not installed)
+        self.youtube_url_input.setEnabled(installed)
+        self._yt_resolve_btn.setEnabled(installed)
+
+    def _open_ytdlp_installer(self) -> None:
+        dlg = YtdlpInstallDialog(mode="install", parent=self)
+        dlg.finished_install.connect(self._on_ytdlp_install_finished)
+        dlg.exec()
+
+    def _on_ytdlp_install_finished(self, ok: bool) -> None:
+        if ok:
+            self._refresh_youtube_install_gate()
+            # Retry the URL parse / preview if the user already pasted one.
+            if self.youtube_url_input.text().strip():
+                self._on_youtube_url_resolve()
+
+    def _on_youtube_url_resolve(self) -> None:
+        url = self.youtube_url_input.text().strip()
+        if not url:
+            return
+        if not _ytdlp.is_installed():
+            self._refresh_youtube_install_gate()
+            return
+        try:
+            parsed = parse_youtube_url(url)
+        except YoutubeUrlError as e:
+            self.yt_status.setText(f"Not a YouTube URL: {e}")
+            self.yt_status.set_kind("fail")
+            self.yt_status.setVisible(True)
+            self.yt_card.setVisible(False)
+            self._yt_add_btn.setEnabled(False)
+            return
+
+        self.yt_status.setText("Resolving…")
+        self.yt_status.set_kind("running")
+        self.yt_status.setVisible(True)
+        self._yt_add_btn.setEnabled(False)
+
+        try:
+            if parsed.kind == "handle":
+                cid = _youtube_meta.resolve_handle_to_channel_id(parsed.value)
+            elif parsed.kind == "channel_id":
+                cid = parsed.value
+            else:  # "video"
+                # v1.2: video flow not yet supported in the Add dialog.
+                self.yt_status.setText(
+                    "Adding single videos comes in a follow-up — "
+                    "please paste a channel URL for now."
+                )
+                self.yt_status.set_kind("fail")
+                self._yt_add_btn.setEnabled(False)
+                return
+            preview = _youtube_meta.fetch_channel_preview(cid)
+        except Exception as e:  # noqa: BLE001
+            self.yt_status.setText(f"Error: {e}")
+            self.yt_status.set_kind("fail")
+            return
+
+        self._loaded_yt_preview = preview
+        self.yt_card_title.setText(preview.get("title") or "(untitled)")
+        vc = preview.get("video_count") or 0
+        self.yt_card_meta.setText(f"{vc} video(s) · channel id: {preview.get('channel_id', '')}")
+        self.yt_card.setVisible(True)
+        self.yt_status.setText("Ready")
+        self.yt_status.set_kind("ok")
+        self._yt_add_btn.setEnabled(True)
+
+    def _yt_backfill_choice(self) -> str:
+        btn = self._yt_backfill_grp.checkedButton()
+        return btn.text() if btn else "Only new"
+
+    def _add_from_youtube(self) -> None:
+        preview = self._loaded_yt_preview
+        if not preview:
+            QMessageBox.warning(self, "Missing", "Resolve a channel URL first.")
+            return
+        title = preview.get("title") or "channel"
+        cid = preview.get("channel_id") or ""
+        if not cid:
+            QMessageBox.warning(self, "Missing", "Could not determine channel id.")
+            return
+        slug = slugify(title)
+
+        # Decide enumeration limit based on backfill choice.
+        choice = self._yt_backfill_choice()
+        if choice == "All":
+            limit = None
+        elif choice == "Last 20":
+            limit = 20
+        elif choice == "Last 50":
+            limit = 50
+        else:  # "Only new"
+            limit = 1  # seed the most recent video so future runs see a baseline
+
+        try:
+            videos = _youtube_meta.enumerate_channel_videos(cid, limit=limit)
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.warning(self, "Error", f"Failed to enumerate videos: {e}")
+            return
+
+        # Build a manifest the existing _do_save funnel understands.
+        manifest = []
+        for v in videos:
+            vid = v.get("id") or v.get("url") or ""
+            if not vid:
+                continue
+            manifest.append(
+                {
+                    "guid": vid,
+                    "title": v.get("title") or vid,
+                    "pubDate": v.get("upload_date") or "",
+                    # YouTube videos have no MP3 enclosure — leave blank;
+                    # the YouTube pipeline branch resolves the source itself.
+                    "mp3_url": f"https://www.youtube.com/watch?v={vid}",
+                }
+            )
+
+        # "Only new" semantics: mark seeded baseline as done so the next run
+        # only picks up videos newer than the channel's current head.
+        backlog_mode = (
+            "All"
+            if choice == "All"
+            else ("Last 5" if choice == "Only new" else choice.replace("Last ", "Last "))
+        )
+
+        show_dict = {
+            "slug": slug,
+            "title": title,
+            "rss": rss_url_for_channel_id(cid),
+            "whisper_prompt": "",
+            "manifest": manifest,
+            "backlog": backlog_mode,
+            "artwork_url": preview.get("artwork_url", "") or "",
+            "source": "youtube",
+        }
+        self._do_save(show_dict)
+
+    # ------------------------------------------------------------------ #
     # Save funnel — logic preserved from the pre-rewrite dialog          #
     # ------------------------------------------------------------------ #
 
@@ -775,6 +1023,7 @@ class AddShowDialog(QDialog):
             rss=rss,
             whisper_prompt=(show.get("whisper_prompt") or "").strip(),
             artwork_url=(show.get("artwork_url") or "").strip(),
+            source=(show.get("source") or "podcast"),
         )
         self.updated_watchlist.shows.append(model)
         self.updated_watchlist.save(self.ctx.data_dir / "watchlist.yaml")

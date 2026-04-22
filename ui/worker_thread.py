@@ -27,7 +27,7 @@ import threading
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 
@@ -300,7 +300,7 @@ class CheckAllThread(QThread):
 
     def _pctx_for(self, show) -> PipelineContext:
         """Build a PipelineContext customised for a specific show."""
-        return PipelineContext(
+        kwargs = dict(
             state=self.ctx.state,
             library=self.ctx.library,
             output_root=Path(self.settings.output_root).expanduser(),
@@ -313,6 +313,25 @@ class CheckAllThread(QThread):
             processors=self.settings.whisper_multiproc,
             save_srt=self.settings.save_srt,
         )
+        if getattr(show, "source", "podcast") == "youtube":
+            # Pull the channel id straight off the canonical channel-RSS URL
+            # (`…?channel_id=UC…`). The Watchlist always stores YouTube shows
+            # with this exact RSS shape, but defend against malformed input
+            # by falling back to "" — the pipeline's youtube branch will then
+            # raise rather than silently mis-route to the podcast path.
+            channel_id = ""
+            try:
+                qs = parse_qs(urlparse(show.rss).query)
+                channel_id = (qs.get("channel_id") or [""])[0]
+            except Exception:
+                pass
+            kwargs["source"] = "youtube"
+            kwargs["youtube_channel_id"] = channel_id
+            kwargs["youtube_transcript_pref"] = getattr(show, "youtube_transcript_pref", "") or ""
+            kwargs["youtube_default_transcript_source"] = getattr(
+                self.settings, "youtube_default_transcript_source", "captions"
+            )
+        return PipelineContext(**kwargs)
 
     def run(self) -> None:
         wl: Watchlist = self.ctx.watchlist
