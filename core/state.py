@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from enum import Enum
@@ -58,27 +59,43 @@ CREATE TABLE IF NOT EXISTS meta (
 class StateStore:
     def __init__(self, path: Path):
         self.path = Path(path)
+        # Thread-local persistent connection cache. Opening + closing a
+        # SQLite connection on every _conn() call dominated wall time on
+        # poll-heavy paths (QueueTab refresh, worker DB-claim loop). We
+        # keep one connection per thread for the app's lifetime; it gets
+        # GC'd when the thread exits.
+        self._tls = threading.local()
 
     @contextmanager
     def _conn(self) -> Iterator[sqlite3.Connection]:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        c = sqlite3.connect(self.path)
-        c.row_factory = sqlite3.Row
+        c = getattr(self._tls, "conn", None)
+        if c is None:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            # check_same_thread=False is safe because each thread has its
+            # OWN connection (TLS); we never share a connection across
+            # threads. busy_timeout lets concurrent writers wait briefly
+            # instead of failing immediately on writer-lock contention.
+            c = sqlite3.connect(self.path, check_same_thread=False, timeout=30.0)
+            c.row_factory = sqlite3.Row
+            c.execute("PRAGMA synchronous=NORMAL")
+            c.execute("PRAGMA busy_timeout=30000")
+            self._tls.conn = c
         try:
             yield c
             c.commit()
-        finally:
-            c.close()
+        except Exception:
+            try:
+                c.rollback()
+            except Exception:
+                pass
+            raise
 
     def init_schema(self) -> None:
         with self._conn() as c:
             # WAL mode lets watchdog, worker thread, and UI refresh all
             # read/write concurrently without file-level locking.
-            # synchronous=NORMAL is safe with WAL and significantly
-            # faster than the default FULL.
             try:
                 c.execute("PRAGMA journal_mode=WAL")
-                c.execute("PRAGMA synchronous=NORMAL")
             except Exception:
                 pass  # some filesystems don't support WAL — fall back
             c.executescript(_SCHEMA)
@@ -92,6 +109,17 @@ class StateStore:
                     c.execute(stmt)
                 except Exception:
                     pass
+            # Composite index for the DB-claim query in the worker
+            # (`SELECT … WHERE status='pending' ORDER BY priority DESC,
+            # pub_date ASC LIMIT 1`). Created AFTER the priority ALTER
+            # so a fresh DB has the column available before index build.
+            try:
+                c.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_episodes_claim "
+                    "ON episodes(status, priority DESC, pub_date)"
+                )
+            except Exception:
+                pass
 
     def upsert_episode(
         self,

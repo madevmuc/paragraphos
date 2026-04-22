@@ -10,6 +10,7 @@ Run:
 
 from __future__ import annotations
 
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -573,7 +574,47 @@ def _is_descendant(widget, ancestor) -> bool:
     return False
 
 
+def _acquire_single_instance_lock():
+    """Acquire an exclusive flock on a per-user lock file. Returns the
+    open fd on success (caller must keep it alive for the app's lifetime),
+    or None if another instance already holds the lock.
+
+    Without this, accidental double-launches (Dock click while already
+    running, kill + immediate relaunch races, etc.) leave multiple
+    paragraphos processes hammering the same SQLite DB and the user
+    sees stale UI from a zombie instance.
+    """
+    import fcntl
+
+    from core.paths import user_data_dir
+
+    lock_path = user_data_dir() / "paragraphos.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = open(lock_path, "w")
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fd.write(str(os.getpid()))
+        fd.flush()
+        return fd
+    except BlockingIOError:
+        fd.close()
+        return None
+
+
 def main() -> int:
+    # Single-instance gate. If another paragraphos is already running,
+    # exit silently — the running instance keeps serving the user.
+    _lock_fd = _acquire_single_instance_lock()
+    if _lock_fd is None:
+        print(
+            "Paragraphos is already running — bring the running window to the front.",
+            file=sys.stderr,
+        )
+        return 0
+    # Keep the lock fd alive for the app's lifetime by stashing it on a
+    # module-level holder; the OS releases the flock when the process exits.
+    globals()["_PARAGRAPHOS_LOCK_FD"] = _lock_fd
+
     qapp = ParagraphosQApplication(sys.argv)
     qapp.setQuitOnLastWindowClosed(False)
 

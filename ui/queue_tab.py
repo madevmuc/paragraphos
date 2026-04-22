@@ -130,16 +130,26 @@ class QueueTab(QWidget):
         self.refresh()
 
     def _tick(self):
+        # Header + buttons are cheap (no SQL). Tuning hint is throttled
+        # to 60 s. Table refresh moved to a slower 3 s tick to stop the
+        # 1 Hz full-rebuild-of-400+-rows from dominating the event loop.
         self._tick_header()
         self._update_btns()
-        self._refresh_tuning_hint()
-        # Rebuild the table too — the refresh() call is throttled to
-        # 3 s internally, so firing every second just keeps the
-        # coalesce-window warm. Without this, the table only updated
-        # on on_queue_sized / on_episode_done / on_finished_all signals,
-        # which meant status transitions mid-queue (downloaded →
-        # transcribing) stayed invisible for minutes.
-        self.refresh()
+        # Throttle tuning-hint to once a minute — it calls into core.hw
+        # which probes sysctl on every call. Pointless to do it 60×/min.
+        import time as _t
+
+        now = _t.monotonic()
+        if now - getattr(self, "_tuning_hint_at", 0.0) > 60:
+            self._refresh_tuning_hint()
+            self._tuning_hint_at = now
+        # Table refresh: only if 3 s have passed since the last one. The
+        # previous code fired refresh() every second and relied on the
+        # internal coalesce; that still queried + rebuilt 400+ rows
+        # whenever it landed. Skipping the call entirely when within the
+        # window is the actual win.
+        if now - getattr(self, "_last_table_refresh", 0.0) > 3.0:
+            self.refresh()
 
     def _refresh_tuning_hint(self) -> None:
         """Show a muted 'nicht-empfohlen'-hinweis when parallel_transcribe
