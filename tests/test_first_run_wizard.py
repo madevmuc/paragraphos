@@ -125,3 +125,36 @@ def test_whisper_install_failure_re_attaches_retry(monkeypatch):
     assert w._whisper_started is False
     assert w.whisper_row.action_btn.isVisible()
     assert w.whisper_row.action_btn.text() == "Retry"
+
+
+def test_run_brew_pins_runner_and_shows_elapsed(monkeypatch):
+    _ = QApplication.instance() or QApplication([])
+    from PyQt6.QtCore import QObject, pyqtSignal
+
+    from ui import first_run_wizard as wiz
+    from ui import install_runner
+
+    started = {"cmd": None, "start_called": False}
+
+    class StubRunner(QObject):
+        line = pyqtSignal(str)
+        finished = pyqtSignal(int)
+
+        def __init__(self, cmd, parent=None):
+            super().__init__(parent)
+            started["cmd"] = cmd
+
+        def start(self):
+            started["start_called"] = True
+
+    monkeypatch.setattr(install_runner, "BrewRunner", StubRunner)
+
+    w = wiz.FirstRunWizard()
+    w._run_brew(w.whisper_row, ["brew", "install", "whisper-cpp"], label="whisper-cpp")
+
+    assert started["cmd"] == ["brew", "install", "whisper-cpp"]
+    assert started["start_called"] is True
+    pinned = getattr(w, "_runner_whisper-cpp", None)
+    assert pinned is not None
+    assert isinstance(pinned, StubRunner)
+    assert "installing" in w.whisper_row.pill.text()

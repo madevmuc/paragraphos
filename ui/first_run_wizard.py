@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import subprocess
 import threading
+import time
 
 from PyQt6.QtCore import QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
@@ -302,25 +303,51 @@ class FirstRunWizard(QDialog):
         )
         self._refresh()
 
-    def _install_whisper(self):
-        self.whisper_row.set_running("installing…", sub="brew install whisper-cpp…")
+    def _install_whisper(self) -> None:
+        self._run_brew(self.whisper_row, ["brew", "install", "whisper-cpp"], label="whisper-cpp")
 
-        def run():
-            p = deps.install_whisper_cpp()
-            msg = "" if p.returncode == 0 else p.stderr[-200:]
-            QTimer.singleShot(0, lambda: self._after_cli(self.whisper_row, p.returncode == 0, msg))
+    def _install_ffmpeg(self) -> None:
+        self._run_brew(self.ffmpeg_row, ["brew", "install", "ffmpeg"], label="ffmpeg")
 
-        threading.Thread(target=run, daemon=True).start()
+    def _run_brew(self, row: "StepRow", cmd: list[str], *, label: str) -> None:
+        """Streaming brew install: pill shows elapsed seconds, sub-copy shows
+        the latest brew stdout line. Restores the row to 'ok' on success or
+        wires a Retry button via _after_cli on failure."""
+        from ui import install_runner
 
-    def _install_ffmpeg(self):
-        self.ffmpeg_row.set_running("installing…", sub="brew install ffmpeg…")
+        start = time.monotonic()
+        row.set_running("installing… 0s", sub=f"starting brew install {label}…")
 
-        def run():
-            p = deps.install_ffmpeg()
-            msg = "" if p.returncode == 0 else p.stderr[-200:]
-            QTimer.singleShot(0, lambda: self._after_cli(self.ffmpeg_row, p.returncode == 0, msg))
+        runner = install_runner.BrewRunner(cmd, parent=self)
+        # Pin the runner on self so Python's GC doesn't collect it mid-install
+        # (the daemon thread would then crash when emitting signals into a
+        # dead QObject).
+        setattr(self, f"_runner_{label}", runner)
 
-        threading.Thread(target=run, daemon=True).start()
+        ticker = QTimer(self)
+        ticker.setInterval(1000)
+
+        def tick() -> None:
+            elapsed = int(time.monotonic() - start)
+            row.pill.setText(f"installing… {elapsed}s")
+
+        ticker.timeout.connect(tick)
+        ticker.start()
+        tick()
+
+        runner.line.connect(row.set_sub_line)
+
+        def on_finished(code: int) -> None:
+            ticker.stop()
+            # -1 is BrewRunner._pump's abnormal sentinel.
+            self._after_cli(
+                row,
+                ok=(code == 0),
+                err=f"brew install {label} failed (exit {code})" if code != 0 else "",
+            )
+
+        runner.finished.connect(on_finished)
+        runner.start()
 
     def _after_cli(self, row: "StepRow", ok: bool, err: str) -> None:
         if ok:
