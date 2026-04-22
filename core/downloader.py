@@ -14,8 +14,15 @@ from core.security import (
     MAX_MP3_BYTES,
     DownloadTooLargeError,
     is_allowed_audio_content_type,
+    looks_like_audio,
     safe_url,
 )
+
+# Content-Type values that are accepted optimistically: many small podcast
+# hosts and CDNs serve MP3 with a generic binary type. We verify the first
+# chunk's magic bytes downstream so a real text/html or PDF served as
+# octet-stream still fails fast, just at byte level instead of header level.
+_OCTET_STREAM_PREFIXES = ("application/octet-stream", "binary/octet-stream")
 
 logger = logging.getLogger(__name__)
 
@@ -160,10 +167,14 @@ def _download_once(
     ) as r:
         r.raise_for_status()
         # Content-Type sniff — reject obvious non-audio (HTML, JSON, etc.).
+        # The allowlist now includes octet-stream variants (many podcast hosts
+        # serve MP3 with a generic binary type); we verify those with a
+        # magic-byte sniff on the first chunk below.
         ct = r.headers.get("content-type", "")
         if ct and not is_allowed_audio_content_type(ct):
-            if not ct.lower().startswith("application/octet-stream"):
-                raise ValueError(f"refusing non-audio Content-Type: {ct!r}")
+            raise ValueError(f"refusing non-audio Content-Type: {ct!r}")
+        ct_lower = ct.lower().split(";", 1)[0].strip()
+        needs_magic_sniff = any(ct_lower.startswith(p) for p in _OCTET_STREAM_PREFIXES)
 
         # If we asked for a Range and got 200 back, the server ignored it.
         # Truncate the partial and restart from zero.
@@ -179,8 +190,27 @@ def _download_once(
                 )
                 resume_from = 0
 
+        first_chunk = True
         with tmp.open(mode) as f:
             for block in r.iter_bytes(chunk):
+                if first_chunk:
+                    # Defence-in-depth: octet-stream is accepted optimistically
+                    # at header level, but the leading bytes must look like a
+                    # known audio container. A real text/html or PDF served
+                    # with a binary CT still fails fast here.
+                    # Skip the sniff when resuming a partial — the first block
+                    # is mid-file and won't carry a header magic.
+                    if needs_magic_sniff and not resume_from and not looks_like_audio(block):
+                        f.close()
+                        try:
+                            tmp.unlink()
+                        except OSError:
+                            pass
+                        raise ValueError(
+                            f"refusing non-audio payload (CT was {ct!r}, "
+                            "magic bytes don't match audio)"
+                        )
+                    first_chunk = False
                 f.write(block)
                 written += len(block)
                 if written > max_bytes:

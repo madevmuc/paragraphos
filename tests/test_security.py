@@ -56,13 +56,34 @@ def test_safe_url_private_override_allowed():
     assert safe_url("http://127.0.0.1/rss", allow_private=True) == "http://127.0.0.1/rss"
 
 
-def test_allowed_audio_content_types():
-    assert is_allowed_audio_content_type("audio/mpeg")
-    assert is_allowed_audio_content_type("audio/mp4;codecs=mp4a.40.2")
-    assert is_allowed_audio_content_type("application/ogg")
-    assert not is_allowed_audio_content_type("text/html")
-    assert not is_allowed_audio_content_type("application/json")
-    assert not is_allowed_audio_content_type("")
+@pytest.mark.parametrize(
+    "ct",
+    [
+        "audio/mpeg",
+        "audio/mp4",
+        "audio/mp4;codecs=mp4a.40.2",
+        "application/ogg",
+        "application/octet-stream",
+        "binary/octet-stream",
+        "audio/mpeg; charset=binary",
+    ],
+)
+def test_allowed_audio_content_types(ct):
+    assert is_allowed_audio_content_type(ct)
+
+
+@pytest.mark.parametrize(
+    "ct",
+    [
+        "text/html",
+        "application/json",
+        "image/png",
+        "video/mp4",
+        "",
+    ],
+)
+def test_rejected_content_types(ct):
+    assert not is_allowed_audio_content_type(ct)
 
 
 # ── Path traversal ───────────────────────────────────────────

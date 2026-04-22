@@ -29,7 +29,34 @@ ALLOWED_SCHEMES = frozenset({"http", "https"})
 ALLOWED_AUDIO_CT_PREFIXES = (
     "audio/",
     "application/ogg",
+    "application/octet-stream",
+    "binary/octet-stream",
 )
+
+
+# Magic bytes for common audio container formats. Used by the downloader
+# AFTER the first chunk is read to confirm an octet-stream response is
+# actually audio, not e.g. HTML mistakenly served as binary.
+def looks_like_audio(first_bytes: bytes) -> bool:
+    """Return True if the leading bytes match a known audio magic.
+
+    Recognised: ID3 (tagged MP3), MPEG audio frame sync, fLaC (FLAC),
+    OggS (Vorbis/Opus), RIFF (WAV), 'ftyp' inside MP4 box.
+    """
+    if not first_bytes:
+        return False
+    head = first_bytes[:12]
+    if head.startswith(b"ID3"):
+        return True
+    if len(head) >= 2 and head[0] == 0xFF and (head[1] & 0xE0) == 0xE0:
+        return True  # MPEG audio frame sync
+    if head.startswith(b"fLaC") or head.startswith(b"OggS"):
+        return True
+    if head.startswith(b"RIFF"):
+        return True
+    if len(head) >= 8 and head[4:8] == b"ftyp":
+        return True  # MP4 / M4A box
+    return False
 
 
 class UnsafeURLError(ValueError):
