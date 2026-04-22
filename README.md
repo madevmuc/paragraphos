@@ -321,7 +321,11 @@ Python (PSF-2.0), PyQt6 (GPL-3.0 / Riverbank Commercial), `whisper.cpp`
 (MIT), OpenAI Whisper model weights (MIT), APScheduler (MIT), watchdog
 (Apache-2.0), feedparser (BSD-2), httpx (BSD-3), pydantic (MIT),
 beautifulsoup4 (MIT), lxml (BSD-3), PyYAML (MIT), ffmpeg (LGPL-2.1/GPL),
-Homebrew (BSD-2), defusedxml (PSF-2.0).
+Homebrew (BSD-2), defusedxml (PSF-2.0), yt-dlp (Unlicense / public
+domain — lazy-installed at runtime, not bundled in the .app).
+
+For a fuller breakdown including transitive deps and distribution
+notes, see [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
 
 ## Acknowledgements
 
