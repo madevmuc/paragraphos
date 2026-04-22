@@ -46,7 +46,7 @@ class Watchlist(BaseModel):
 
 
 class Settings(BaseModel):
-    output_root: str = "~/dev/knowledge-hub/raw/transcripts"
+    output_root: str = "~/Desktop/Paragraphos/transcripts"
     daily_check_time: str = "09:00"
     catch_up_missed: bool = True
     # Auto-start queue when the app launches. On by default so opening
@@ -54,12 +54,16 @@ class Settings(BaseModel):
     # queue to sit idle until you click Start.
     auto_start_queue: bool = True
     notify_on_success: bool = True
+    # Flipped True the first time the user completes the first-run setup
+    # dialog. Legacy users with customised paths get auto-backfilled on load
+    # (see ``backfill_setup_completed``) so the dialog doesn't ambush them.
+    setup_completed: bool = False
     mp3_retention_days: int = 7
     delete_mp3_after_transcribe: bool = True
     bandwidth_limit_mbps: int = 0
     parallel_transcribe: int = 1
     # Block E defaults
-    obsidian_vault_path: str = "~/dev/knowledge-hub"
+    obsidian_vault_path: str = ""
     obsidian_vault_name: str = "knowledge-hub"
     export_root: str = "~/Downloads"
     whisper_model: str = "large-v3-turbo"
@@ -78,7 +82,7 @@ class Settings(BaseModel):
     # knowledge-hub repo). When set AND the directory contains
     # raw/.last_compiled, the Shows tab shows a 'N transcripts since last
     # compile' banner. Empty string disables the banner.
-    knowledge_hub_root: str = "~/dev/knowledge-hub"
+    knowledge_hub_root: str = ""
     github_repo: str = "madevmuc/paragraphos"  # override if you forked
 
     @field_validator("daily_check_time")
@@ -93,7 +97,9 @@ class Settings(BaseModel):
         if not path.exists():
             return cls()
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        return cls.model_validate(data)
+        s = cls.model_validate(data)
+        backfill_setup_completed(s)
+        return s
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -101,3 +107,19 @@ class Settings(BaseModel):
             yaml.safe_dump(self.model_dump(), allow_unicode=True, sort_keys=False),
             encoding="utf-8",
         )
+
+
+def backfill_setup_completed(s: Settings) -> None:
+    """Legacy users had the setup steps implicitly done through manual
+    edits — flip the new ``setup_completed`` flag True so the first-run
+    setup dialog doesn't ambush them on upgrade."""
+    if s.setup_completed:
+        return
+    defaults = Settings()
+    customised = (
+        s.output_root != defaults.output_root
+        or s.obsidian_vault_path != defaults.obsidian_vault_path
+        or s.knowledge_hub_root != defaults.knowledge_hub_root
+    )
+    if customised:
+        s.setup_completed = True
