@@ -33,6 +33,7 @@ from core.discovery import find_rss_from_url, search_itunes
 from core.models import Show
 from core.prompt_gen import suggest_whisper_prompt
 from core.rss import FeedHealth, build_manifest_with_url, feed_metadata
+from core.sanitize import slugify
 from ui.themes import current_tokens
 from ui.widgets.pill import Pill
 
@@ -306,7 +307,7 @@ class AddShowDialog(QDialog):
             return
         self.name_rss.setText(canonical)
         self.name_title.setText(meta["title"])
-        default_slug = (meta["title"] or "show").lower().replace(" ", "-")
+        default_slug = slugify(meta["title"] or "")
         self.name_slug.setText(default_slug)
         prompt = suggest_whisper_prompt(
             title=meta["title"],
@@ -452,7 +453,7 @@ class AddShowDialog(QDialog):
     def _add_from_url(self) -> None:
         meta = self._loaded_meta
         title = meta.get("title") or "show"
-        slug = title.lower().replace(" ", "-")
+        slug = slugify(title)
         prompt = suggest_whisper_prompt(
             title=title,
             author=meta.get("author", ""),
@@ -593,7 +594,7 @@ class AddShowDialog(QDialog):
     def _add_from_apple(self) -> None:
         meta = self._loaded_meta
         title = meta.get("title") or "show"
-        slug = title.lower().replace(" ", "-")
+        slug = slugify(title)
         prompt = suggest_whisper_prompt(
             title=title,
             author=meta.get("author", ""),
