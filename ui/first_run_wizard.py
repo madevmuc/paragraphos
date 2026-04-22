@@ -23,7 +23,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from core import deps
+from core import compat, deps
 from core.model_download import download_model
 from ui.themes import current_tokens
 from ui.widgets import Pill
@@ -144,12 +144,13 @@ class FirstRunWizard(QDialog):
 
         v.addWidget(_make_divider(self))
 
+        self.compat_row = StepRow("This Mac")
         self.brew_row = StepRow("Homebrew (package manager)")
         self.whisper_row = StepRow("whisper-cpp (transcription engine)")
         self.ffmpeg_row = StepRow("ffmpeg (audio decoding)")
         self.model_row = StepRow("whisper large-v3-turbo model (~1.5 GB)")
 
-        rows = (self.brew_row, self.whisper_row, self.ffmpeg_row, self.model_row)
+        rows = (self.compat_row, self.brew_row, self.whisper_row, self.ffmpeg_row, self.model_row)
         for i, r in enumerate(rows):
             v.addWidget(r)
             if i < len(rows) - 1:
@@ -206,6 +207,7 @@ class FirstRunWizard(QDialog):
             status = deps.check()
             # Build tooltip string for debugging
             parts = [
+                f"compat: {'✓' if compat.check_compat().all_blocking_ok else '✗'}",
                 f"brew: {'✓' if status.brew else '✗'}",
                 f"whisper-cli: {'✓' if status.whisper_cli else '✗'}",
                 f"ffmpeg: {'✓' if status.ffmpeg else '✗'}",
@@ -220,6 +222,17 @@ class FirstRunWizard(QDialog):
 
     # ---- refresh --------------------------------------------------------
     def _refresh(self):
+        c = compat.check_compat()
+        if not c.all_blocking_ok:
+            self.compat_row.pill.setText("blocked")
+            self.compat_row.pill.set_kind("fail")
+            self.compat_row._set_sub(" · ".join(c.blocking_reasons))
+        elif c.advisories:
+            self.compat_row.pill.setText("ok (advisories)")
+            self.compat_row.pill.set_kind("ok")
+            self.compat_row._set_sub(" · ".join(c.advisories))
+        else:
+            self.compat_row.set_ok("compatible")
         status = deps.check()
         if status.brew:
             self.brew_row.set_ok()
@@ -255,7 +268,13 @@ class FirstRunWizard(QDialog):
             self._download_model()
         # else: already downloading; _download_model has set row state.
         # Gate Continue on the full four-check set.
-        all_ok = status.brew and status.whisper_cli and status.ffmpeg and status.model
+        all_ok = (
+            c.all_blocking_ok
+            and status.brew
+            and status.whisper_cli
+            and status.ffmpeg
+            and status.model
+        )
         self.close_btn.setEnabled(all_ok)
 
     def _install_brew(self):

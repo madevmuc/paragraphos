@@ -166,3 +166,63 @@ def test_run_brew_pins_runner_and_shows_elapsed(monkeypatch):
     runner.finished.emit(0)
     QCoreApplication.processEvents()
     assert "installing" not in w.whisper_row.pill.text().lower()
+
+
+def test_wizard_blocks_continue_on_intel(monkeypatch):
+    _ = QApplication.instance() or QApplication([])
+    from core import compat, deps
+    from ui import first_run_wizard as wiz
+
+    # All deps present — but hardware check blocks.
+    monkeypatch.setattr(
+        compat,
+        "check_compat",
+        lambda: compat.CompatStatus(
+            blocking_reasons=["Apple Silicon required — this Mac reports arch 'x86_64'."]
+        ),
+    )
+    monkeypatch.setattr(
+        deps,
+        "check",
+        lambda: deps.DepStatus(brew=True, whisper_cli=True, ffmpeg=True, model=True),
+    )
+    # Avoid any install side-effects.
+    monkeypatch.setattr(wiz.FirstRunWizard, "_install_whisper", lambda self: None)
+    monkeypatch.setattr(wiz.FirstRunWizard, "_install_ffmpeg", lambda self: None)
+    monkeypatch.setattr(wiz.FirstRunWizard, "_download_model", lambda self: None)
+
+    w = wiz.FirstRunWizard()
+    w._refresh()
+
+    assert not w.close_btn.isEnabled()
+    assert "Apple Silicon" in w.compat_row.subcopy.text()
+
+
+def test_wizard_advisory_shows_but_allows_continue(monkeypatch):
+    _ = QApplication.instance() or QApplication([])
+    from core import compat, deps
+    from ui import first_run_wizard as wiz
+
+    # Compat: advisory-only, all deps present.
+    monkeypatch.setattr(
+        compat,
+        "check_compat",
+        lambda: compat.CompatStatus(
+            advisories=["Only 6 GB RAM detected — transcription will be slow (≥ 8 GB recommended)."]
+        ),
+    )
+    monkeypatch.setattr(
+        deps,
+        "check",
+        lambda: deps.DepStatus(brew=True, whisper_cli=True, ffmpeg=True, model=True),
+    )
+    monkeypatch.setattr(wiz.FirstRunWizard, "_install_whisper", lambda self: None)
+    monkeypatch.setattr(wiz.FirstRunWizard, "_install_ffmpeg", lambda self: None)
+    monkeypatch.setattr(wiz.FirstRunWizard, "_download_model", lambda self: None)
+
+    w = wiz.FirstRunWizard()
+    w._refresh()
+
+    assert w.close_btn.isEnabled()
+    assert "RAM" in w.compat_row.subcopy.text()
+    assert "advisor" in w.compat_row.pill.text().lower()
