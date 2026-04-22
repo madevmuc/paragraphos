@@ -61,6 +61,22 @@ def test_add_youtube_channel_writes_watchlist_and_enqueues(tmp_path, monkeypatch
     dlg.youtube_url_input.setText(f"https://www.youtube.com/channel/{cid}")
     dlg._on_youtube_url_resolve()
 
+    # Resolve runs on a worker thread now — pump the event loop until done.
+    import time
+
+    _start = time.monotonic()
+    while time.monotonic() - _start < 3.0:
+        t = getattr(dlg, "_yt_resolve_thread", None)
+        if t is None or not t.isRunning():
+            from PyQt6.QtWidgets import QApplication
+
+            QApplication.instance().processEvents()
+            break
+        from PyQt6.QtWidgets import QApplication
+
+        QApplication.instance().processEvents()
+        time.sleep(0.01)
+
     # Pick "Last 20" so all 20 mocked videos stay pending.
     for btn in dlg._yt_backfill_grp.buttons():
         if btn.text() == "Last 20":

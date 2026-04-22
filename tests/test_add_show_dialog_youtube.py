@@ -29,6 +29,20 @@ def _yt_mode_present(dlg) -> bool:
     return any(b.property("mode") == "youtube" for b in dlg._mode_buttons.buttons())
 
 
+def _wait_for_resolve(dlg, timeout_ms: int = 3000) -> None:
+    """Pump the event loop until the YouTube resolve thread finishes."""
+    import time
+
+    start = time.monotonic()
+    while time.monotonic() - start < timeout_ms / 1000.0:
+        thread = getattr(dlg, "_yt_resolve_thread", None)
+        if thread is None or not thread.isRunning():
+            _app_ref.processEvents()
+            return
+        _app_ref.processEvents()
+        time.sleep(0.01)
+
+
 def test_youtube_mode_visible_when_setting_on(tmp_path):
     dlg = _make_dialog(tmp_path, Settings(sources_youtube=True))
     assert _yt_mode_present(dlg)
@@ -59,7 +73,7 @@ def test_paste_channel_url_triggers_preview_fetch(tmp_path, monkeypatch):
     dlg._activate_youtube_mode()
     dlg.youtube_url_input.setText("https://www.youtube.com/channel/UCabc1234567890123456789")
     dlg._on_youtube_url_resolve()
-    # Resolution runs synchronously in the test entrypoint.
+    _wait_for_resolve(dlg)
     assert called.get("cid") == "UCabc1234567890123456789"
     assert dlg._loaded_yt_preview["title"] == "Mr Beast"
 
@@ -82,6 +96,7 @@ def test_handle_url_resolves_then_previews(tmp_path, monkeypatch):
     dlg._activate_youtube_mode()
     dlg.youtube_url_input.setText("https://www.youtube.com/@somehandle")
     dlg._on_youtube_url_resolve()
+    _wait_for_resolve(dlg)
     assert seen.get("cid") == "UCabc1234567890123456789"
 
 
@@ -105,6 +120,7 @@ def test_add_yt_channel_persists_show(tmp_path, monkeypatch):
     dlg._activate_youtube_mode()
     dlg.youtube_url_input.setText(f"https://www.youtube.com/channel/{cid}")
     dlg._on_youtube_url_resolve()
+    _wait_for_resolve(dlg)
     # Bypass the modal accept() — call _do_save directly via the YT add path.
     dlg._add_from_youtube()
     shows = dlg.updated_watchlist.shows

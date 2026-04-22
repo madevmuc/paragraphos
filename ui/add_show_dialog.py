@@ -103,6 +103,34 @@ class _AppleResolveThread(QThread):
         self.done.emit(out)
 
 
+class _YoutubeResolveThread(QThread):
+    """Resolve a YouTube handle/channel URL → channel preview off-thread.
+
+    yt-dlp HTTP calls take 5–30 s. Running them on the GUI thread freezes
+    the app; macOS then SIGTERMs the unresponsive process.
+    """
+
+    done = pyqtSignal(dict)  # {ok, preview, error}
+
+    def __init__(self, parsed_kind: str, parsed_value: str, parent=None):
+        super().__init__(parent)
+        self.parsed_kind = parsed_kind
+        self.parsed_value = parsed_value
+
+    def run(self) -> None:
+        out: dict = {"ok": False}
+        try:
+            if self.parsed_kind == "handle":
+                cid = _youtube_meta.resolve_handle_to_channel_id(self.parsed_value)
+            else:  # "channel_id"
+                cid = self.parsed_value
+            preview = _youtube_meta.fetch_channel_preview(cid)
+            out.update({"ok": True, "preview": preview})
+        except Exception as e:  # noqa: BLE001
+            out["error"] = str(e)
+        self.done.emit(out)
+
+
 class _CoverSignals(QObject):
     done = pyqtSignal(int, QPixmap)
 
@@ -902,31 +930,38 @@ class AddShowDialog(QDialog):
             self._yt_add_btn.setEnabled(False)
             return
 
-        self.yt_status.setText("Resolving…")
+        if parsed.kind == "video":
+            # v1.2: video flow not yet supported in the Add dialog.
+            self.yt_status.setText(
+                "Adding single videos comes in a follow-up — please paste a channel URL for now."
+            )
+            self.yt_status.set_kind("fail")
+            self._yt_add_btn.setEnabled(False)
+            return
+
+        self.yt_status.setText("Resolving (yt-dlp can take 5–30s)…")
         self.yt_status.set_kind("running")
         self.yt_status.setVisible(True)
         self._yt_add_btn.setEnabled(False)
+        self._yt_resolve_btn.setEnabled(False)
+        self.youtube_url_input.setEnabled(False)
 
-        try:
-            if parsed.kind == "handle":
-                cid = _youtube_meta.resolve_handle_to_channel_id(parsed.value)
-            elif parsed.kind == "channel_id":
-                cid = parsed.value
-            else:  # "video"
-                # v1.2: video flow not yet supported in the Add dialog.
-                self.yt_status.setText(
-                    "Adding single videos comes in a follow-up — "
-                    "please paste a channel URL for now."
-                )
-                self.yt_status.set_kind("fail")
-                self._yt_add_btn.setEnabled(False)
-                return
-            preview = _youtube_meta.fetch_channel_preview(cid)
-        except Exception as e:  # noqa: BLE001
-            self.yt_status.setText(f"Error: {e}")
+        # Off-thread: yt-dlp HTTP calls would otherwise block the GUI thread
+        # and macOS would SIGTERM the unresponsive process.
+        self._yt_resolve_thread = _YoutubeResolveThread(parsed.kind, parsed.value, self)
+        self._yt_resolve_thread.done.connect(self._on_youtube_resolve_done)
+        self._yt_resolve_thread.start()
+
+    def _on_youtube_resolve_done(self, out: dict) -> None:
+        # Re-enable input/resolve regardless of outcome.
+        self._yt_resolve_btn.setEnabled(True)
+        self.youtube_url_input.setEnabled(True)
+        if not out.get("ok"):
+            self.yt_status.setText(f"Error: {out.get('error', 'unknown')}")
             self.yt_status.set_kind("fail")
+            self._yt_add_btn.setEnabled(False)
             return
-
+        preview = out["preview"]
         self._loaded_yt_preview = preview
         self.yt_card_title.setText(preview.get("title") or "(untitled)")
         vc = preview.get("video_count") or 0
