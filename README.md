@@ -81,7 +81,7 @@ auto-detected on macOS via `sysctl`. Full dark-mode polish.
 ### Option B — Build from source
 
 ```bash
-git clone https://github.com/<you>/paragraphos.git
+git clone https://github.com/madevmuc/paragraphos.git
 cd paragraphos
 
 python3.12 -m venv .venv
