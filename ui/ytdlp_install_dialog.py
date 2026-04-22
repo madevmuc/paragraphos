@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Literal
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
@@ -42,7 +43,7 @@ class YtdlpInstallDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Installing yt-dlp" if mode == "install" else "Updating yt-dlp")
         self._mode = mode
-        self.setMinimumWidth(380)
+        self.setMinimumWidth(420)
         layout = QVBoxLayout(self)
         layout.addWidget(
             QLabel(
@@ -54,11 +55,30 @@ class YtdlpInstallDialog(QDialog):
         self._bar = QProgressBar()
         self._bar.setRange(0, 100)
         layout.addWidget(self._bar)
+
+        self.progress_label = QLabel("Starting…")
+        self.progress_label.setStyleSheet("color: gray; font-size: 11px;")
+        layout.addWidget(self.progress_label)
+
         self._buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
         self._buttons.rejected.connect(self.reject)
         layout.addWidget(self._buttons)
 
+        self._started_at: float | None = None
+        self._auto_started = False
+
+    def showEvent(self, ev):  # noqa: N802 (Qt API)
+        super().showEvent(ev)
+        if not self._auto_started:
+            self._auto_started = True
+            self.start()
+
     def start(self) -> None:
+        # Idempotent: if a worker thread already exists, don't spawn another.
+        if getattr(self, "_thread", None) is not None:
+            return
+        self._auto_started = True
+        self._started_at = time.monotonic()
         self._thread = QThread(self)
         self._worker = _Worker(self._mode)
         self._worker.moveToThread(self._thread)
@@ -68,8 +88,26 @@ class YtdlpInstallDialog(QDialog):
         self._thread.start()
 
     def _on_progress(self, done: int, total: int) -> None:
-        if total > 0:
-            self._bar.setValue(int(100 * done / total))
+        pct = int(100 * done / total) if total > 0 else 0
+        self._bar.setValue(pct)
+        done_mb = done / (1024 * 1024)
+        total_mb = total / (1024 * 1024)
+        eta_str = self._eta_str(done, total)
+        self.progress_label.setText(f"{done_mb:.1f} MB / {total_mb:.1f} MB · {pct}%{eta_str}")
+
+    def _eta_str(self, done: int, total: int) -> str:
+        if not (done and total and self._started_at):
+            return ""
+        elapsed = time.monotonic() - self._started_at
+        if elapsed < 0.5 or done >= total:
+            return ""
+        speed = done / elapsed  # bytes/sec
+        if speed <= 0:
+            return ""
+        remaining = (total - done) / speed
+        if remaining > 60:
+            return f"  ·  ~{int(remaining // 60)}m {int(remaining % 60)}s remaining"
+        return f"  ·  ~{int(remaining)}s remaining"
 
     def _on_done(self, success: bool, message: str) -> None:
         self._thread.quit()

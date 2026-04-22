@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Optional
 from urllib.parse import urlparse
 
-from PyQt6.QtCore import QObject, QRunnable, Qt, QThread, QThreadPool, pyqtSignal
+from PyQt6.QtCore import QObject, QRunnable, Qt, QThread, QThreadPool, QTimer, pyqtSignal
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
     QButtonGroup,
@@ -221,6 +221,11 @@ class AddShowDialog(QDialog):
         self._pages.setCurrentIndex(idx)
         if key == "youtube":
             self._refresh_youtube_install_gate()
+            if not _ytdlp.is_installed() and not getattr(self, "_yt_install_attempted", False):
+                self._yt_install_attempted = True
+                # Defer so the YouTube page is visible before the install
+                # dialog appears centred over it.
+                QTimer.singleShot(0, self._open_ytdlp_installer)
 
     # ------------------------------------------------------------------ #
     # Mode A — By name (iTunes search, preserved behavior)               #
@@ -870,6 +875,7 @@ class AddShowDialog(QDialog):
     def _open_ytdlp_installer(self) -> None:
         dlg = YtdlpInstallDialog(mode="install", parent=self)
         dlg.finished_install.connect(self._on_ytdlp_install_finished)
+        # showEvent triggers start() automatically — no manual start() needed.
         dlg.exec()
 
     def _on_ytdlp_install_finished(self, ok: bool) -> None:
