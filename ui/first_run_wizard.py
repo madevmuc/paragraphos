@@ -188,6 +188,11 @@ class FirstRunWizard(QDialog):
         self._ffmpeg_started = False
         self._model_started = False
 
+        # Keeps BrewRunner instances alive for the duration of each install.
+        # Without a strong reference Python's GC can collect the runner while
+        # its daemon pump thread is still emitting signals into it.
+        self._runners: dict[str, object] = {}
+
         QTimer.singleShot(0, self._refresh)
 
     def _on_recheck_clicked(self) -> None:
@@ -319,10 +324,7 @@ class FirstRunWizard(QDialog):
         row.set_running("installing… 0s", sub=f"starting brew install {label}…")
 
         runner = install_runner.BrewRunner(cmd, parent=self)
-        # Pin the runner on self so Python's GC doesn't collect it mid-install
-        # (the daemon thread would then crash when emitting signals into a
-        # dead QObject).
-        setattr(self, f"_runner_{label}", runner)
+        self._runners[label] = runner
 
         ticker = QTimer(self)
         ticker.setInterval(1000)
@@ -339,6 +341,7 @@ class FirstRunWizard(QDialog):
 
         def on_finished(code: int) -> None:
             ticker.stop()
+            ticker.deleteLater()
             # -1 is BrewRunner._pump's abnormal sentinel.
             self._after_cli(
                 row,

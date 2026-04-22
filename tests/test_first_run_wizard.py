@@ -154,7 +154,15 @@ def test_run_brew_pins_runner_and_shows_elapsed(monkeypatch):
 
     assert started["cmd"] == ["brew", "install", "whisper-cpp"]
     assert started["start_called"] is True
-    pinned = getattr(w, "_runner_whisper-cpp", None)
-    assert pinned is not None
-    assert isinstance(pinned, StubRunner)
+    assert "whisper-cpp" in w._runners
+    assert isinstance(w._runners["whisper-cpp"], StubRunner)
     assert "installing" in w.whisper_row.pill.text()
+
+    # Simulate the brew process completing successfully — the row should
+    # transition off the "installing…" pill via _after_cli.
+    from PyQt6.QtCore import QCoreApplication
+
+    runner = w._runners["whisper-cpp"]
+    runner.finished.emit(0)
+    QCoreApplication.processEvents()
+    assert "installing" not in w.whisper_row.pill.text().lower()
