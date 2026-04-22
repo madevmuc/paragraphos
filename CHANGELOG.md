@@ -1,5 +1,42 @@
 # Paragraphos Changelog
 
+## v1.1.9 — 2026-04-22 (onboarding + search polish)
+
+### Added
+- **Setup guide.** After the first-run wizard, a 3-page dialog asks
+  where transcripts should go (default `~/Desktop/Paragraphos/transcripts`)
+  and whether you use Obsidian. Picks up `.obsidian/`-marked vaults and
+  can co-locate transcripts inside them. Re-runnable via
+  Help → Re-run setup guide.
+- **Rich search-results table.** Name-mode results now show cover,
+  title, author, episode count, newest episode date + title. Feed
+  probes run lazily in the background, viewport-aware.
+- **Scroll-triggered auto-load.** Reaching the bottom of the result
+  list auto-fetches the next 50, up to iTunes' 200-item cap.
+- **Output formats toggle.** New Settings → Output formats group.
+  Markdown (.md) is always saved; SRT (.srt) is opt-out. Useful
+  reminder that SRT carries per-segment timestamps for timestamped
+  quotes.
+- **HW-aware first-run defaults.** On a truly fresh install (no prior
+  settings file), `parallel_transcribe` and `whisper_multiproc` are
+  pre-filled from `core.hw.recommended_*()`. Saved settings are never
+  overridden.
+
+### Changed
+- Folder pickers default to `~/Desktop` when the current field is empty.
+- Obsidian settings consolidated into a dedicated group box.
+- New-install defaults no longer point at author-specific paths.
+- Slug auto-fill uses proper Unicode-aware slugify on every add path
+  (CLI, OPML import, UI add-show).
+
+### Fixed
+- Apple Podcasts add path now sets a slug (previously empty).
+- Wiki-compile banner no longer shows for users who aren't using
+  Obsidian — it made no sense outside an Obsidian workflow.
+- Deleting a show or episode now preserves `.md` + `.srt`; only the
+  `.mp3` is removed. Transcription costs compute; re-downloading
+  audio from the feed is free.
+
 ## v1.1.8 — 2026-04-22 (wizard v2)
 
 ### Fixed
