@@ -23,7 +23,7 @@ class PodcastMatch:
 
 
 def search_itunes(
-    term: str, *, limit: int = 10, country: str = "de", timeout: float = 10.0
+    term: str, *, limit: int = 50, country: str = "de", timeout: float = 10.0
 ) -> List[PodcastMatch]:
     r = httpx.get(
         ITUNES_SEARCH_URL,
