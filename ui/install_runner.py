@@ -27,6 +27,8 @@ class BrewRunner(QObject):
         self._proc: subprocess.Popen[str] | None = None
 
     def start(self) -> None:
+        if self._proc is not None:
+            raise RuntimeError("BrewRunner.start() called twice on the same instance")
         self._proc = subprocess.Popen(
             self._cmd,
             stdout=subprocess.PIPE,
@@ -39,9 +41,14 @@ class BrewRunner(QObject):
 
     def _pump(self) -> None:
         assert self._proc and self._proc.stdout
-        for raw in self._proc.stdout:
-            line = raw.rstrip("\n")
-            if line:
-                self.line.emit(line)
-        code = self._proc.wait()
-        self.finished.emit(code)
+        code = -1
+        try:
+            for raw in self._proc.stdout:
+                line = raw.rstrip("\n")
+                if line:
+                    self.line.emit(line)
+            code = self._proc.wait()
+        finally:
+            if self._proc.stdout is not None:
+                self._proc.stdout.close()
+            self.finished.emit(code)

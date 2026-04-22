@@ -30,3 +30,16 @@ def test_brew_runner_streams_lines_and_exits(tmp_path):
 
     assert done.get("code") == 0
     assert lines == ["line1", "line2", "line3"]
+
+
+def test_brew_runner_rejects_double_start(tmp_path):
+    _ = QCoreApplication.instance() or QCoreApplication([])
+    fake = tmp_path / "fake.sh"
+    fake.write_text("#!/bin/sh\nsleep 0.2\n")
+    fake.chmod(0o755)
+    r = BrewRunner([str(fake)])
+    r.start()
+    import pytest
+
+    with pytest.raises(RuntimeError):
+        r.start()
