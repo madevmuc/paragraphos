@@ -318,7 +318,7 @@ class ShowsTab(QWidget):
             return
         slug = self.table.item(row, 0).text()
         menu = QMenu(self)
-        details = QAction("Details / Informationen…", self)
+        details = QAction("Details…", self)
         details.triggered.connect(lambda: self._open_details_by_slug(slug))
         check_only = QAction(f"Check '{slug}' now", self)
         check_only.triggered.connect(lambda: self._check(only_slug=slug))
@@ -330,14 +330,44 @@ class ShowsTab(QWidget):
         pause_label = f"Resume '{slug}'" if paused else f"Pause '{slug}'"
         pause_act = QAction(pause_label, self)
         pause_act.triggered.connect(lambda: self._toggle_show_pause(slug))
+        # Show-level priority bumps — same semantics as the per-episode
+        # menu in Show Details, but apply to every pending episode of
+        # the show in one go.
+        run_next_all = QAction(f"Run all pending of '{slug}' next", self)
+        run_next_all.triggered.connect(lambda: self._bump_all_pending(slug, 5))
+        run_now_all = QAction(f"Run all pending of '{slug}' now", self)
+        run_now_all.triggered.connect(lambda: self._bump_all_pending(slug, 10))
+
         menu.addAction(details)
         menu.addSeparator()
         menu.addAction(check_only)
+        menu.addAction(run_next_all)
+        menu.addAction(run_now_all)
         menu.addAction(stale_all)
         menu.addAction(toggle)
         menu.addSeparator()
         menu.addAction(pause_act)
         menu.exec(self.table.viewport().mapToGlobal(pos))
+
+    def _bump_all_pending(self, slug: str, priority: int) -> None:
+        """Set priority on every pending/downloading episode of `slug`,
+        then kick the worker so the bumps take effect immediately."""
+        with self.ctx.state._conn() as c:
+            rows = c.execute(
+                "UPDATE episodes SET priority=? "
+                "WHERE show_slug=? AND status IN ('pending','downloading') "
+                "RETURNING guid",
+                (priority, slug),
+            ).fetchall()
+        n = len(rows)
+        self._log(f"bumped {n} pending episode(s) of {slug} to priority {priority}")
+        # Kick the worker so the new sort order takes effect on the next
+        # claim. With the DB-claim worker (no pre-priming) the bump shows
+        # up immediately if a pass is already running.
+        try:
+            self.start_check(force=True)
+        except Exception:
+            pass
 
     def _open_details_by_slug(self, slug: str) -> None:
         from ui.show_details_dialog import ShowDetailsDialog

@@ -37,6 +37,7 @@ from core.pipeline import (
     PipelineContext,
     PipelineResult,
     download_phase,
+    process_episode,
     transcribe_phase,
 )
 from core.rss import build_manifest_with_url
@@ -77,7 +78,10 @@ class _DownloadPool(QThread):
     def __init__(
         self,
         *,
-        pending,
+        ctx,
+        show_by_slug: dict,
+        ep_num_map: dict,
+        scope_slugs: list,
         pctx_for,
         out_q,
         host_counter,
@@ -87,7 +91,10 @@ class _DownloadPool(QThread):
         workers: int,
     ):
         super().__init__()
-        self._pending = pending  # list[(show, ep_num, ep)]
+        self._ctx = ctx
+        self._show_by_slug = show_by_slug  # slug -> Show
+        self._ep_num_map = ep_num_map  # guid -> "0042" / "0000"
+        self._scope_slugs = list(scope_slugs)  # which shows this pass touches
         self._pctx_for = pctx_for  # callable(show) -> PipelineContext
         self._out_q = out_q
         self._host_counter = host_counter
@@ -97,11 +104,38 @@ class _DownloadPool(QThread):
         self._n_workers = max(int(workers or 1), 1)
 
         # Shared dispatcher state.
-        self._in_q: _queue.Queue = _queue.Queue()
         self._announced: set[str] = set()
         self._announced_lock = threading.Lock()
         self._remaining_lock = threading.Lock()
         self._remaining = self._n_workers
+        # Single SQLite writer-claim lock — UPDATE…RETURNING is atomic at
+        # the SQL level but we serialise the Python-side claim too so we
+        # never burn cycles racing on the writer lock.
+        self._claim_lock = threading.Lock()
+
+    def _claim_next_pending(self) -> dict | None:
+        """Atomically claim the highest-priority pending episode.
+
+        Uses SQLite's UPDATE…RETURNING (SQLite 3.35+) so the claim is a
+        single statement: pick the highest-priority pending episode in
+        scope, mark it 'downloading', and return its row. Returns None
+        when no pending remains.
+        """
+        if not self._scope_slugs:
+            return None
+        placeholders = ",".join("?" for _ in self._scope_slugs)
+        sql = (
+            "UPDATE episodes SET status='downloading' "
+            "WHERE guid = ("
+            "  SELECT guid FROM episodes "
+            f"  WHERE status='pending' AND show_slug IN ({placeholders}) "
+            "  ORDER BY priority DESC, pub_date ASC LIMIT 1"
+            ") "
+            "RETURNING *"
+        )
+        with self._claim_lock, self._ctx.state._conn() as c:
+            row = c.execute(sql, tuple(self._scope_slugs)).fetchone()
+        return dict(row) if row else None
 
     def _acquire_host_slot(self, host: str) -> bool:
         """Wait (sleeping briefly) until the host has a free slot.
@@ -138,19 +172,45 @@ class _DownloadPool(QThread):
                 if self._stop.is_set():
                     self.progress.emit("stopped between episodes")
                     return
-                try:
-                    item = self._in_q.get_nowait()
-                except _queue.Empty:
+                # Claim the highest-priority pending from DB. New bumps
+                # via Run next / Run now take effect on the very next
+                # claim, no need to restart the pass.
+                ep = self._claim_next_pending()
+                if ep is None:
                     return
-                show, ep_num, ep = item
+                show = self._show_by_slug.get(ep["show_slug"])
+                if show is None:
+                    # Show no longer in scope (deleted mid-pass). Reset
+                    # status so we don't leave it stuck in 'downloading'.
+                    self._ctx.state.set_status(ep["guid"], EpisodeStatus.PENDING)
+                    continue
+                ep_num = self._ep_num_map.get(ep["guid"], "0000")
 
                 self._announce_show(show.slug)
 
+                pctx = self._pctx_for(show)
+
+                # YouTube source-dispatch: the standard download path
+                # would fetch the watch URL as if it were an MP3 enclosure
+                # → text/html → "refusing non-audio Content-Type". Route
+                # YouTube items through the captions-first / whisper-
+                # fallback pipeline instead and synthesise a
+                # DownloadOutcome carrying the terminal result so the
+                # downstream transcribe worker just records it.
+                if getattr(pctx, "source", "podcast") == "youtube":
+                    self.progress.emit(f"  ⮕ {ep['title'][:80]} (youtube)")
+                    try:
+                        result = process_episode(ep["guid"], pctx, episode_number=ep_num)
+                    except Exception as e:  # noqa: BLE001
+                        result = PipelineResult("failed", ep["guid"], str(e))
+                    self._out_q.put((show, ep, DownloadOutcome(guid=ep["guid"], result=result)))
+                    continue
+
+                # Podcast path — same as before, with per-host throttling.
                 host = urlparse(ep["mp3_url"]).netloc or "?"
                 if not self._acquire_host_slot(host):
                     return
                 try:
-                    pctx = self._pctx_for(show)
                     self.progress.emit(f"  ↓ {ep['title'][:80]}")
                     outcome: DownloadOutcome = download_phase(
                         ep["guid"], pctx, episode_number=ep_num
@@ -171,10 +231,9 @@ class _DownloadPool(QThread):
                 self._out_q.put(_SHUTDOWN)
 
     def run(self) -> None:
-        # Prime the input queue once; workers drain it concurrently.
-        for item in self._pending:
-            self._in_q.put(item)
-
+        # No pre-priming: workers claim from DB on each iteration so a
+        # mid-pass priority bump (Run next / Run now) takes effect
+        # immediately on the next claim.
         threads: list[threading.Thread] = []
         for i in range(self._n_workers):
             t = threading.Thread(
@@ -475,8 +534,17 @@ class CheckAllThread(QThread):
         host_lock = threading.Lock()
         q: _queue.Queue = _queue.Queue(maxsize=dl_conc)
 
+        # Build slug→Show + guid→ep_num maps so the DB-claim loop can
+        # rehydrate the per-show context without re-querying the watchlist.
+        show_by_slug = {triple[0].slug: triple[0] for triple in all_pending}
+        ep_num_map = {triple[2]["guid"]: triple[1] for triple in all_pending}
+        scope_slugs = list(show_by_slug.keys())
+
         dl = _DownloadPool(
-            pending=all_pending,
+            ctx=self.ctx,
+            show_by_slug=show_by_slug,
+            ep_num_map=ep_num_map,
+            scope_slugs=scope_slugs,
             pctx_for=self._pctx_for,
             out_q=q,
             host_counter=host_counter,

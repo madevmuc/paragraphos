@@ -172,7 +172,7 @@ class QueueTab(QWidget):
             self._tuning_hint.hide()
             return
         self._tuning_hint.setText(
-            "ⓘ Tipp: " + " · ".join(mismatches) + " — anpassen in Settings für beste Laufzeit."
+            "ⓘ Tip: " + " · ".join(mismatches) + " — adjust in Settings for best performance."
         )
         self._tuning_hint.show()
 
