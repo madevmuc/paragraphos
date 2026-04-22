@@ -133,6 +133,31 @@ class SettingsPane(QWidget):
         scroll.setWidget(inner)
         root = QVBoxLayout(inner)
 
+        # ── Sources ────────────────────────────────────────────
+        # Which feed types Paragraphos pulls from. At least one must stay
+        # on — unchecking both snaps Podcasts back so the app always has
+        # something to do on a check pass.
+        sources_box = QGroupBox("Sources")
+        sources_box.setObjectName("sources_group")
+        sources_layout = QVBoxLayout(sources_box)
+        self.podcasts_checkbox = QCheckBox("Podcasts (RSS)")
+        self.podcasts_checkbox.setChecked(bool(self.ctx.settings.sources_podcasts))
+        self.podcasts_checkbox.toggled.connect(self._on_sources_changed)
+        sources_layout.addWidget(self.podcasts_checkbox)
+        self.youtube_checkbox = QCheckBox("YouTube channels")
+        self.youtube_checkbox.setChecked(bool(self.ctx.settings.sources_youtube))
+        self.youtube_checkbox.toggled.connect(self._on_sources_changed)
+        sources_layout.addWidget(self.youtube_checkbox)
+        sources_hint = QLabel(
+            "<span style='color: palette(placeholder-text); font-size: 11px;'>"
+            "At least one source must stay enabled. Disable a source to skip "
+            "its feeds during the next check pass without removing the shows."
+            "</span>"
+        )
+        sources_hint.setWordWrap(True)
+        sources_layout.addWidget(sources_hint)
+        root.addWidget(sources_box)
+
         # ── Library & output ───────────────────────────────────
         root.addWidget(_section("Library & output"))
         f1 = QFormLayout()
@@ -757,6 +782,17 @@ class SettingsPane(QWidget):
 
         download_model_async(name, on_done)
 
+    def _on_sources_changed(self) -> None:
+        """Enforce ≥1 enabled source. If both got unchecked, snap Podcasts
+        back on (signals blocked so we don't recurse) before saving."""
+        p = self.podcasts_checkbox.isChecked()
+        y = self.youtube_checkbox.isChecked()
+        if not (p or y):
+            self.podcasts_checkbox.blockSignals(True)
+            self.podcasts_checkbox.setChecked(True)
+            self.podcasts_checkbox.blockSignals(False)
+        self._schedule_save()
+
     def _schedule_save(self):
         self._saved_label.setText("…")
         self._save_timer.start(250)
@@ -782,6 +818,8 @@ class SettingsPane(QWidget):
         s.notify_mode = self.notify_mode.currentData() or "per_episode"
         s.log_retention_days = self.log_retention.value()
         s.save_srt = self.save_srt_cb.isChecked()
+        s.sources_podcasts = self.podcasts_checkbox.isChecked()
+        s.sources_youtube = self.youtube_checkbox.isChecked()
         s.save(self.ctx.data_dir / "settings.yaml")
         from datetime import datetime
 

@@ -29,6 +29,9 @@ class Show(BaseModel):
     # RSS at /feeds/videos.xml?channel_id=UC...). Defaults to "podcast"
     # for backward compat with existing watchlist.yaml files.
     source: str = "podcast"
+    # Per-show YouTube transcript preference. Empty string = inherit from
+    # Settings default. Otherwise one of: "captions" | "whisper" | "auto-captions".
+    youtube_transcript_pref: str = ""
 
 
 class Watchlist(BaseModel):
@@ -96,6 +99,10 @@ class Settings(BaseModel):
     # compat (existing users keep podcast behaviour).
     sources_podcasts: bool = True
     sources_youtube: bool = True
+    # ISO8601 UTC timestamp of last successful `yt-dlp -U` run.
+    # Empty string means never run; helper triggers an update if older
+    # than 7 days. See ui.main_window.maybe_self_update_ytdlp.
+    ytdlp_last_self_update_at: str = ""
 
     @field_validator("daily_check_time")
     @classmethod

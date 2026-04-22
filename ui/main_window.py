@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from PyQt6.QtCore import QDateTime, QLocale, QSettings, Qt, QTimer, QUrl
@@ -17,7 +18,9 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core import ytdlp
 from core.paths import user_data_dir  # noqa: E402
+from core.sources import youtube_enabled
 from ui.about_dialog import AboutPane
 from ui.app_context import AppContext
 from ui.failed_tab import FailedTab
@@ -54,6 +57,32 @@ def _fmt_dt_locale(dt) -> str:
     if "yyyy" not in date_fmt:
         date_fmt = date_fmt.replace("yy", "yyyy")
     return loc.toString(qdt, f"ddd, {date_fmt} HH:mm")
+
+
+def maybe_self_update_ytdlp(settings, save) -> None:
+    """Run `yt-dlp -U` once on launch if YouTube is enabled, yt-dlp is
+    installed, and the last update was more than 7 days ago. Failures
+    are silent — they will resurface the next time a YouTube action is
+    attempted, where the user gets actionable UI feedback.
+    """
+    if not youtube_enabled(settings):
+        return
+    if not ytdlp.is_installed():
+        return
+    last = settings.ytdlp_last_self_update_at
+    if last:
+        try:
+            last_dt = datetime.fromisoformat(last)
+            if datetime.now(timezone.utc) - last_dt < timedelta(days=7):
+                return
+        except ValueError:
+            pass
+    try:
+        ytdlp.self_update()
+        settings.ytdlp_last_self_update_at = datetime.now(timezone.utc).isoformat()
+        save()
+    except Exception:
+        pass
 
 
 def _last_compiled_path(ctx) -> Path:
@@ -225,6 +254,17 @@ class MainWindow(QMainWindow):
         self._counts_timer = QTimer(self)
         self._counts_timer.timeout.connect(self._update_sidebar_counts)
         self._counts_timer.start(2000)
+
+        # Weekly yt-dlp self-update — fire once shortly after launch so the
+        # window is responsive first. Helper no-ops when YouTube is off,
+        # yt-dlp isn't installed, or the last update is <7 days old.
+        QTimer.singleShot(
+            2000,
+            lambda: maybe_self_update_ytdlp(
+                self.ctx.settings,
+                lambda: self.ctx.settings.save(self.ctx.data_dir / "settings.yaml"),
+            ),
+        )
 
     def _restore_geometry(self) -> None:
         """Re-open at last-session size/position, clamped to the current

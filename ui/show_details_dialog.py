@@ -565,6 +565,30 @@ class ShowDetailsDialog(QDialog):
         inner.addWidget(hint, r, 1)
         r += 1
 
+        # YouTube-only: transcript-source preference (per-channel override of
+        # the Settings default). Tuple form lets us decouple display labels
+        # from the persisted internal value.
+        self.transcript_pref_combo: QComboBox | None = None
+        if getattr(self.show_, "source", "podcast") == "youtube":
+            inner.addWidget(self._label("Transcript source"), r, 0)
+            combo = QComboBox()
+            combo.setObjectName("transcript_pref_combo")
+            options = [
+                ("Captions first, whisper fallback", "captions"),
+                ("Always whisper", "whisper"),
+                ("Use auto-captions if no manual", "auto-captions"),
+            ]
+            for label, value in options:
+                combo.addItem(label, value)
+            initial = getattr(self.show_, "youtube_transcript_pref", "") or "captions"
+            for i, (_, v) in enumerate(options):
+                if v == initial:
+                    combo.setCurrentIndex(i)
+                    break
+            inner.addWidget(combo, r, 1)
+            self.transcript_pref_combo = combo
+            r += 1
+
         # Toggle: switch controls body visibility + grows/shrinks the
         # dialog so the expanded body doesn't overflow into the
         # episodes table below.
@@ -750,6 +774,8 @@ class ShowDetailsDialog(QDialog):
             self.show_.title = new_title
         self.show_.language = self._language_combo.currentData() or "de"
         self.show_.whisper_prompt = self._whisper_prompt_edit.toPlainText().strip()
+        if self.transcript_pref_combo is not None:
+            self.show_.youtube_transcript_pref = self.transcript_pref_combo.currentData() or ""
         self.ctx.watchlist.save(self.ctx.data_dir / "watchlist.yaml")
         self.accept()
 
