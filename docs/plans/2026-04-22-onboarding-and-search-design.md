@@ -129,6 +129,10 @@ knowledge_hub_root: str = ""
 - `test_show_results_table_renders_placeholders_before_probe` — fresh table with 5 matches → cells 3-5 contain `"…"`.
 - `test_show_results_table_updates_cell_on_probe_signal` — send probe signal for row 2 → cells 3-5 populated.
 
+### Part 6 — Gate wiki-compile banner on Obsidian
+
+`ui/main_window.py::_refresh_banner` currently shows a *"transcripts newer than last wiki compile"* banner whenever `raw/.last_compiled`'s mtime is behind the transcripts folder. This concept only exists inside an Obsidian / knowledge-hub workflow — users on plain folders have no wiki, no compile pass, and shouldn't see the reminder. Gate the banner's `compile` state on `settings.obsidian_vault_path` being non-empty. The update-available banner still runs regardless (unrelated to Obsidian).
+
 ## Out of scope
 
 - Importing Obsidian's `app.json` settings (user picked A).
