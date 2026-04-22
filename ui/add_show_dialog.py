@@ -1012,7 +1012,10 @@ class AddShowDialog(QDialog):
         self._loaded_yt_preview = preview
         self.yt_card_title.setText(preview.get("title") or "(untitled)")
         vc = preview.get("video_count") or 0
-        self.yt_card_meta.setText(f"{vc} video(s) · channel id: {preview.get('channel_id', '')}")
+        suffix = "+ recent" if preview.get("video_count_is_lower_bound") else ""
+        self.yt_card_meta.setText(
+            f"{vc}{suffix} video(s) · channel id: {preview.get('channel_id', '')}"
+        )
         self.yt_card.setVisible(True)
         self.yt_status.setText("Ready")
         self.yt_status.set_kind("ok")
