@@ -95,7 +95,20 @@ class Settings(BaseModel):
     @classmethod
     def load(cls, path: Path) -> "Settings":
         if not path.exists():
-            return cls()
+            # Fresh install — populate HW-aware tuning defaults so the
+            # queue-tab tuning-hint banner doesn't immediately shout at
+            # brand-new users. Persist so subsequent loads see the values
+            # (which then take the existing-file branch below).
+            s = cls()
+            _apply_hw_defaults(s)
+            try:
+                s.save(path)
+            except Exception:
+                # If we can't persist (e.g. read-only fs in tests), still
+                # return the populated in-memory settings.
+                pass
+            backfill_setup_completed(s)
+            return s
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         s = cls.model_validate(data)
         backfill_setup_completed(s)
@@ -107,6 +120,20 @@ class Settings(BaseModel):
             yaml.safe_dump(self.model_dump(), allow_unicode=True, sort_keys=False),
             encoding="utf-8",
         )
+
+
+def _apply_hw_defaults(s: "Settings") -> None:
+    """Populate parallel_transcribe + whisper_multiproc with hardware-
+    aware recommendations. Called only on fresh install — saved user
+    values are never overwritten."""
+    try:
+        from core.hw import recommended_multiproc_split, recommended_parallel_workers
+
+        s.parallel_transcribe = recommended_parallel_workers()
+        s.whisper_multiproc = recommended_multiproc_split()
+    except Exception:
+        # HW detect failure — leave generic defaults in place.
+        pass
 
 
 def backfill_setup_completed(s: Settings) -> None:

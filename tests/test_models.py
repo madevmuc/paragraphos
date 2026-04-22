@@ -25,8 +25,11 @@ def test_watchlist_roundtrip(tmp_path: Path):
 
 
 def test_settings_defaults_match_design(tmp_path: Path):
-    p = tmp_path / "settings.yaml"
-    s = Settings.load(p)
+    # Settings() gives the generic defaults; Settings.load() on a fresh
+    # install now overlays HW-aware tuning recommendations for
+    # parallel_transcribe + whisper_multiproc (see T15), so assert the
+    # generic defaults against the constructor instead.
+    s = Settings()
     assert s.daily_check_time == "09:00"
     assert s.catch_up_missed is True
     assert s.notify_on_success is True

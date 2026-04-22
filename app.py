@@ -31,12 +31,14 @@ from PyQt6.QtWidgets import (
 )
 
 from core.logger import setup_logging  # noqa: E402
+from core.models import backfill_setup_completed  # noqa: E402
 from core.paths import migrate_from_legacy, user_data_dir  # noqa: E402
 from core.scheduler import should_catch_up  # noqa: E402
 from core.version import VERSION as _LOCAL_VERSION  # noqa: E402
 from ui.app_context import AppContext  # noqa: E402
 from ui.first_run_wizard import show_wizard_if_needed  # noqa: E402
 from ui.main_window import MainWindow  # noqa: E402
+from ui.setup_dialog import show_setup_if_needed  # noqa: E402
 from ui.worker_thread import CheckAllThread  # noqa: E402
 
 # One-time migration: if the repo source tree has legacy data, copy it to the
@@ -592,6 +594,15 @@ def main() -> int:
         print("First-run wizard cancelled — exiting.", flush=True)
         return 0
     app = ParagraphosApp()
+    # New-install migration: flip ``setup_completed`` for legacy users
+    # whose customised folder paths imply they've already done the work
+    # the setup dialog asks about. Fresh installs see the dialog once;
+    # returning users don't get ambushed.
+    backfill_setup_completed(app.ctx.settings)
+    show_setup_if_needed(app.ctx.settings, app._window)
+    # Persist whatever the setup dialog wrote back (incl. the
+    # ``setup_completed=True`` flag on Finish).
+    app.ctx.settings.save(app.ctx.data_dir / "settings.yaml")
     qapp.file_opened.connect(app.on_file_dropped)
     qapp.quit_requested.connect(app.quit_with_confirm)
     from core.http import close_client
