@@ -137,17 +137,17 @@ class SettingsPane(QWidget):
         # Which feed types Paragraphos pulls from. At least one must stay
         # on — unchecking both snaps Podcasts back so the app always has
         # something to do on a check pass.
-        sources_box = QGroupBox("Sources")
-        sources_box.setObjectName("sources_group")
-        sources_layout = QVBoxLayout(sources_box)
+        root.addWidget(_section("Sources"))
         self.podcasts_checkbox = QCheckBox("Podcasts (RSS)")
+        self.podcasts_checkbox.setObjectName("sources_podcasts_checkbox")
         self.podcasts_checkbox.setChecked(bool(self.ctx.settings.sources_podcasts))
         self.podcasts_checkbox.toggled.connect(self._on_sources_changed)
-        sources_layout.addWidget(self.podcasts_checkbox)
+        root.addWidget(self.podcasts_checkbox)
         self.youtube_checkbox = QCheckBox("YouTube channels")
+        self.youtube_checkbox.setObjectName("sources_youtube_checkbox")
         self.youtube_checkbox.setChecked(bool(self.ctx.settings.sources_youtube))
         self.youtube_checkbox.toggled.connect(self._on_sources_changed)
-        sources_layout.addWidget(self.youtube_checkbox)
+        root.addWidget(self.youtube_checkbox)
         sources_hint = QLabel(
             "<span style='color: palette(placeholder-text); font-size: 11px;'>"
             "At least one source must stay enabled. Disable a source to skip "
@@ -155,8 +155,7 @@ class SettingsPane(QWidget):
             "</span>"
         )
         sources_hint.setWordWrap(True)
-        sources_layout.addWidget(sources_hint)
-        root.addWidget(sources_box)
+        root.addWidget(sources_hint)
 
         # ── Library & output ───────────────────────────────────
         root.addWidget(_section("Library & output"))

@@ -12,7 +12,7 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from PyQt6.QtWidgets import QApplication, QGroupBox
+from PyQt6.QtWidgets import QApplication, QCheckBox
 
 
 class _FakeState:
@@ -50,10 +50,13 @@ def _make_pane(tmp_path):
     return pane, ctx, app
 
 
-def test_sources_groupbox_present(tmp_path):
+def test_sources_section_present(tmp_path):
     pane, _ctx, _app = _make_pane(tmp_path)
-    titles = [gb.title() for gb in pane.findChildren(QGroupBox)]
-    assert any("Source" in t for t in titles), f"no Sources group; saw: {titles}"
+    # Section uses the flat _section() header style (matching Library &
+    # output etc.), so we look for the two checkboxes by objectName.
+    names = {cb.objectName() for cb in pane.findChildren(QCheckBox)}
+    assert "sources_podcasts_checkbox" in names
+    assert "sources_youtube_checkbox" in names
 
 
 def test_unchecking_both_sources_snaps_podcasts_back(tmp_path):
