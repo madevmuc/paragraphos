@@ -115,6 +115,10 @@ class AddShowDialog(QDialog):
         self._loaded_rss: str = ""
         self._fetch_thread: Optional[QThread] = None
         self._apple_thread: Optional[QThread] = None
+        # Name-mode pagination: track last search so 'Load 50 more' knows
+        # what to re-query; limit grows by 50 per click up to iTunes' 200 cap.
+        self._name_search_term: str = ""
+        self._name_search_limit: int = 50
 
         root = QVBoxLayout(self)
 
@@ -180,6 +184,19 @@ class AddShowDialog(QDialog):
         self.results.itemDoubleClicked.connect(self._pick_name_result)
         v.addWidget(self.results, 1)
 
+        # iTunes capped hint + "Load more" — surfaces that the first
+        # page is a truncated view and lets the user pull the next
+        # batch without re-typing the query.
+        more_row = QHBoxLayout()
+        self._name_hint = QLabel("")
+        self._name_hint.setStyleSheet(f"color: {current_tokens()['ink_3']}; font-size: 11px;")
+        more_row.addWidget(self._name_hint, 1)
+        self._name_load_more_btn = QPushButton("Load 50 more")
+        self._name_load_more_btn.setVisible(False)
+        self._name_load_more_btn.clicked.connect(self._load_more_name_results)
+        more_row.addWidget(self._name_load_more_btn)
+        v.addLayout(more_row)
+
         form = QFormLayout()
         self.name_slug = QLineEdit()
         self.name_title = QLineEdit()
@@ -201,6 +218,10 @@ class AddShowDialog(QDialog):
         if not term:
             return
         self.results.clear()
+        self._name_hint.setText("")
+        self._name_load_more_btn.setVisible(False)
+        self._name_search_term = term
+        self._name_search_limit = 50
         try:
             if term.startswith("http"):
                 # Convenience: pasted a URL in the name mode.
@@ -210,14 +231,49 @@ class AddShowDialog(QDialog):
                     return
                 QMessageBox.warning(self, "Not found", "No RSS link on that page.")
                 return
-            for m in search_itunes(term):
-                item = QListWidgetItem(f"{m.title} — {m.author}")
-                item.setData(Qt.ItemDataRole.UserRole, m.feed_url)
-                self.results.addItem(item)
+            self._render_name_results(search_itunes(term, limit=self._name_search_limit))
             if self.results.count() == 0:
                 QMessageBox.information(self, "No matches", "iTunes returned no results.")
         except Exception as e:  # noqa: BLE001
             QMessageBox.warning(self, "Error", str(e))
+
+    def _render_name_results(self, matches) -> None:
+        """Fill the list widget and update the hint + Load-more button.
+
+        Called on initial search and on every 'Load 50 more' click — we
+        replace the full list rather than append because iTunes doesn't
+        guarantee stable ordering across calls, so a superset request
+        may reshuffle earlier positions.
+        """
+        self.results.clear()
+        for m in matches:
+            item = QListWidgetItem(f"{m.title} — {m.author}")
+            item.setData(Qt.ItemDataRole.UserRole, m.feed_url)
+            self.results.addItem(item)
+        shown = self.results.count()
+        # iTunes caps at 200 and returns fewer when the query is narrow.
+        hit_api_cap = self._name_search_limit >= 200
+        capped_by_server = shown < self._name_search_limit
+        if capped_by_server or hit_api_cap:
+            self._name_hint.setText(f"Showing all {shown} matches.")
+            self._name_load_more_btn.setVisible(False)
+        else:
+            self._name_hint.setText(f"Showing top {shown} · iTunes may have more.")
+            self._name_load_more_btn.setVisible(True)
+
+    def _load_more_name_results(self) -> None:
+        if not self._name_search_term:
+            return
+        self._name_search_limit = min(self._name_search_limit + 50, 200)
+        self._name_load_more_btn.setEnabled(False)
+        try:
+            self._render_name_results(
+                search_itunes(self._name_search_term, limit=self._name_search_limit)
+            )
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.warning(self, "Error", str(e))
+        finally:
+            self._name_load_more_btn.setEnabled(True)
 
     def _pick_name_result(self, item: QListWidgetItem) -> None:
         self._fill_from_feed_sync(item.data(Qt.ItemDataRole.UserRole))
