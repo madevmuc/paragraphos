@@ -590,7 +590,114 @@ Place it after the update-banner check (update banner wins over everything, incl
 
 ---
 
-## Task 13: Version bump + CHANGELOG + release prep
+## Task 13: Preserve transcripts on show / episode delete
+
+**Files:** `ui/show_details_dialog.py` (or wherever the delete action lives — grep for the user-visible delete flow), plus `core/cleanup.py` (new if missing) to hold the delete helper. `tests/test_delete_preserves_transcripts.py` (new).
+
+**Context:** Today, deleting a show or an episode wipes the whole folder including the MP3, SRT, and MD transcript. Users have spent compute time producing the transcript — losing those on a "cleanup the watchlist" action is expensive. MP3s are re-downloadable from the feed; transcripts aren't.
+
+**Step 1 — failing test:**
+```python
+# tests/test_delete_preserves_transcripts.py
+from pathlib import Path
+
+from core.cleanup import delete_episode_audio
+
+
+def test_delete_removes_mp3_but_keeps_md_and_srt(tmp_path):
+    show = tmp_path / "tech"
+    show.mkdir()
+    (show / "ep-001.mp3").write_bytes(b"audio")
+    (show / "ep-001.md").write_text("transcript")
+    (show / "ep-001.srt").write_text("1\n00:00:00,000 --> 00:00:01,000\nHi\n")
+
+    delete_episode_audio(show, basename="ep-001")
+
+    assert not (show / "ep-001.mp3").exists()
+    assert (show / "ep-001.md").exists()
+    assert (show / "ep-001.srt").exists()
+
+
+def test_delete_tolerates_missing_mp3(tmp_path):
+    show = tmp_path / "tech"
+    show.mkdir()
+    (show / "ep-001.md").write_text("transcript")
+    delete_episode_audio(show, basename="ep-001")  # no MP3, must not raise
+    assert (show / "ep-001.md").exists()
+```
+
+**Step 2 — verify fail.**
+
+**Step 3 — implement `core/cleanup.py`:**
+```python
+from pathlib import Path
+
+
+def delete_episode_audio(show_dir: Path, *, basename: str) -> None:
+    """Remove only the MP3 for an episode; preserve transcript (.md) and
+    subtitles (.srt). Silently ignores missing files — cleanup must be
+    idempotent across multiple UI passes."""
+    mp3 = show_dir / f"{basename}.mp3"
+    if mp3.exists():
+        mp3.unlink()
+```
+
+Rewire the existing delete flows (show-details per-episode delete + shows-tab remove-show) to call `delete_episode_audio(...)` for each episode, and — for show deletion — also preserve the show folder itself (don't rmtree).
+
+**Step 4 — tests green.**
+
+**Step 5 — commit:** `feat(cleanup): preserve .md + .srt on episode/show delete; drop only mp3`.
+
+---
+
+## Task 14: Output-formats setting (MD required, SRT optional)
+
+**Files:** `core/models.py` (add `save_srt: bool = True` — default True so users on upgrade keep current behaviour; MD is always saved so no flag for it), `ui/settings_pane.py` (new **Output formats** group box), `tests/test_output_formats_setting.py` (new), plus wire into the transcriber output writer (grep `*.srt` / `*.md` to find emit site, likely `core/transcriber.py` or `core/pipeline.py`).
+
+**Spec:**
+- Settings group box **"Output formats"**:
+  - Disabled, pre-checked checkbox `"Markdown (.md) — always saved"`.
+  - Editable checkbox `"SRT subtitles (.srt)"`, bound to `settings.save_srt`.
+  - Hint line: *"SRT carries per-segment timestamps. Keep it on if you'd like to quote passages with "at 12:34" references in your notes. Transcripts (.md) are always saved."*
+- Transcriber: when `settings.save_srt` is False, skip writing the `.srt` file. `.md` always written.
+
+**Tests:**
+```python
+from core.models import Settings
+
+
+def test_save_srt_default_on():
+    assert Settings().save_srt is True
+
+
+def test_transcriber_skips_srt_when_disabled(tmp_path, monkeypatch):
+    # Mock whisper execution; assert only .md is produced when save_srt=False.
+    # Exact wiring depends on how tests/test_pipeline.py fakes whisper today —
+    # extend the closest fixture.
+    pass  # flesh out per existing test infra
+```
+
+**Step 5 — commit:** `feat(settings): SRT-on/off toggle + dedicated Output formats group`.
+
+---
+
+## Task 15: Fresh-install defaults match HW recommendations
+
+**Files:** `core/settings.py` (loader), `tests/test_settings_hw_defaults.py` (new).
+
+**Context:** `core.hw.recommended_parallel_workers()` and `recommended_multiproc_split()` produce HW-aware recommendations. Today, `parallel_transcribe` and `whisper_multiproc` default to generic values in `core/models.py` — so every new install lands on sub-optimal values and the tuning-hint banner immediately shouts at them. Policy: **only on a truly fresh install** (no settings file yet), populate those two fields with HW recommendations. If the user has ever saved settings, leave their values alone (respect overrides).
+
+**Spec:** extend the settings loader: if the settings YAML file didn't exist before this load (first-ever run), call `recommended_parallel_workers()` and `recommended_multiproc_split()` and overwrite the defaults. Then save. On every subsequent load, the user's saved values stick.
+
+**Tests:**
+- First load with no file → values match `recommended_*` fns.
+- Saved file with explicit user values → values preserved, recommendation *not* applied.
+
+**Step 5 — commit:** `feat(settings): populate parallel/multiproc with HW recommendation on first run`.
+
+---
+
+## Task 16: Version bump + CHANGELOG + release prep
 
 **Files:** `core/version.py`, `pyproject.toml`, `CHANGELOG.md`.
 
@@ -620,6 +727,19 @@ Bump to `1.1.9`. CHANGELOG entry:
 - Apple Podcasts add path now sets a slug (previously empty).
 - Wiki-compile banner no longer shows for users who aren't using
   Obsidian (it made no sense outside an Obsidian workflow).
+- Deleting a show or episode now preserves the generated transcript
+  (.md) and subtitles (.srt) — only the MP3 is removed. Transcription
+  costs compute; re-downloading audio from the feed is free.
+
+### Added (continued)
+- **Output formats toggle.** New Settings → Output formats group.
+  Markdown (.md) is always saved; SRT (.srt) is opt-out. Useful
+  reminder that SRT carries per-segment timestamps for timestamped
+  quotes.
+- **HW-aware first-run defaults.** On a truly fresh install (no prior
+  settings file), `parallel_transcribe` and `whisper_multiproc` are
+  pre-filled from `core.hw.recommended_*()`. Saved settings are never
+  overridden.
 ```
 
 Run full suite. Commit: `chore(release): v1.1.9 — onboarding & search polish`.
