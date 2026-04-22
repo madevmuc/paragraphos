@@ -1,5 +1,32 @@
 # Paragraphos Changelog
 
+## v1.1.8 — 2026-04-22 (wizard v2)
+
+### Fixed
+- **First-run wizard — whisper detection on non-standard brew prefixes.**
+  The dep check now searches `/opt/homebrew`, `/usr/local`, and
+  `/opt/local` for `whisper-cli`. Previously, a successful install on a
+  non-default prefix was reported as "not found".
+- **First-run wizard — `brew` lookup inside the `.app`.** `brew install`
+  commands now run with an expanded PATH (Homebrew bin dirs prepended
+  to the user's existing PATH) so a Finder-launched `.app` finds `brew`
+  immediately after Homebrew is installed, without needing a restart.
+
+### Added
+- **Hardware compatibility pre-check.** Wizard rejects Intel Macs and
+  macOS < 13 (Ventura) before wasting time on installs. Also warns on
+  < 8 GB RAM or < 3 GB free disk.
+- **Auto-start + serialization.** Model download starts on wizard open
+  (no sudo required); whisper-cpp and ffmpeg install automatically one
+  after another once Homebrew is detected. No user clicks in between.
+- **Live install feedback.** Each running dep row shows an elapsed
+  seconds counter and the latest line of `brew`'s stdout, so installs
+  never sit on a silent "installing…" pill.
+- **Retry on install failure.** If whisper-cpp, ffmpeg, or the model
+  download fails, the row shows a Retry button wired back to the
+  original install — previously the user was stuck on the "fail" pill
+  with no way to try again.
+
 ## v1.1.3 — 2026-04-21 (live progress + UX polish)
 
 ### Queue & transcription
