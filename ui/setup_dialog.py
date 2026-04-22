@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -28,6 +29,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core import obsidian as _obsidian
 from core.models import Settings
 
 
@@ -121,21 +123,64 @@ class SetupDialog(QDialog):
         page = QWidget()
         v = QVBoxLayout(page)
         v.addWidget(QLabel("<h3>Do you use Obsidian?</h3>"))
-        v.addWidget(
-            QLabel(
-                "Obsidian users can have transcripts written inside their vault so the notes "
-                "appear alongside the rest of their knowledge base."
-            )
+
+        info = QLabel(
+            "<b>What is Obsidian?</b><br>"
+            "<a href='https://obsidian.md'>Obsidian</a> is a free local-first "
+            "markdown notes app. Your transcripts already are markdown — opening "
+            "the transcripts folder as an Obsidian vault gives you instant "
+            "search, backlinks between episodes, and a graph view of how shows "
+            "relate.<br><br>"
+            "<b>Why it pairs well with Paragraphos + AI:</b><br>"
+            "Once your transcripts are in a vault, an AI assistant "
+            "(<a href='https://claude.ai/code'>Claude Code</a>, "
+            "<a href='https://chatgpt.com'>ChatGPT</a>, "
+            "<a href='https://gemini.google.com'>Gemini</a>) can read across all "
+            'of them at once — answer questions like "what did Show X say about '
+            'topic Y", auto-generate summaries, or build a personal knowledge '
+            "base from years of listening. Without a vault you'd have to feed "
+            "files one by one.<br><br>"
+            "Don't have it? <a href='https://obsidian.md'>Download Obsidian</a>."
         )
+        info.setTextFormat(Qt.TextFormat.RichText)
+        info.setOpenExternalLinks(True)
+        info.setWordWrap(True)
+        v.addWidget(info)
+
+        # Detect a vault to pre-fill the answer.
+        try:
+            detected = _obsidian.best_guess_vault()
+        except Exception:  # noqa: BLE001
+            detected = None
+        self._detected_vault: Path | None = detected
+
         grp = QButtonGroup(self)
         grp.setExclusive(True)
         self._yes_obsidian_btn = QRadioButton("Yes — I use Obsidian")
         self._no_obsidian_btn = QRadioButton("No — plain folders only")
-        self._no_obsidian_btn.setChecked(True)
+        if detected is not None:
+            self._yes_obsidian_btn.setChecked(True)
+        else:
+            self._no_obsidian_btn.setChecked(True)
         grp.addButton(self._yes_obsidian_btn)
         grp.addButton(self._no_obsidian_btn)
         v.addWidget(self._yes_obsidian_btn)
         v.addWidget(self._no_obsidian_btn)
+
+        self._detect_hint = QLabel("")
+        self._detect_hint.setTextFormat(Qt.TextFormat.RichText)
+        self._detect_hint.setWordWrap(True)
+        if detected is not None:
+            self._detect_hint.setText(
+                f"<span style='color:#3a7a3a'>✓ Found vault: <b>{detected}</b></span>"
+            )
+        else:
+            self._detect_hint.setText(
+                "<span style='color:#888'>None detected. If you do use Obsidian, "
+                "switch to Yes and browse to your vault on the next step.</span>"
+            )
+        v.addWidget(self._detect_hint)
+
         v.addStretch(1)
         # Reactive Next/Finish label flip via sync on selection change.
         grp.buttonToggled.connect(lambda *_: self._sync_footer())
@@ -147,7 +192,11 @@ class SetupDialog(QDialog):
         v = QVBoxLayout(page)
         v.addWidget(QLabel("<h3>Pick your Obsidian vault folder</h3>"))
         row = QHBoxLayout()
-        self._vault_edit = QLineEdit("")
+        prefill = ""
+        detected = getattr(self, "_detected_vault", None)
+        if detected is not None:
+            prefill = str(detected)
+        self._vault_edit = QLineEdit(prefill)
         row.addWidget(self._vault_edit, 1)
         pick = QPushButton("Choose vault…")
         pick.clicked.connect(self._pick_vault)
@@ -162,6 +211,7 @@ class SetupDialog(QDialog):
         v.addWidget(self._vault_colocate)
         v.addStretch(1)
         self._vault_edit.textChanged.connect(self._refresh_vault_status)
+        self._refresh_vault_status()
         return page
 
     def _pick_vault(self) -> None:
