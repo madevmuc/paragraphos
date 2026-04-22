@@ -20,6 +20,7 @@ from core.paths import migrate_from_legacy, user_data_dir
 from core.pipeline import PipelineContext, process_episode
 from core.prompt_gen import suggest_whisper_prompt
 from core.rss import build_manifest, feed_metadata
+from core.sanitize import slugify
 from core.state import EpisodeStatus, StateStore
 
 PKG = Path(__file__).resolve().parent
@@ -58,7 +59,7 @@ def cmd_add(args: argparse.Namespace) -> int:
 
     meta = feed_metadata(rss)
     manifest = build_manifest(rss)
-    slug_default = meta["title"].lower().replace(" ", "-")
+    slug_default = slugify(meta["title"])
     slug = input(f"slug [{slug_default}]: ").strip() or slug_default
 
     prompt = suggest_whisper_prompt(

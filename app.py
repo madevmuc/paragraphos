@@ -419,6 +419,7 @@ class ParagraphosApp(QObject):
         from core.models import Show
         from core.opml import parse_opml
         from core.rss import build_manifest, feed_metadata
+        from core.sanitize import slugify
 
         try:
             entries = parse_opml(path)
@@ -433,7 +434,7 @@ class ParagraphosApp(QObject):
                 manifest = build_manifest(entry["xmlUrl"], timeout=60)
             except Exception:
                 continue
-            slug = (meta["title"] or entry["title"]).lower().replace(" ", "-")
+            slug = slugify(meta["title"] or entry["title"])
             if slug in existing:
                 continue
             self.ctx.watchlist.shows.append(
@@ -462,6 +463,7 @@ class ParagraphosApp(QObject):
         from core.models import Show
         from core.opml import parse_opml
         from core.rss import build_manifest, feed_metadata
+        from core.sanitize import slugify
 
         path, _filter = QFileDialog.getOpenFileName(
             None, "Select OPML file", str(Path.home()), "OPML (*.opml *.xml)"
@@ -483,7 +485,7 @@ class ParagraphosApp(QObject):
             except Exception as e:
                 errors.append(f"{entry['title']}: {e}")
                 continue
-            slug = (meta["title"] or entry["title"]).lower().replace(" ", "-")
+            slug = slugify(meta["title"] or entry["title"])
             if slug in existing:
                 continue
             self.ctx.watchlist.shows.append(

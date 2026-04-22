@@ -231,6 +231,7 @@ def _import_opml(window) -> None:
 
     from core.models import Show
     from core.opml import parse_opml
+    from core.sanitize import slugify
 
     path, _ = QFileDialog.getOpenFileName(
         window, "Select OPML", str(Path.home()), "OPML (*.opml *.xml)"
@@ -273,7 +274,7 @@ def _import_opml(window) -> None:
                 continue
             meta = r["meta"]
             manifest = r["manifest"]
-            slug = (meta.get("title") or entry["title"]).lower().replace(" ", "-")
+            slug = slugify(meta.get("title") or entry["title"])
             if slug in existing:
                 continue
             existing.add(slug)
