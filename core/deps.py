@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -60,27 +61,25 @@ _FFMPEG_CANDIDATES = (
 _EXTRA_PATH = ":".join(["/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin"])
 
 
-def _has_any(paths: tuple[str, ...], name: str) -> bool:
-    import os as _os
+def _augmented_path() -> str:
+    """PATH that is guaranteed to include the common Homebrew bin dirs,
+    without overriding what the user already has. Used for both
+    `shutil.which` lookups and subprocess env for `brew install …`."""
+    env_path = os.environ.get("PATH", "")
+    return env_path + ":" + _EXTRA_PATH if env_path else _EXTRA_PATH
 
-    search_path = _EXTRA_PATH
-    env_path = _os.environ.get("PATH", "")
-    if env_path:
-        search_path = env_path + ":" + search_path
-    if shutil.which(name, path=search_path):
+
+def _has_any(paths: tuple[str, ...], name: str) -> bool:
+    if shutil.which(name, path=_augmented_path()):
         return True
     return any(Path(p).exists() for p in paths)
 
 
 def _brew_env() -> dict[str, str]:
-    """Env for subprocess.run([brew,...]) that prepends the common Homebrew
-    bin dirs so a Finder-launched .app can find `brew` right after a fresh
-    install without relaunching."""
-    import os as _os
-
-    env = _os.environ.copy()
-    path = env.get("PATH", "")
-    env["PATH"] = _EXTRA_PATH + (":" + path if path else "")
+    """Env for `subprocess.run([brew, ...])` ensuring brew is reachable
+    when the .app inherited Finder's minimal PATH."""
+    env = os.environ.copy()
+    env["PATH"] = _augmented_path()
     return env
 
 

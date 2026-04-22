@@ -20,11 +20,18 @@ def test_whisper_cli_detected_via_usr_local(tmp_path, monkeypatch):
     assert status.whisper_cli
 
 
-def test_install_whisper_cpp_passes_expanded_path(monkeypatch):
+def test_brew_env_augments_empty_path(monkeypatch):
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    env = deps._brew_env()
+    assert "/opt/homebrew/bin" in env["PATH"]
+    # Respect existing PATH: user's entries stay in place.
+    assert env["PATH"].startswith("/usr/bin:/bin")
+
+
+def test_install_whisper_cpp_uses_brew_env(monkeypatch):
     captured = {}
 
     def fake_run(cmd, capture_output=False, text=False, env=None):  # noqa: ARG001
-        captured["cmd"] = cmd
         captured["env"] = env
 
         class R:
@@ -34,6 +41,7 @@ def test_install_whisper_cpp_passes_expanded_path(monkeypatch):
         return R()
 
     monkeypatch.setattr(deps.subprocess, "run", fake_run)
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
     deps.install_whisper_cpp()
     assert captured["env"] is not None
     assert "/opt/homebrew/bin" in captured["env"]["PATH"]
