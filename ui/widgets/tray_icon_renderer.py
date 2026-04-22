@@ -1,7 +1,10 @@
-"""Render the tray icon — static template when idle, live fraction when running.
+"""Render the tray icon — painter-drawn glyph when idle, live fraction when running.
 
-Idle: `assets/MenuBarIconTemplate.png` loaded as a macOS template image
-(`setIsMask(True)`) so macOS auto-tints to match the menu bar.
+Idle: draws a bold "P" via QPainter so the glyph fills the canvas and is
+visible in the macOS menu bar. Earlier versions tried to use a bundled
+`MenuBarIconTemplate.png` here, but the bundled template's glyph was a
+tiny shape on a 22×22 transparent canvas — visually almost invisible
+next to neighbouring menu-bar icons. The painter route always wins now.
 Running: draws `3/12` (or current counter) into a 22×22 / 44×44 pixmap via
 QPainter — source of truth for color is `QGuiApplication.styleHints()
 .colorScheme()`, per the icon handoff.
@@ -9,38 +12,15 @@ QPainter — source of truth for color is `QGuiApplication.styleHints()
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Optional
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QFont, QGuiApplication, QIcon, QPainter, QPixmap
 
-_ASSETS = Path(__file__).resolve().parent.parent.parent / "assets"
-
-
-def _load_template_icon() -> Optional[QIcon]:
-    """Return the bundled template icon (mask=True) or None if missing."""
-    base = _ASSETS / "MenuBarIconTemplate.png"
-    if not base.exists():
-        return None
-    icon = QIcon()
-    # Register 1x, 2x, 3x if available so HiDPI menu bars get crisp scaling.
-    for name in (
-        "MenuBarIconTemplate.png",
-        "MenuBarIconTemplate_2x.png",
-        "MenuBarIconTemplate_3x.png",
-    ):
-        p = _ASSETS / name
-        if p.exists():
-            icon.addFile(str(p))
-    icon.setIsMask(True)  # macOS NSImage.isTemplate = YES equivalent
-    return icon
-
 
 class IconRenderer:
     def __init__(self, base_size: int = 22):
         self._base = base_size
-        self._template: Optional[QIcon] = _load_template_icon()
 
     def _fg(self) -> QColor:
         """Near-black on a light menu bar, near-white on a dark one.
@@ -60,8 +40,9 @@ class IconRenderer:
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setPen(self._fg())
         f = QFont()
-        # Small fractions fit better than large ones on macOS menu bar.
-        f.setPointSize(10 if len(text) > 2 else 14)
+        # Single-glyph idle ("P") wants a big point size so it fills the
+        # menu-bar canvas; multi-char fractions ("12/40") need to fit too.
+        f.setPointSize(11 if len(text) > 2 else 16)
         f.setBold(True)
         p.setFont(f)
         p.drawText(pm.rect(), Qt.AlignmentFlag.AlignCenter, text)
@@ -79,10 +60,8 @@ class IconRenderer:
         elif running and total > 0:
             text = f"{done}/{total}"
         else:
-            # Idle: prefer the bundled template (macOS auto-tints) over the
-            # painter glyph. Falls back to "P" if the template isn't bundled.
-            if self._template is not None:
-                return self._template
+            # Idle: always paint "P" — the bundled template PNG had a
+            # too-tiny glyph in too-much whitespace.
             text = "P"
 
         pm1 = QPixmap(self._base, self._base)

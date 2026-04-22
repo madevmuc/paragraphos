@@ -554,7 +554,7 @@ def build_tray_menu(
         else:
             act.triggered.connect(cb)
 
-    _add("Open", on_open)
+    _add("Open Paragraphos", on_open)
     _add("Check Now", on_check_now)
     menu.addSeparator()
     _add("Import OPML…", on_import_opml)
