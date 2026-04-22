@@ -170,6 +170,9 @@ def build_menu_bar(window) -> QMenuBar:
     a = QAction("Show Log Folder", window)
     a.triggered.connect(lambda: _open_log_folder(window))
     h.addAction(a)
+    a = QAction("Re-run setup guide…", window)
+    a.triggered.connect(lambda: _rerun_setup(window))
+    h.addAction(a)
 
     return mb
 
@@ -429,6 +432,22 @@ def _show_shortcuts(window) -> None:
         "⌘O     Open Latest Transcript\n"
         "⌘⇧F    Reveal Output in Finder\n",
     )
+
+
+def _rerun_setup(window) -> None:
+    """Re-open the guided setup dialog on user request.
+
+    The dialog's Finish button flips ``setup_completed`` back to True;
+    we force-clear the flag here first so SetupDialog is willing to show
+    even though the user has long finished their initial onboarding.
+    Persist to disk afterwards using the same idiom as Settings pane.
+    """
+    from ui.setup_dialog import SetupDialog
+
+    window.ctx.settings.setup_completed = False
+    dlg = SetupDialog(window.ctx.settings, window)
+    dlg.exec()
+    window.ctx.settings.save(window.ctx.data_dir / "settings.yaml")
 
 
 def _open_log_folder(window) -> None:
