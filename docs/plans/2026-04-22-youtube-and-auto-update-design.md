@@ -2,10 +2,20 @@
 
 **Date:** 2026-04-22
 **Status:** Brainstorm approved; ready for implementation plan.
-**Target version:** v1.2.0
+**Target version:** v2.0.0
 
-Two independent features bundled in one design because both expand
-paragraphos beyond its v1.x "podcasts only, manual updates" scope.
+A bundled major release expanding paragraphos beyond its v1.x
+"podcasts only, manual updates" scope. **No LLM dependencies** —
+every feature works offline against local artefacts or whisper.cpp
+native capabilities.
+
+Themes:
+
+1. **YouTube ingestion** — channels as first-class shows + ad-hoc videos.
+2. **Auto-update** — non-blocking prompt + atomic install.
+3. **Performance** — finish the two whisper-side perf items left over from old Phase 1.5.
+4. **Knowledge/discovery** — FTS5 search, OPML import/export, ID3 chapter parsing, smart playlists.
+5. **Power-user wiring** — speaker diarization (whisper.cpp native), episode-finish webhook.
 
 ---
 
@@ -261,6 +271,153 @@ ID, $99/yr, build pipeline changes). Not blocking this feature.
 
 ---
 
+---
+
+## Feature C — Performance: finish old Phase 1.5
+
+Two whisper-side wins from the original v0.5.1 perf phase that never
+landed. Verified open in current code. Both opt-in toggles, no
+default behaviour change.
+
+### C1 — whisper-cli `-p N` multi-processor split
+
+- File: `core/transcriber.py`, `ui/settings_pane.py`.
+- whisper-cli's `-p N` flag splits audio into N chunks processed in
+  parallel on separate threads. ~2× speedup on a 4-perf-core
+  M-series for hour-long episodes.
+- Setting: `whisper_processors` (int, default 1; UI slider 1–8).
+  Hint: "Higher = faster on long episodes, more CPU heat."
+- Gated behind opt-in to protect users on small Macs.
+- Test: assert `-p N` flag present iff setting > 1.
+
+### C2 — Stream-to-whisper (no intermediate MP3 file)
+
+- File: `core/pipeline.py`, `core/downloader.py`, `core/transcriber.py`.
+- Pipe `httpx.stream` output directly to whisper-cli via `-f -`
+  (stdin). Saves one disk round-trip; only profitable for ≥100 MB
+  episodes.
+- Setting: `stream_mode` (bool, default off).
+- Trade-off: breaks MP3-retention (the file was never on disk).
+  Document in Settings hint: "Saves disk I/O. Disables MP3 retention
+  for streamed episodes."
+
+---
+
+## Feature D — Knowledge & discovery
+
+### D1 — Full-text search across transcripts (FTS5)
+
+- File: `core/state.py` (FTS5 virtual table), new `core/search.py`,
+  new `ui/search_palette.py`.
+- SQLite FTS5 virtual table `transcript_fts(guid, show_slug, title,
+  body, ts)`. Populated on episode `done` (insert) and re-transcribe
+  (replace). Initial backfill via library scan.
+- `core/search.py`:
+  - `search(query, *, show=None, since=None, limit=50)` returns ranked
+    hits with snippets (FTS5 `snippet()` function).
+  - `search_metadata(filters)` for status/date queries (smart
+    playlists' non-FTS half).
+- `ui/search_palette.py`: `⌘F` opens a Spotlight-style modal palette
+  over the main window. Live results as user types. Click → opens the
+  `.md` in Obsidian (existing helper).
+- Index size estimate: ~30% of transcript markdown size on disk;
+  ~50 MB for a 5,000-episode vault.
+- Test: insert/update/delete keep index in sync; query ranks recent
+  matches above older ones for tie-breaks.
+
+### D2 — Smart playlists / saved searches
+
+- File: new `core/smart_playlists.py`, `ui/smart_playlists_tab.py`.
+- A "smart playlist" is a saved query: combination of metadata
+  filters (status, show, date range, has_failed, etc.) and an
+  optional FTS5 text term.
+- Schema: `state.smart_playlists(id, name, query_json, created_at,
+  updated_at)`. `query_json` is a structured filter spec.
+- New sidebar entry **Playlists** below Library. Each playlist row
+  shows count + last-run timestamp. Click → table of matching
+  episodes (read-only view, same columns as Queue).
+- Built-ins shipped: "Failed in last 7 days", "Done this week",
+  "Pending > 2 days old".
+- User-created via "+ New playlist" → modal with filter form +
+  optional search term + name field.
+- Depends on D1 for the text-term filter; metadata-only playlists
+  work without FTS5.
+
+### D3 — OPML import/export
+
+- File: new `core/opml.py`, `ui/opml_dialog.py`, hook in tray menu
+  (slot already exists per design-handoff brief).
+- **Import**: parse OPML 2.0, extract `<outline xmlUrl="..."/>`
+  entries, run each through the existing add-show flow with
+  Backlog=`Only new` as default. Show a summary dialog: N added,
+  M skipped (already subscribed), K failed (bad feed).
+- **Export**: write `paragraphos-shows.opml` containing all enabled
+  podcast shows (NOT YouTube — OPML is podcast-spec). User picks
+  destination via standard save dialog.
+- Test: round-trip a 50-show OPML, assert all imported with correct
+  RSS URLs.
+
+### D4 — MP3 ID3 chapter parsing
+
+- File: `core/id3_chapters.py` (new), hook in `core/transcriber.py`
+  post-process step.
+- Many podcasts ship ID3v2 CHAP/CTOC frames with chapter markers
+  (title + start_ms). Parse with `mutagen` (new dep, lightweight).
+- After transcription, walk SRT timestamps and inject
+  `## Chapter N: <title>` markdown headings at the matching offsets.
+- Frontmatter gains `chapters: [{title, start_ms}, ...]` for
+  downstream tooling.
+- Silently no-op when no chapters present.
+- Test: fixture MP3 with 3 chapters → 3 headings in output `.md` at
+  correct line offsets.
+
+---
+
+## Feature E — Power-user wiring
+
+No LLM dependencies. Speaker diarization runs on whisper.cpp's
+native tinydiarize support; webhook is plain HTTP.
+
+### E1 — Speaker diarization
+
+- File: `core/transcriber.py` (whisper-cli flags), settings.
+- whisper.cpp supports `--diarize` with the **tinydiarize** model
+  (`small.en-tdrz`). When enabled, output SRT lines get
+  `[SPEAKER_00]`, `[SPEAKER_01]` prefixes.
+- Setting: `diarize_enabled` (bool, default off; per-show override
+  in Show Details). Auto-fetches the tinydiarize model on first use
+  (same flow as the main whisper model download).
+- Limitation: tinydiarize is English-only. For non-English shows the
+  toggle is greyed out with hint "tinydiarize: English only."
+- The `.md` body retains speaker prefixes; SRT keeps them in line
+  text. No new frontmatter field.
+- Test: assert `--diarize -mt <tdrz-model>` flags only when toggle
+  on; assert `[SPEAKER_*]` prefixes preserved through MD render.
+
+### E2 — Episode-finish webhook
+
+- File: new `core/webhooks.py`, settings extension.
+- Setting: `webhook_url` (string, optional). When set, on each
+  episode `done` transition, POST a JSON payload:
+
+  ```json
+  {
+    "event": "episode.done",
+    "show": {"slug": "...", "title": "...", "source": "podcast|youtube"},
+    "episode": {"guid": "...", "title": "...", "published_at": "...",
+                "duration_s": 3600, "transcript_path": "...",
+                "audio_url": "...",
+                "chapters": [{"title": "...", "start_ms": 0}, ...]}
+  }
+  ```
+- One retry with 30 s delay on 5xx / network failure; 4xx logs and
+  drops. Never blocks the pipeline.
+- Optional HMAC signing: `webhook_secret` (Keychain). Header
+  `X-Paragraphos-Signature: sha256=<hex>` with the request body.
+- Test: mocked HTTP server receives expected payload + signature.
+
+---
+
 ## Cross-cutting
 
 ### Settings additions
@@ -279,36 +436,109 @@ YouTube (visible only when Sources → YouTube checked)
                               ( ) Always whisper
                               ( ) Use auto-captions if no manual
   yt-dlp version: 2026.03.30  [ Update now ]
+
+Performance
+  Whisper processors:  [—————●——] 4    (1 = single, 8 = max)
+  [ ] Stream-mode (skip MP3 file, requires retention off)
+
+Discovery
+  [x] Index transcripts for full-text search
+  [ Rebuild index ]   Last indexed: 2026-04-22 14:32
+
+Transcripts
+  [ ] Speaker diarization (English only)
+  [ ] Parse MP3 chapter markers (ID3) into headings
+
+Webhooks
+  Episode-finish URL: [_______________________]
+  HMAC secret: [keychain entry]    [ Test ]
 ```
 
-### Migration
+### State / schema additions
 
-- Existing settings file gains 4 new keys with safe defaults
-  (`sources_podcasts=true`, `sources_youtube=true`,
-  `update_check_enabled=true`, `skipped_version=""`).
-  Backfilled on load like the v1.1.9 `setup_completed` migration.
-- No state-schema changes for shows or episodes (the YouTube source
-  marker lives in frontmatter, not SQLite).
+- **`state.transcript_fts`** — FTS5 virtual table (D1).
+- **`state.smart_playlists`** — id, name, query_json, created_at,
+  updated_at (D2).
+- **Settings keys** (all backfilled on load like v1.1.9
+  `setup_completed`):
+  `sources_podcasts`, `sources_youtube`,
+  `update_check_enabled`, `skipped_version`,
+  `youtube_default_transcript_source`,
+  `whisper_processors`, `stream_mode`,
+  `fts_enabled`,
+  `diarize_enabled`, `id3_chapters_enabled`,
+  `webhook_url`, `webhook_secret_keychain_id`.
+- **Frontmatter additions**: `source`, `youtube_id`, `youtube_url`,
+  `channel_id`, `transcript_source` (YouTube items);
+  `chapters`, `chapter_source` (D4).
+- **New deps**: `mutagen` (D4 ID3 parsing), `keyring` (E2 webhook
+  secret + future remote-API keys). yt-dlp lazy-installed at
+  runtime, not a build dep.
 
-### Out of scope for v1.2
+### Out of scope for v2.0
 
-- In-app YouTube search (paste only).
+- In-app YouTube search (paste only; fast follow).
 - Live caption streaming during transcription.
 - Browser extension hand-off.
-- Code signing / notarisation.
+- Code signing / notarisation (deferred; documented Gatekeeper
+  workaround in auto-update success dialog).
 - Sparkle framework. Custom mechanism is small and avoids the dep.
 - Delta updates. Full DMG re-download per release; ~50 MB is fine.
+- Any LLM-driven feature (entity extraction, summarisation,
+  LLM-driven chapter detection). Explicitly excluded — no LLM
+  dependencies in v2.0.
+- Cross-device sync.
+- Mobile companion.
 
 ### Phasing
 
-Both features are independent. Suggested commit order in the
-implementation plan:
+Suggested commit order in the implementation plan, grouped by
+theme. Each commit is independently shippable; intermediate
+versions can ship as v1.2.x → v1.9.x if desired before tagging
+v2.0.
 
-1. Settings → Sources + Updates sections (foundation).
-2. yt-dlp lazy-installer + Sources gating.
-3. YouTube channel add (RSS poll + backfill via yt-dlp).
-4. YouTube transcript path (captions-first, whisper-fallback).
-5. Auto-update check + modal.
-6. Auto-update install flow + restart handshake.
+**Foundation**
 
-Ship as **v1.2.0** with both features.
+1. Settings → Sources + Updates + Performance + Discovery +
+   Transcripts + Webhooks sections (UI scaffolding only, no-op
+   toggles).
+
+**Theme A — YouTube ingestion**
+
+2. yt-dlp lazy-installer + Sources gating + self-update popup.
+3. YouTube channel add (hidden RSS poll + backfill via
+   `yt-dlp --flat-playlist`).
+4. YouTube transcript path (captions-first VTT→SRT, whisper
+   fallback, per-channel override).
+
+**Theme B — Auto-update**
+
+5. `latest.json` manifest fetch + version compare + non-blocking
+   modal + skip-this-version persistence.
+6. Download + SHA256 verify + atomic rsync replace + restart
+   handshake. Document Gatekeeper workaround.
+
+**Theme C — Performance**
+
+7. C1: whisper-cli `-p N` multi-processor split (opt-in slider).
+8. C2: Stream-to-whisper opt-in mode.
+
+**Theme D — Knowledge & discovery**
+
+9. D1: SQLite FTS5 virtual table + backfill scan + `core/search.py`.
+10. D1 (cont.): `⌘F` search palette UI.
+11. D2: Smart-playlists schema + sidebar entry + built-in playlists
+    + new-playlist modal.
+12. D3: OPML import/export + tray-menu hook.
+13. D4: ID3 chapter parsing via `mutagen` + heading injection +
+    frontmatter `chapters` field.
+
+**Theme E — Power-user wiring**
+
+14. E1: Speaker diarization toggle + tinydiarize model auto-fetch
+    + per-show override.
+15. E2: Episode-finish webhook + HMAC signing + retry policy.
+
+Ship as **v2.0.0** with all of the above. Themes A and B can ship
+earlier as v1.2.0 if it's useful to release them first; the rest
+follow as v1.3.x → v2.0.0.
