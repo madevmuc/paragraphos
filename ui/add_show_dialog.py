@@ -9,7 +9,8 @@ from __future__ import annotations
 from typing import Optional
 from urllib.parse import urlparse
 
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtCore import QObject, QRunnable, Qt, QThread, QThreadPool, pyqtSignal
+from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QDialog,
@@ -18,8 +19,6 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QListWidget,
-    QListWidgetItem,
     QMessageBox,
     QPushButton,
     QRadioButton,
@@ -34,8 +33,10 @@ from core.models import Show
 from core.prompt_gen import suggest_whisper_prompt
 from core.rss import FeedHealth, build_manifest_with_url, feed_metadata
 from core.sanitize import slugify
+from ui.feed_probe import FeedProbeWorker
 from ui.themes import current_tokens
 from ui.widgets.pill import Pill
+from ui.widgets.show_results_table import ShowResultsTable
 
 # --------------------------------------------------------------------------- #
 # Background fetchers                                                         #
@@ -93,6 +94,39 @@ class _AppleResolveThread(QThread):
         self.done.emit(out)
 
 
+class _CoverSignals(QObject):
+    done = pyqtSignal(int, QPixmap)
+
+
+class _CoverWorker(QRunnable):
+    """Fetches a cover image off-thread, decodes to a 48 px-high QPixmap,
+    and emits (row_index, pixmap) on success. Silent on any failure — the
+    table just keeps its blank cover cell."""
+
+    def __init__(self, row: int, url: str):
+        super().__init__()
+        self._row = row
+        self._url = url
+        self._signals = _CoverSignals()
+        self.done = self._signals.done
+
+    def run(self) -> None:
+        try:
+            import httpx
+
+            r = httpx.get(self._url, timeout=6.0, follow_redirects=True)
+            r.raise_for_status()
+        except Exception:
+            return
+        px = QPixmap()
+        if not px.loadFromData(r.content):
+            return
+        if px.isNull():
+            return
+        px = px.scaledToHeight(48, Qt.TransformationMode.SmoothTransformation)
+        self._signals.done.emit(self._row, px)
+
+
 # --------------------------------------------------------------------------- #
 # Dialog                                                                      #
 # --------------------------------------------------------------------------- #
@@ -120,6 +154,12 @@ class AddShowDialog(QDialog):
         # what to re-query; limit grows by 50 per click up to iTunes' 200 cap.
         self._name_search_term: str = ""
         self._name_search_limit: int = 50
+
+        # QThreadPool for probe + cover workers — shared, concurrency-capped.
+        # Keep it tight to stay friendly with feed hosts.
+        self._search_pool = QThreadPool(self)
+        self._search_pool.setMaxThreadCount(6)
+        self._probed_rows: set[int] = set()
 
         root = QVBoxLayout(self)
 
@@ -181,12 +221,13 @@ class AddShowDialog(QDialog):
         row.addWidget(search_btn)
         v.addLayout(row)
 
-        self.results = QListWidget()
-        self.results.itemDoubleClicked.connect(self._pick_name_result)
+        self.results = ShowResultsTable()
+        self.results.cellDoubleClicked.connect(self._pick_name_result_by_row)
         # Auto-fetch the next page when the user scrolls within ~60 px of
         # the bottom. A visible button interrupts the flow; an infinite-
-        # scroll feel is closer to what the app's users expect.
-        self.results.verticalScrollBar().valueChanged.connect(self._maybe_auto_load_more)
+        # scroll feel is closer to what the app's users expect. Also
+        # probe rows as they scroll into view.
+        self.results.verticalScrollBar().valueChanged.connect(self._on_name_scroll)
         v.addWidget(self.results, 1)
 
         self._name_hint = QLabel("")
@@ -214,7 +255,7 @@ class AddShowDialog(QDialog):
         term = self.name_input.text().strip()
         if not term:
             return
-        self.results.clear()
+        self.results.set_matches([])
         self._name_hint.setText("")
         self._name_search_term = term
         self._name_search_limit = 50
@@ -228,13 +269,13 @@ class AddShowDialog(QDialog):
                 QMessageBox.warning(self, "Not found", "No RSS link on that page.")
                 return
             self._render_name_results(search_itunes(term, limit=self._name_search_limit))
-            if self.results.count() == 0:
+            if self.results.rowCount() == 0:
                 QMessageBox.information(self, "No matches", "iTunes returned no results.")
         except Exception as e:  # noqa: BLE001
             QMessageBox.warning(self, "Error", str(e))
 
     def _render_name_results(self, matches) -> None:
-        """Fill the list widget and update the hint.
+        """Fill the results table and update the hint.
 
         Called on initial search and on every scroll-triggered auto-load —
         we replace the full list rather than append because iTunes doesn't
@@ -244,13 +285,11 @@ class AddShowDialog(QDialog):
         # Preserve scroll position across re-renders so an auto-load
         # triggered at the bottom doesn't jerk the viewport back to the top.
         scroll_val = self.results.verticalScrollBar().value()
-        self.results.clear()
-        for m in matches:
-            item = QListWidgetItem(f"{m.title} — {m.author}")
-            item.setData(Qt.ItemDataRole.UserRole, m.feed_url)
-            self.results.addItem(item)
+        self.results.set_matches(list(matches))
         self.results.verticalScrollBar().setValue(scroll_val)
-        shown = self.results.count()
+        # Reset probe bookkeeping on a replace-all render.
+        self._probed_rows = set()
+        shown = self.results.rowCount()
         # iTunes caps at 200 and returns fewer when the query is narrow.
         hit_api_cap = self._name_search_limit >= 200
         capped_by_server = shown < self._name_search_limit
@@ -258,6 +297,47 @@ class AddShowDialog(QDialog):
             self._name_hint.setText(f"Showing all {shown} matches.")
         else:
             self._name_hint.setText(f"Showing top {shown} · scroll for more.")
+        # Kick off top-10 feed probes + covers.
+        self._probe_rows(range(min(10, shown)))
+        self._load_covers(range(shown))
+
+    def _on_name_scroll(self, value: int) -> None:
+        # Reuse the existing auto-load-more logic (scroll-to-bottom).
+        self._maybe_auto_load_more(value)
+        # Probe newly-visible rows beyond the initial top-10.
+        self._probe_visible_rows()
+
+    def _probe_visible_rows(self) -> None:
+        total = self.results.rowCount()
+        if total == 0:
+            return
+        top_row = self.results.rowAt(0)
+        vh = self.results.viewport().height()
+        bottom_row = self.results.rowAt(max(0, vh - 1))
+        if bottom_row == -1:
+            bottom_row = total - 1
+        self._probe_rows(range(max(0, top_row), min(total, bottom_row + 1)))
+
+    def _probe_rows(self, indices) -> None:
+        for row in indices:
+            if row in self._probed_rows:
+                continue
+            url = self.results.feed_url_for_row(row)
+            if not url:
+                continue
+            self._probed_rows.add(row)
+            worker = FeedProbeWorker(row, url)
+            worker.done.connect(self.results.apply_probe_result)
+            self._search_pool.start(worker)
+
+    def _load_covers(self, indices) -> None:
+        for row in indices:
+            m = self.results.match_for_row(row)
+            if m is None or not m.artwork_url:
+                continue
+            w = _CoverWorker(row, m.artwork_url)
+            w.done.connect(self.results.set_cover)
+            self._search_pool.start(w)
 
     def _maybe_auto_load_more(self, _value: int) -> None:
         """Trigger the next page when the user scrolls near the bottom.
@@ -272,7 +352,7 @@ class AddShowDialog(QDialog):
             return
         if self._name_search_limit >= 200:
             return
-        shown = self.results.count()
+        shown = self.results.rowCount()
         if shown == 0 or shown < self._name_search_limit:
             return  # server returned fewer than requested — no more to get.
         sb = self.results.verticalScrollBar()
@@ -295,8 +375,11 @@ class AddShowDialog(QDialog):
         finally:
             self._name_fetch_in_flight = False
 
-    def _pick_name_result(self, item: QListWidgetItem) -> None:
-        self._fill_from_feed_sync(item.data(Qt.ItemDataRole.UserRole))
+    def _pick_name_result_by_row(self, row: int, col: int) -> None:
+        url = self.results.feed_url_for_row(row)
+        if url is None:
+            return
+        self._fill_from_feed_sync(url)
 
     def _fill_from_feed_sync(self, rss: str) -> None:
         try:
