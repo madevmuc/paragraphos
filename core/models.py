@@ -112,7 +112,9 @@ class Settings(BaseModel):
 def backfill_setup_completed(s: Settings) -> None:
     """Legacy users had the setup steps implicitly done through manual
     edits — flip the new ``setup_completed`` flag True so the first-run
-    setup dialog doesn't ambush them on upgrade."""
+    setup dialog doesn't ambush them on upgrade.
+
+    Mutates ``s`` in place; returns ``None``."""
     if s.setup_completed:
         return
     defaults = Settings()

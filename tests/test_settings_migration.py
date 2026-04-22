@@ -24,3 +24,17 @@ def test_backfill_respects_existing_true():
     # Even with pure defaults + flag already True, don't flip back.
     backfill_setup_completed(s)
     assert s.setup_completed is True
+
+
+def test_backfill_flips_flag_when_obsidian_vault_path_customised():
+    s = Settings()
+    s.obsidian_vault_path = "/Users/alice/ObsidianVault"
+    backfill_setup_completed(s)
+    assert s.setup_completed is True
+
+
+def test_backfill_flips_flag_when_knowledge_hub_root_customised():
+    s = Settings()
+    s.knowledge_hub_root = "/Users/alice/knowledge-hub"
+    backfill_setup_completed(s)
+    assert s.setup_completed is True
