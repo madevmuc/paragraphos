@@ -210,7 +210,8 @@ class SettingsPane(QWidget):
 
         # ── Obsidian ───────────────────────────────────────────
         # Vault path, vault name, picker, and a live write-target preview
-        # — flat _section() header to match the surrounding sections.
+        # — uses _add_field like the surrounding sections so labels align
+        # right and field columns line up across the entire pane.
         root.addWidget(_section("Obsidian"))
         obsidian_form = QFormLayout()
         obs_row = QHBoxLayout()
@@ -218,16 +219,13 @@ class SettingsPane(QWidget):
         _pick = QPushButton("Pick…")
         _pick.clicked.connect(self._pick_obsidian)
         obs_row.addWidget(_pick)
-        obs_row_w = QWidget()
-        obs_row.setContentsMargins(0, 0, 0, 0)
-        obs_row_w.setLayout(obs_row)
-        obsidian_form.addRow("Vault path", obs_row_w)
-        obsidian_form.addRow("Vault name", self.obsidian_name)
+        self._add_field(obsidian_form, "Vault path", self._row_widget(obs_row))
+        self._add_field(obsidian_form, "Vault name", self.obsidian_name)
         self.obsidian_preview = QLabel("")
         self.obsidian_preview.setObjectName("obsidian_preview")
         self.obsidian_preview.setStyleSheet("color: palette(placeholder-text); font-size: 11px;")
         self.obsidian_preview.setWordWrap(True)
-        obsidian_form.addRow("", self.obsidian_preview)
+        self._add_field(obsidian_form, "", self.obsidian_preview)
         root.addLayout(obsidian_form)
 
         # Populate the preview line once, now that all three source
