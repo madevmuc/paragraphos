@@ -205,9 +205,10 @@ class FirstRunWizard(QDialog):
 
         def run_check():
             status = deps.check()
+            c = compat.check_compat()
             # Build tooltip string for debugging
             parts = [
-                f"compat: {'✓' if compat.check_compat().all_blocking_ok else '✗'}",
+                f"compat: {'✓' if c.all_blocking_ok else '✗'}",
                 f"brew: {'✓' if status.brew else '✗'}",
                 f"whisper-cli: {'✓' if status.whisper_cli else '✗'}",
                 f"ffmpeg: {'✓' if status.ffmpeg else '✗'}",
@@ -227,7 +228,12 @@ class FirstRunWizard(QDialog):
             self.compat_row.pill.setText("blocked")
             self.compat_row.pill.set_kind("fail")
             self.compat_row._set_sub(" · ".join(c.blocking_reasons))
-        elif c.advisories:
+            # Hardware unsuitable — park all dep rows, skip installs and auto-chain.
+            for row in (self.brew_row, self.whisper_row, self.ffmpeg_row, self.model_row):
+                row.set_waiting("unsupported hardware")
+            self.close_btn.setEnabled(False)
+            return
+        if c.advisories:
             self.compat_row.pill.setText("ok (advisories)")
             self.compat_row.pill.set_kind("ok")
             self.compat_row._set_sub(" · ".join(c.advisories))

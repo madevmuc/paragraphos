@@ -173,7 +173,6 @@ def test_wizard_blocks_continue_on_intel(monkeypatch):
     from core import compat, deps
     from ui import first_run_wizard as wiz
 
-    # All deps present — but hardware check blocks.
     monkeypatch.setattr(
         compat,
         "check_compat",
@@ -181,21 +180,35 @@ def test_wizard_blocks_continue_on_intel(monkeypatch):
             blocking_reasons=["Apple Silicon required — this Mac reports arch 'x86_64'."]
         ),
     )
+    # Deps all missing — makes the "no install kicked off" assertion meaningful.
     monkeypatch.setattr(
         deps,
         "check",
-        lambda: deps.DepStatus(brew=True, whisper_cli=True, ffmpeg=True, model=True),
+        lambda: deps.DepStatus(brew=False, whisper_cli=False, ffmpeg=False, model=False),
     )
-    # Avoid any install side-effects.
-    monkeypatch.setattr(wiz.FirstRunWizard, "_install_whisper", lambda self: None)
-    monkeypatch.setattr(wiz.FirstRunWizard, "_install_ffmpeg", lambda self: None)
-    monkeypatch.setattr(wiz.FirstRunWizard, "_download_model", lambda self: None)
+    started = {"brew": False, "whisper": False, "ffmpeg": False, "model": False}
+    monkeypatch.setattr(
+        wiz.FirstRunWizard, "_install_brew", lambda self: started.__setitem__("brew", True)
+    )
+    monkeypatch.setattr(
+        wiz.FirstRunWizard, "_install_whisper", lambda self: started.__setitem__("whisper", True)
+    )
+    monkeypatch.setattr(
+        wiz.FirstRunWizard, "_install_ffmpeg", lambda self: started.__setitem__("ffmpeg", True)
+    )
+    monkeypatch.setattr(
+        wiz.FirstRunWizard, "_download_model", lambda self: started.__setitem__("model", True)
+    )
 
     w = wiz.FirstRunWizard()
     w._refresh()
 
     assert not w.close_btn.isEnabled()
     assert "Apple Silicon" in w.compat_row.subcopy.text()
+    # Nothing kicks off when hardware is unsupported.
+    assert not any(started.values())
+    # All dep rows parked in waiting state.
+    assert "unsupported" in w.brew_row.subcopy.text().lower()
 
 
 def test_wizard_advisory_shows_but_allows_continue(monkeypatch):
