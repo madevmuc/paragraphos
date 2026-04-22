@@ -156,35 +156,58 @@ See `About Paragraphos → Security` in the app for the full threat model.
 
 ### GUI workflows
 
-- **Add Podcast** dialog supports three modes (after Phase 6 design
-  refresh): *By name* (iTunes search), *By URL* (RSS with rich
-  preview), *Paste Apple link* (one-step auto-detect).
+- **Add Podcast** dialog supports four modes: *By name* (iTunes
+  search), *By URL* (RSS with rich preview), *Paste Apple link*
+  (one-step auto-detect), and **YouTube URL** (channel handle / channel
+  ID, with backfill segmented control). The YouTube mode appears only
+  when *Settings → Sources → YouTube* is enabled.
+- **Sources** in Settings: independent toggles for Podcasts (RSS) and
+  YouTube channels. At least one must stay on. Disabling YouTube
+  hides the YouTube UI and skips the lazy yt-dlp install.
 - **Queue tab** shows live progress: `3/12 · started 09:14 · elapsed
   18m 02s · ETA 52m · finish ≈ 10:24 (before lunch)`.
 - **Failed tab** lists every failure with humanised reason + retry /
   mark-resolved / clear-old-than-30-days buttons.
 - **Settings** are auto-saved on every change; inline hints explain
-  each field.
+  each field. The "Re-run setup guide" button at the bottom re-opens
+  the guided onboarding (same as Help → Re-run setup guide).
 - **OPML drag-and-drop**: drop an `.opml` file on the Dock icon to bulk
-  import subscriptions.
+  import podcast subscriptions.
 
 ### Headless CLI
 
-Paragraphos ships a headless CLI for automation:
+Paragraphos ships a headless CLI for automation. v1.2.0+ accepts both
+RSS and YouTube channel URLs through the same `add` command.
 
 ```bash
 cd ~/dev/paragraphos
 export PYTHONPATH=.
 
+# Podcasts
 .venv/bin/python cli.py add "Odd Lots"          # by name (iTunes)
 .venv/bin/python cli.py add https://feeds.acast.com/public/shows/…
-.venv/bin/python cli.py list
+
+# YouTube channels (yt-dlp auto-installs to
+# ~/Library/Application Support/Paragraphos/bin/yt-dlp on first use)
+.venv/bin/python cli.py add https://www.youtube.com/@TED
+.venv/bin/python cli.py add https://www.youtube.com/channel/UCAuU…
+
+.venv/bin/python cli.py list                    # source col: podcast | youtube
 .venv/bin/python cli.py check --show odd-lots --limit 5
 .venv/bin/python cli.py import-feeds            # seed from built-in list
 ```
 
+YouTube transcripts go through **captions-first** by default — uploader
+captions are fetched and converted (VTT → SRT) instantly; whisper takes
+over when captions are absent. Override per channel via Show Details
+(*Captions / Always whisper / Use auto-captions if no manual*) or
+globally via `youtube_default_transcript_source` in `settings.yaml`.
+
 The Settings pane ships a ready-to-paste **agent prompt** you can give
-to Claude Code / Gemini CLI / any coding agent with shell access.
+to Claude Code / Gemini CLI / any coding agent with shell access. The
+prompt now includes YouTube-specific examples like "switch all YouTube
+shows to always-whisper mode" and "list every YouTube episode that
+fell back to whisper".
 
 ## Development
 
