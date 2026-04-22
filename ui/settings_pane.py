@@ -11,7 +11,6 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QFrame,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -184,9 +183,6 @@ class SettingsPane(QWidget):
         exp_row.addWidget(exp_pick)
         self._add_field(f1, "Export ZIP target", self._row_widget(exp_row))
 
-        # Obsidian fields live in their own group box so the vault path,
-        # vault name, picker, and a live write-target preview are visually
-        # grouped rather than mixed into the generic folder list.
         self.obsidian_path = QLineEdit(self.ctx.settings.obsidian_vault_path)
         self.obsidian_path.textChanged.connect(self._schedule_save)
         self.obsidian_path.textChanged.connect(self._refresh_obsidian_preview)
@@ -194,23 +190,6 @@ class SettingsPane(QWidget):
         self.obsidian_name.textChanged.connect(self._schedule_save)
         self.obsidian_name.textChanged.connect(self._refresh_obsidian_preview)
         self.output.textChanged.connect(self._refresh_obsidian_preview)
-
-        obsidian_box = QGroupBox("Obsidian")
-        obsidian_layout = QFormLayout(obsidian_box)
-        obs_row = QHBoxLayout()
-        obs_row.addWidget(self.obsidian_path)
-        _pick = QPushButton("Pick…")
-        _pick.clicked.connect(self._pick_obsidian)
-        obs_row.addWidget(_pick)
-        obs_row_w = QWidget()
-        obs_row.setContentsMargins(0, 0, 0, 0)
-        obs_row_w.setLayout(obs_row)
-        obsidian_layout.addRow("Vault path", obs_row_w)
-        obsidian_layout.addRow("Vault name", self.obsidian_name)
-        self.obsidian_preview = QLabel("")
-        self.obsidian_preview.setStyleSheet("color: palette(placeholder-text); font-size: 11px;")
-        self.obsidian_preview.setWordWrap(True)
-        obsidian_layout.addRow("", self.obsidian_preview)
 
         self.kb_root = QLineEdit(self.ctx.settings.knowledge_hub_root)
         self.kb_root.textChanged.connect(self._schedule_save)
@@ -228,7 +207,28 @@ class SettingsPane(QWidget):
             hint_kind=kb_kind,
         )
         root.addLayout(f1)
-        root.addWidget(obsidian_box)
+
+        # ── Obsidian ───────────────────────────────────────────
+        # Vault path, vault name, picker, and a live write-target preview
+        # — flat _section() header to match the surrounding sections.
+        root.addWidget(_section("Obsidian"))
+        obsidian_form = QFormLayout()
+        obs_row = QHBoxLayout()
+        obs_row.addWidget(self.obsidian_path)
+        _pick = QPushButton("Pick…")
+        _pick.clicked.connect(self._pick_obsidian)
+        obs_row.addWidget(_pick)
+        obs_row_w = QWidget()
+        obs_row.setContentsMargins(0, 0, 0, 0)
+        obs_row_w.setLayout(obs_row)
+        obsidian_form.addRow("Vault path", obs_row_w)
+        obsidian_form.addRow("Vault name", self.obsidian_name)
+        self.obsidian_preview = QLabel("")
+        self.obsidian_preview.setObjectName("obsidian_preview")
+        self.obsidian_preview.setStyleSheet("color: palette(placeholder-text); font-size: 11px;")
+        self.obsidian_preview.setWordWrap(True)
+        obsidian_form.addRow("", self.obsidian_preview)
+        root.addLayout(obsidian_form)
 
         # Populate the preview line once, now that all three source
         # widgets (output / obsidian_path / obsidian_name) exist.
@@ -238,18 +238,19 @@ class SettingsPane(QWidget):
         # Markdown is always saved. SRT is opt-in — it carries per-segment
         # timestamps so you can cite "at 12:34" in your notes. Keeping both
         # default-on preserves behaviour for upgraders.
-        formats_box = QGroupBox("Output formats")
-        formats_layout = QVBoxLayout(formats_box)
+        root.addWidget(_section("Output formats"))
 
         md_cb = QCheckBox("Markdown (.md) — always saved")
+        md_cb.setObjectName("output_markdown_checkbox")
         md_cb.setChecked(True)
         md_cb.setEnabled(False)
-        formats_layout.addWidget(md_cb)
+        root.addWidget(md_cb)
 
         self.save_srt_cb = QCheckBox("SRT subtitles (.srt)")
+        self.save_srt_cb.setObjectName("output_srt_checkbox")
         self.save_srt_cb.setChecked(bool(self.ctx.settings.save_srt))
         self.save_srt_cb.toggled.connect(self._schedule_save)
-        formats_layout.addWidget(self.save_srt_cb)
+        root.addWidget(self.save_srt_cb)
 
         formats_hint = QLabel(
             "<span style='color: palette(placeholder-text); font-size: 11px;'>"
@@ -258,8 +259,7 @@ class SettingsPane(QWidget):
             "Transcripts (.md) are always saved.</span>"
         )
         formats_hint.setWordWrap(True)
-        formats_layout.addWidget(formats_hint)
-        root.addWidget(formats_box)
+        root.addWidget(formats_hint)
 
         # ── Schedule & monitoring ──────────────────────────────
         root.addWidget(_section("Schedule & monitoring"))
@@ -516,19 +516,18 @@ class SettingsPane(QWidget):
         # points because users go looking in Settings for "change my
         # transcripts folder / Obsidian wiring" before they think of the
         # menu bar.
-        setup_group = QGroupBox("Setup guide")
-        setup_group.setObjectName("setup_group")
-        sg_layout = QVBoxLayout(setup_group)
+        root.addWidget(_section("Setup guide"))
         setup_hint = QLabel(
             "Re-open the guided setup to change the transcripts folder or Obsidian wiring."
         )
+        setup_hint.setObjectName("setup_guide_hint")
         setup_hint.setStyleSheet("color: palette(placeholder-text); font-size: 11px;")
         setup_hint.setWordWrap(True)
-        sg_layout.addWidget(setup_hint)
+        root.addWidget(setup_hint)
         self.rerun_setup_btn = QPushButton("Re-run setup guide…")
+        self.rerun_setup_btn.setObjectName("rerun_setup_btn")
         self.rerun_setup_btn.clicked.connect(self._on_rerun_setup_clicked)
-        sg_layout.addWidget(self.rerun_setup_btn, alignment=Qt.AlignmentFlag.AlignLeft)
-        root.addWidget(setup_group)
+        root.addWidget(self.rerun_setup_btn, alignment=Qt.AlignmentFlag.AlignLeft)
 
         root.addStretch()
 
