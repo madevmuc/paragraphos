@@ -107,6 +107,10 @@ class Settings(BaseModel):
     # via Show.youtube_transcript_pref. One of:
     # "captions" | "whisper" | "auto-captions".
     youtube_default_transcript_source: str = "captions"
+    # Whether the bottom log dock is visible across all pages. Off by
+    # default — power-user diagnostic, surfaced by the Logs sidebar
+    # entry and the Ctrl+L shortcut for everyone else.
+    show_log_dock: bool = False
 
     @field_validator("daily_check_time")
     @classmethod

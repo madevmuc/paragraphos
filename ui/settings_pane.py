@@ -261,6 +261,25 @@ class SettingsPane(QWidget):
         formats_hint.setWordWrap(True)
         root.addWidget(formats_hint)
 
+        # ── Interface ──────────────────────────────────────────
+        # Power-user toggle for the bottom log dock that appears across
+        # all pages. The Logs sidebar entry + Ctrl+L shortcut stay
+        # available regardless — this is purely about the persistent
+        # bottom panel.
+        root.addWidget(_section("Interface"))
+        self.show_log_dock_cb = QCheckBox("Show log panel at the bottom of every page")
+        self.show_log_dock_cb.setObjectName("show_log_dock_checkbox")
+        self.show_log_dock_cb.setChecked(bool(getattr(self.ctx.settings, "show_log_dock", False)))
+        self.show_log_dock_cb.toggled.connect(self._on_show_log_dock_toggled)
+        root.addWidget(self.show_log_dock_cb)
+        log_dock_hint = QLabel(
+            "<span style='color: palette(placeholder-text); font-size: 11px;'>"
+            "Off by default. The Logs entry in the sidebar still works regardless."
+            "</span>"
+        )
+        log_dock_hint.setWordWrap(True)
+        root.addWidget(log_dock_hint)
+
         # ── Schedule & monitoring ──────────────────────────────
         root.addWidget(_section("Schedule & monitoring"))
         f2 = QFormLayout()
@@ -817,6 +836,15 @@ class SettingsPane(QWidget):
             self.podcasts_checkbox.blockSignals(False)
         self._schedule_save()
 
+    def _on_show_log_dock_toggled(self, checked: bool) -> None:
+        """Apply the log-dock visibility immediately to the running window
+        in addition to persisting the setting on the next debounce tick."""
+        win = self.window()
+        dock = getattr(win, "log_dock", None)
+        if dock is not None:
+            dock.setVisible(checked)
+        self._schedule_save()
+
     def _schedule_save(self):
         self._saved_label.setText("…")
         self._save_timer.start(250)
@@ -844,6 +872,7 @@ class SettingsPane(QWidget):
         s.save_srt = self.save_srt_cb.isChecked()
         s.sources_podcasts = self.podcasts_checkbox.isChecked()
         s.sources_youtube = self.youtube_checkbox.isChecked()
+        s.show_log_dock = self.show_log_dock_cb.isChecked()
         s.save(self.ctx.data_dir / "settings.yaml")
         from datetime import datetime
 

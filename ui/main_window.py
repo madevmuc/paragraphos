@@ -206,6 +206,9 @@ class MainWindow(QMainWindow):
 
         self.log_dock = LogDock(self)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.log_dock)
+        # Off by default — Settings → Show log dock toggle controls this,
+        # Ctrl+L flips on demand.
+        self.log_dock.setVisible(bool(getattr(self.ctx.settings, "show_log_dock", False)))
 
         # Fan every log message into both the dock (bottom) and the
         # sidebar Logs pane so they stay in sync.
