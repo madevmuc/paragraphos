@@ -91,6 +91,11 @@ class Settings(BaseModel):
     # Output formats — Markdown is always written; SRT is opt-in. Default
     # True so upgraders see no behaviour change on first launch.
     save_srt: bool = True
+    # Source filter — at least one must be True. Validated in
+    # core.sources.validate_sources(). Default both on for backward
+    # compat (existing users keep podcast behaviour).
+    sources_podcasts: bool = True
+    sources_youtube: bool = True
 
     @field_validator("daily_check_time")
     @classmethod
