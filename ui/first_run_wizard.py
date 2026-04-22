@@ -185,18 +185,9 @@ class FirstRunWizard(QDialog):
         # invocations, and brew holds a global lock so the second call fails.
         self._whisper_started = False
         self._ffmpeg_started = False
+        self._model_started = False
 
         QTimer.singleShot(0, self._refresh)
-        QTimer.singleShot(0, self._autostart_on_open)
-
-    def _autostart_on_open(self) -> None:
-        """Kick off the work that has no prerequisites — model download runs
-        over plain HTTPS, no brew / sudo dependency. Homebrew itself still
-        needs an explicit user click (Terminal + sudo). whisper-cpp and
-        ffmpeg auto-chain via _refresh once brew is detected."""
-        status = deps.check()
-        if not status.model:
-            self._download_model()
 
     def _on_recheck_clicked(self) -> None:
         """Recheck with visible feedback — flashes the button text so the
@@ -253,12 +244,10 @@ class FirstRunWizard(QDialog):
             self.ffmpeg_row.set_waiting("waiting for Homebrew")
         if status.model:
             self.model_row.set_ok()
-        else:
-            self.model_row.set_missing(
-                "Download…",
-                self._download_model,
-                reason="large-v3-turbo model not downloaded yet (~1.5 GB).",
-            )
+        elif not self._model_started:
+            self._model_started = True
+            self._download_model()
+        # else: already downloading; _download_model has set row state.
         # Gate Continue on the full four-check set.
         all_ok = status.brew and status.whisper_cli and status.ffmpeg and status.model
         self.close_btn.setEnabled(all_ok)
@@ -333,14 +322,36 @@ class FirstRunWizard(QDialog):
 
         threading.Thread(target=run, daemon=True).start()
 
-    def _after_cli(self, row: StepRow, ok: bool, err: str):
+    def _after_cli(self, row: "StepRow", ok: bool, err: str) -> None:
         if ok:
             row.set_ok()
+            self._refresh()
+            return
+        # Fail path — reset the guard for this install and re-attach a
+        # retry action so the user isn't stuck. Map the row back to the
+        # started-flag + install callable.
+        if row is self.whisper_row:
+            self._whisper_started = False
+            retry_fn = self._install_whisper
+        elif row is self.ffmpeg_row:
+            self._ffmpeg_started = False
+            retry_fn = self._install_ffmpeg
+        elif row is self.model_row:
+            self._model_started = False
+            retry_fn = self._download_model
+        else:
+            retry_fn = None
+        reason = err[:160] if err else "install failed"
+        if retry_fn is not None:
+            row.set_missing("Retry", retry_fn, reason=reason)
         else:
             row.pill.setText("fail")
             row.pill.set_kind("fail")
-            row._set_sub(err[:160] if err else "install failed")
-        self._refresh()
+            row._set_sub(reason)
+        # Intentionally skip _refresh on fail: it would re-trigger the install
+        # (flag just reset) and overwrite the Retry button with set_running.
+        # The Continue button stays disabled because deps are still missing.
+        self.close_btn.setEnabled(False)
 
     def _download_model(self):
         self.model_row.set_running("downloading…", sub="fetching model file…")

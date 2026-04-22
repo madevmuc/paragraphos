@@ -55,12 +55,7 @@ def test_wizard_auto_starts_model_download_when_missing(monkeypatch):
     monkeypatch.setattr(wiz.FirstRunWizard, "_install_ffmpeg", lambda self: None)
 
     w = wiz.FirstRunWizard()
-    # Drive the two singleShot(0, ...) callbacks — _refresh + _autostart_on_open.
-    # Keep `w` in scope until after processEvents so the dialog isn't GC'd
-    # before its singleShot timers fire.
-    app = QApplication.instance()
-    app.processEvents()
-    assert w is not None
+    w._refresh()  # single entry point; no processEvents hack needed.
 
     assert started["model"] is True
     assert started["whisper"] is True  # auto-chained because brew is present
@@ -115,3 +110,18 @@ def test_wizard_ffmpeg_waits_for_whisper(monkeypatch):
     w._refresh()
 
     assert "waiting for whisper-cpp" in w.ffmpeg_row.subcopy.text().lower()
+
+
+def test_whisper_install_failure_re_attaches_retry(monkeypatch):
+    _ = QApplication.instance() or QApplication([])
+    from ui import first_run_wizard as wiz
+
+    w = wiz.FirstRunWizard()
+    w.show()  # parent must be visible for child action_btn.isVisible() to be True.
+    # Simulate a previous failed install.
+    w._whisper_started = True
+    w._after_cli(w.whisper_row, ok=False, err="brew: download failed")
+    # Flag reset, row's action button visible and labelled Retry.
+    assert w._whisper_started is False
+    assert w.whisper_row.action_btn.isVisible()
+    assert w.whisper_row.action_btn.text() == "Retry"
