@@ -267,9 +267,37 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:  # noqa: N802 — Qt override
         from PyQt6.QtCore import QSettings
+        from PyQt6.QtGui import QGuiApplication
 
+        # Belt-and-braces: clamp before saving so a runaway window width
+        # can never persist across sessions.
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        if screen is not None:
+            avail = screen.availableGeometry()
+            if self.width() > avail.width() or self.height() > avail.height():
+                self.resize(min(self.width(), avail.width()), min(self.height(), avail.height()))
         QSettings("madevmuc", "Paragraphos").setValue("window/geometry", self.saveGeometry())
         super().closeEvent(event)
+
+    def resizeEvent(self, ev) -> None:  # noqa: N802 — Qt override
+        """Defensive clamp: a child widget's minimumSizeHint can force
+        QMainWindow to grow beyond the screen (e.g. a QLabel without
+        wordWrap showing a very long episode title). Without this, the
+        window monotonically grows over a long session and can end up
+        several screens wide. We clamp any resize that overshoots the
+        available screen area."""
+        from PyQt6.QtGui import QGuiApplication
+
+        super().resizeEvent(ev)
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        if screen is None:
+            return
+        avail = screen.availableGeometry()
+        w, h = self.width(), self.height()
+        clamped_w = min(w, avail.width())
+        clamped_h = min(h, avail.height())
+        if (clamped_w, clamped_h) != (w, h):
+            self.resize(clamped_w, clamped_h)
 
     def _apply_banner_style(self) -> None:
         """Choose banner colors that work in both light and dark macOS modes.

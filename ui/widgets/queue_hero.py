@@ -6,12 +6,14 @@ from datetime import datetime, timedelta
 from typing import Callable
 
 from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QFontMetrics
 from PyQt6.QtWidgets import (
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -67,6 +69,13 @@ class QueueHero(QWidget):
         self.pill = Pill("running", kind="running")
         self.ep_title = QLabel("")
         self.ep_title.setProperty("class", "heading")
+        # Episode titles can be very long — without this, the QLabel's
+        # minimumSizeHint equals the text pixel width and propagates up
+        # the layout chain, forcing QMainWindow to grow to fit. Cap the
+        # label's horizontal demand so the window stays where the user
+        # put it; long titles get elided in setText via QFontMetrics.
+        self.ep_title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.ep_title.setMinimumWidth(0)
         pause = QPushButton("Pause")
         pause.clicked.connect(self._on_pause)
         stop = QPushButton("Stop")
@@ -152,11 +161,16 @@ class QueueHero(QWidget):
             show = q.last_episode_show or ""
             title = q.last_episode_title or ""
             if show or title:
-                self.ep_title.setText(
-                    f"{show} \u2014 {title}" if show and title else (show or title)
-                )
+                full = f"{show} \u2014 {title}" if show and title else (show or title)
+                # Elide at the label's current width so we never push the
+                # layout wider than the window already is.
+                fm = QFontMetrics(self.ep_title.font())
+                width = max(80, self.ep_title.width() - 8)
+                self.ep_title.setText(fm.elidedText(full, Qt.TextElideMode.ElideRight, width))
+                self.ep_title.setToolTip(full)
             else:
                 self.ep_title.setText("")
+                self.ep_title.setToolTip("")
         else:
             set_stat("finish", "\u2014")
 
