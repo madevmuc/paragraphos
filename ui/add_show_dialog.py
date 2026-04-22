@@ -182,20 +182,16 @@ class AddShowDialog(QDialog):
 
         self.results = QListWidget()
         self.results.itemDoubleClicked.connect(self._pick_name_result)
+        # Auto-fetch the next page when the user scrolls within ~60 px of
+        # the bottom. A visible button interrupts the flow; an infinite-
+        # scroll feel is closer to what the app's users expect.
+        self.results.verticalScrollBar().valueChanged.connect(self._maybe_auto_load_more)
         v.addWidget(self.results, 1)
 
-        # iTunes capped hint + "Load more" — surfaces that the first
-        # page is a truncated view and lets the user pull the next
-        # batch without re-typing the query.
-        more_row = QHBoxLayout()
         self._name_hint = QLabel("")
         self._name_hint.setStyleSheet(f"color: {current_tokens()['ink_3']}; font-size: 11px;")
-        more_row.addWidget(self._name_hint, 1)
-        self._name_load_more_btn = QPushButton("Load 50 more")
-        self._name_load_more_btn.setVisible(False)
-        self._name_load_more_btn.clicked.connect(self._load_more_name_results)
-        more_row.addWidget(self._name_load_more_btn)
-        v.addLayout(more_row)
+        v.addWidget(self._name_hint)
+        self._name_fetch_in_flight = False
 
         form = QFormLayout()
         self.name_slug = QLineEdit()
@@ -219,7 +215,6 @@ class AddShowDialog(QDialog):
             return
         self.results.clear()
         self._name_hint.setText("")
-        self._name_load_more_btn.setVisible(False)
         self._name_search_term = term
         self._name_search_limit = 50
         try:
@@ -238,34 +233,58 @@ class AddShowDialog(QDialog):
             QMessageBox.warning(self, "Error", str(e))
 
     def _render_name_results(self, matches) -> None:
-        """Fill the list widget and update the hint + Load-more button.
+        """Fill the list widget and update the hint.
 
-        Called on initial search and on every 'Load 50 more' click — we
-        replace the full list rather than append because iTunes doesn't
-        guarantee stable ordering across calls, so a superset request
-        may reshuffle earlier positions.
+        Called on initial search and on every scroll-triggered auto-load —
+        we replace the full list rather than append because iTunes doesn't
+        guarantee stable ordering across calls, so a superset request may
+        reshuffle earlier positions.
         """
+        # Preserve scroll position across re-renders so an auto-load
+        # triggered at the bottom doesn't jerk the viewport back to the top.
+        scroll_val = self.results.verticalScrollBar().value()
         self.results.clear()
         for m in matches:
             item = QListWidgetItem(f"{m.title} — {m.author}")
             item.setData(Qt.ItemDataRole.UserRole, m.feed_url)
             self.results.addItem(item)
+        self.results.verticalScrollBar().setValue(scroll_val)
         shown = self.results.count()
         # iTunes caps at 200 and returns fewer when the query is narrow.
         hit_api_cap = self._name_search_limit >= 200
         capped_by_server = shown < self._name_search_limit
         if capped_by_server or hit_api_cap:
             self._name_hint.setText(f"Showing all {shown} matches.")
-            self._name_load_more_btn.setVisible(False)
         else:
-            self._name_hint.setText(f"Showing top {shown} · iTunes may have more.")
-            self._name_load_more_btn.setVisible(True)
+            self._name_hint.setText(f"Showing top {shown} · scroll for more.")
+
+    def _maybe_auto_load_more(self, _value: int) -> None:
+        """Trigger the next page when the user scrolls near the bottom.
+
+        Gated on (a) a search term is set, (b) we haven't hit the 200-item
+        iTunes cap, (c) the last fetch filled the requested limit (server
+        hasn't signalled exhaustion), and (d) no fetch is already running.
+        """
+        if self._name_fetch_in_flight:
+            return
+        if not self._name_search_term:
+            return
+        if self._name_search_limit >= 200:
+            return
+        shown = self.results.count()
+        if shown == 0 or shown < self._name_search_limit:
+            return  # server returned fewer than requested — no more to get.
+        sb = self.results.verticalScrollBar()
+        if sb.value() < sb.maximum() - 2:
+            return  # not at (or within epsilon of) the bottom yet.
+        self._load_more_name_results()
 
     def _load_more_name_results(self) -> None:
         if not self._name_search_term:
             return
+        self._name_fetch_in_flight = True
+        self._name_hint.setText("Loading more…")
         self._name_search_limit = min(self._name_search_limit + 50, 200)
-        self._name_load_more_btn.setEnabled(False)
         try:
             self._render_name_results(
                 search_itunes(self._name_search_term, limit=self._name_search_limit)
@@ -273,7 +292,7 @@ class AddShowDialog(QDialog):
         except Exception as e:  # noqa: BLE001
             QMessageBox.warning(self, "Error", str(e))
         finally:
-            self._name_load_more_btn.setEnabled(True)
+            self._name_fetch_in_flight = False
 
     def _pick_name_result(self, item: QListWidgetItem) -> None:
         self._fill_from_feed_sync(item.data(Qt.ItemDataRole.UserRole))
