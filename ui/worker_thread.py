@@ -113,29 +113,62 @@ class _DownloadPool(QThread):
         # never burn cycles racing on the writer lock.
         self._claim_lock = threading.Lock()
 
-    def _claim_next_pending(self) -> dict | None:
-        """Atomically claim the highest-priority pending episode.
+    def _claim_next_processable(self) -> tuple[dict, str] | None:
+        """Atomically claim the highest-priority processable episode.
 
-        Uses SQLite's UPDATE…RETURNING (SQLite 3.35+) so the claim is a
-        single statement: pick the highest-priority pending episode in
-        scope, mark it 'downloading', and return its row. Returns None
-        when no pending remains.
+        Returns ``(row, prior_status)`` or None when nothing is left.
+
+        Two states are claimable:
+
+        * ``pending`` — never started. Marked ``downloading`` on claim;
+          the worker runs download_phase + transcribe.
+        * ``downloaded`` — file on disk but transcribe never ran. This
+          is the orphan-state left by app crashes / forced quits between
+          download_phase and the in-memory _out_q drain by the
+          TranscribeWorker. With the old code these rows sat forever
+          because nothing claimed them. Marked ``transcribing`` on
+          claim; the worker skips download_phase and pushes a synthetic
+          DownloadOutcome so transcribe_phase runs against the existing
+          mp3 on disk. Restores 'Run next/now' semantics for episodes
+          that completed download but were stranded.
+
+        Pending wins over downloaded at the same priority because
+        downloading can run in parallel with transcribing — keeps both
+        stages busy. Within each, ordered by priority DESC then
+        pub_date ASC.
         """
         if not self._scope_slugs:
             return None
         placeholders = ",".join("?" for _ in self._scope_slugs)
-        sql = (
-            "UPDATE episodes SET status='downloading' "
-            "WHERE guid = ("
-            "  SELECT guid FROM episodes "
-            f"  WHERE status='pending' AND show_slug IN ({placeholders}) "
-            "  ORDER BY priority DESC, pub_date ASC LIMIT 1"
-            ") "
-            "RETURNING *"
-        )
+        # Two-step claim: try pending first (cheapest path forward),
+        # fall back to downloaded (orphan recovery). Each step is a
+        # single atomic UPDATE…RETURNING.
         with self._claim_lock, self._ctx.state._conn() as c:
-            row = c.execute(sql, tuple(self._scope_slugs)).fetchone()
-        return dict(row) if row else None
+            row = c.execute(
+                "UPDATE episodes SET status='downloading' "
+                "WHERE guid = ("
+                "  SELECT guid FROM episodes "
+                f"  WHERE status='pending' AND show_slug IN ({placeholders}) "
+                "  ORDER BY priority DESC, pub_date ASC LIMIT 1"
+                ") "
+                "RETURNING *",
+                tuple(self._scope_slugs),
+            ).fetchone()
+            if row is not None:
+                return dict(row), "pending"
+            row = c.execute(
+                "UPDATE episodes SET status='transcribing' "
+                "WHERE guid = ("
+                "  SELECT guid FROM episodes "
+                f"  WHERE status='downloaded' AND show_slug IN ({placeholders}) "
+                "  ORDER BY priority DESC, pub_date ASC LIMIT 1"
+                ") "
+                "RETURNING *",
+                tuple(self._scope_slugs),
+            ).fetchone()
+            if row is not None:
+                return dict(row), "downloaded"
+        return None
 
     def _acquire_host_slot(self, host: str) -> bool:
         """Wait (sleeping briefly) until the host has a free slot.
@@ -172,12 +205,12 @@ class _DownloadPool(QThread):
                 if self._stop.is_set():
                     self.progress.emit("stopped between episodes")
                     return
-                # Claim the highest-priority pending from DB. New bumps
-                # via Run next / Run now take effect on the very next
-                # claim, no need to restart the pass.
-                ep = self._claim_next_pending()
-                if ep is None:
+                # Claim the highest-priority processable episode. New
+                # priority bumps take effect on the very next claim.
+                claimed = self._claim_next_processable()
+                if claimed is None:
                     return
+                ep, prior_status = claimed
                 show = self._show_by_slug.get(ep["show_slug"])
                 if show is None:
                     # Show no longer in scope (deleted mid-pass). Reset
@@ -189,6 +222,38 @@ class _DownloadPool(QThread):
                 self._announce_show(show.slug)
 
                 pctx = self._pctx_for(show)
+
+                # ── Orphan-recovery path ─────────────────────────────
+                # Episode was already downloaded by an earlier pass that
+                # crashed before transcribe ran. Skip download_phase and
+                # synthesise a DownloadOutcome from the on-disk file so
+                # the transcribe worker picks it up. If the file is
+                # missing (cleaned up, retention pruned), fall back to
+                # the normal pending path by resetting status.
+                if prior_status == "downloaded":
+                    from core.pipeline import build_slug
+
+                    slug = build_slug(ep["pub_date"], ep["title"], ep_num)
+                    show_dir = pctx.output_root / show.slug
+                    mp3_path = show_dir / "audio" / f"{slug}.mp3"
+                    if not mp3_path.exists():
+                        self._ctx.state.set_status(ep["guid"], EpisodeStatus.PENDING)
+                        continue
+                    self.progress.emit(f"  ↻ {ep['title'][:80]} (orphan → transcribe)")
+                    self._out_q.put(
+                        (
+                            show,
+                            ep,
+                            DownloadOutcome(
+                                guid=ep["guid"],
+                                mp3_path=mp3_path,
+                                show_dir=show_dir,
+                                slug=slug,
+                                ep=ep,
+                            ),
+                        )
+                    )
+                    continue
 
                 # YouTube source-dispatch: the standard download path
                 # would fetch the watch URL as if it were an MP3 enclosure
@@ -512,9 +577,29 @@ class CheckAllThread(QThread):
             )
         )
 
-        total = len(all_pending)
+        # Count orphaned `downloaded` rows too — these are episodes whose
+        # download completed in a prior pass but whose transcribe was lost
+        # (app crash / SIGKILL between out_q.put and TranscribeWorker
+        # drain). They need to be processed this pass via the worker's
+        # orphan-recovery path. Without counting them here, total=0 +
+        # we'd skip the pipeline entirely for the recovery case.
+        scope_target_slugs = [s.slug for s in fetch_targets]
+        orphan_count = 0
+        if scope_target_slugs:
+            placeholders = ",".join("?" for _ in scope_target_slugs)
+            with self.ctx.state._conn() as c:
+                row = c.execute(
+                    f"SELECT COUNT(*) AS n FROM episodes "
+                    f"WHERE status='downloaded' AND show_slug IN ({placeholders})",
+                    tuple(scope_target_slugs),
+                ).fetchone()
+                orphan_count = int(row["n"] or 0) if row else 0
+
+        total = len(all_pending) + orphan_count
         self.queue_sized.emit(total)
-        self.progress.emit(f"queue sized: {total} episode(s) pending")
+        self.progress.emit(
+            f"queue sized: {len(all_pending)} pending + {orphan_count} orphan-downloaded"
+        )
 
         if total == 0 or self._stop:
             self.finished_all.emit()
@@ -536,7 +621,10 @@ class CheckAllThread(QThread):
 
         # Build slug→Show + guid→ep_num maps so the DB-claim loop can
         # rehydrate the per-show context without re-querying the watchlist.
-        show_by_slug = {triple[0].slug: triple[0] for triple in all_pending}
+        # Use ALL fetch_targets (not just shows with pending) so the
+        # orphan-downloaded recovery path can claim from any in-scope
+        # show that has stranded `downloaded` rows.
+        show_by_slug = {s.slug: s for s in fetch_targets}
         ep_num_map = {triple[2]["guid"]: triple[1] for triple in all_pending}
         scope_slugs = list(show_by_slug.keys())
 
