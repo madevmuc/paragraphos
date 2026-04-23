@@ -25,6 +25,7 @@ from ui.about_dialog import AboutPane
 from ui.app_context import AppContext
 from ui.failed_tab import FailedTab
 from ui.library_tab import LibraryTab
+from ui.local_transcript_tab import LocalTranscriptTab
 from ui.log_dock import LogDock, LogsPane
 from ui.menu_bar import build_menu_bar
 from ui.queue_tab import QueueTab
@@ -157,7 +158,12 @@ class MainWindow(QMainWindow):
         # Sidebar
         self.sidebar = Sidebar()
         self.sidebar.add_group("Workspace")
-        for key, label in (("shows", "Shows"), ("queue", "Queue"), ("failed", "Failed")):
+        for key, label in (
+            ("shows", "Shows"),
+            ("local", "Local Transcript"),
+            ("queue", "Queue"),
+            ("failed", "Failed"),
+        ):
             self.sidebar.add_item(key, label)
         # Standalone leaf — sits between Workspace and System without
         # its own group header. Sidebar.add_item is group-agnostic so
@@ -188,23 +194,14 @@ class MainWindow(QMainWindow):
         # Let ShowsTab forward queue signals to the queue tab.
         self.shows_tab.queue_listener = self.queue_tab  # type: ignore[attr-defined]
 
-        # Shows page composition: DropZone card above the ShowsTab. Kept in
-        # a plain container so the stack only sees one widget per page.
-        from ui.drop_zone import DropZone
-
-        self.drop_zone = DropZone(
-            state=self.ctx.state,
-            watchlist_path=self.ctx.data_dir / "watchlist.yaml",
-            max_duration_hours=self.ctx.settings.local_max_duration_hours,
-        )
-        shows_page = QWidget()
-        shows_layout = QVBoxLayout(shows_page)
-        shows_layout.setContentsMargins(0, 0, 0, 0)
-        shows_layout.addWidget(self.drop_zone)
-        shows_layout.addWidget(self.shows_tab, stretch=1)
+        # Local Transcript tab — top-level sibling of Shows/Queue. Hosts
+        # the universal-ingest surface (drop, folder, URL) that used to
+        # live as a card on the Shows page.
+        self.local_transcript_tab = LocalTranscriptTab(self.ctx)
 
         for w in (
-            shows_page,
+            self.shows_tab,
+            self.local_transcript_tab,
             self.queue_tab,
             self.failed_tab,
             self.library_tab,
@@ -215,12 +212,13 @@ class MainWindow(QMainWindow):
             self.stack.addWidget(w)
         self._nav_index = {
             "shows": 0,
-            "queue": 1,
-            "failed": 2,
-            "library": 3,
-            "settings": 4,
-            "logs": 5,
-            "about": 6,
+            "local": 1,
+            "queue": 2,
+            "failed": 3,
+            "library": 4,
+            "settings": 5,
+            "logs": 6,
+            "about": 7,
         }
         # Honour the landing-tab choice — sidebar highlight was set
         # earlier; now point the stack at the matching page.
@@ -340,8 +338,10 @@ class MainWindow(QMainWindow):
             event.acceptProposedAction()
 
     def dropEvent(self, event):  # noqa: N802 — Qt override
-        # Delegate to the Shows-page drop zone so behaviour matches.
-        self.drop_zone.dropEvent(event)
+        # Navigate to Local Transcript so the user sees the file arrive
+        # there, then delegate the drop handling to the tab.
+        self._on_nav("local")
+        self.local_transcript_tab.dropEvent(event)
 
     def closeEvent(self, event) -> None:  # noqa: N802 — Qt override
         from PyQt6.QtCore import QSettings
