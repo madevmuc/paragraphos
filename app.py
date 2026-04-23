@@ -736,6 +736,55 @@ def _acquire_single_instance_lock():
         return None
 
 
+def _install_slot_exception_handler() -> None:
+    """Replace ``sys.excepthook`` so a Python exception raised inside a
+    PyQt6 slot logs + (best-effort) shows a non-fatal dialog instead of
+    aborting the whole app via ``qFatal``.
+
+    PyQt6 changed PyQt5's behaviour: an uncaught exception in a slot
+    now reaches ``pyqt6_err_print()`` which calls ``qFatal`` → SIGABRT.
+    For an interactive desktop app that's user-hostile — one Python
+    bug in a button handler kills the entire window with no chance to
+    save state. Routing through ``sys.excepthook`` neutralises the
+    qFatal path; the exception is logged and (when a QApplication is
+    alive) surfaced via QMessageBox.
+    """
+    import logging
+    import traceback
+
+    log = logging.getLogger("paragraphos")
+    original = sys.excepthook
+
+    def _hook(exc_type, exc, tb):
+        # Log the full traceback first — never lose the diagnostic.
+        text = "".join(traceback.format_exception(exc_type, exc, tb))
+        log.error("uncaught exception:\n%s", text)
+        # Best-effort UI surface; tolerate any failure inside the dialog
+        # (e.g. no QApplication, headless mode, exception during
+        # construction of the QMessageBox itself).
+        try:
+            from PyQt6.QtWidgets import QApplication, QMessageBox
+
+            if QApplication.instance() is not None:
+                QMessageBox.critical(
+                    None,
+                    "Paragraphos — internal error",
+                    f"{exc_type.__name__}: {exc}\n\n"
+                    "The app stayed running. Check the log for the "
+                    "full traceback.",
+                )
+        except Exception:  # noqa: BLE001
+            pass
+        # Chain to the previous excepthook so anything else hooked in
+        # (debugger, IDE) still sees the exception.
+        try:
+            original(exc_type, exc, tb)
+        except Exception:  # noqa: BLE001
+            pass
+
+    sys.excepthook = _hook
+
+
 def main() -> int:
     # Single-instance gate. If another paragraphos is already running,
     # exit silently — the running instance keeps serving the user.
@@ -752,6 +801,11 @@ def main() -> int:
 
     qapp = ParagraphosQApplication(sys.argv)
     qapp.setQuitOnLastWindowClosed(False)
+
+    # Install AFTER QApplication so the QMessageBox in the hook can
+    # find an instance, but BEFORE any widget is constructed so the
+    # very first slot exception is caught.
+    _install_slot_exception_handler()
 
     # App / dock / window icon — bundled AppIcon.icns.
     _icon_path = Path(__file__).resolve().parent / "assets" / "AppIcon.icns"

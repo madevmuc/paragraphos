@@ -604,9 +604,19 @@ class ShowDetailsDialog(QDialog):
         state.set_meta(f"feed_health:{self.slug}", "ok")
         QMessageBox.information(self, "Retry succeeded", "Feed fetch succeeded — backoff cleared.")
         # Rebuild the panel so the user sees the cleared state immediately.
-        new_panel = self._build_feed_health_panel()
+        # ORDER MATTERS: capture the old container BEFORE calling
+        # _build_feed_health_panel, because that builder reassigns
+        # self._feed_health_container to a freshly-created widget. If we
+        # captured `old` after the build, `old` would alias the new
+        # un-parented widget; old.parentWidget() would be None and
+        # .layout() would raise AttributeError → PyQt6 qFatal → SIGABRT
+        # (the 2026-04-23 crash).
         old = self._feed_health_container
-        parent_layout = old.parentWidget().layout()
+        parent = old.parentWidget() if old is not None else None
+        if parent is None:
+            return  # nothing to swap into; defensive, shouldn't happen
+        parent_layout = parent.layout()
+        new_panel = self._build_feed_health_panel()
         idx = parent_layout.indexOf(old)
         parent_layout.removeWidget(old)
         old.deleteLater()
