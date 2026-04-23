@@ -163,3 +163,54 @@ def test_watch_folder_pauses_on_root_disappearance(tmp_path: Path):
         assert wf.is_paused()
     finally:
         wf.stop()
+
+
+def test_watch_folder_resumes_when_root_appears(tmp_path: Path):
+    """After start() paused itself on a missing root, check_for_resume()
+    should re-start the observer once the root exists."""
+    from core.watch_folder import WatchFolder
+
+    root = tmp_path / "not-yet"
+    # NOT created — start() will pause.
+
+    state = _fresh_state(tmp_path)
+    wl_path = _seed_watchlist(tmp_path)
+
+    wf = WatchFolder(root=root, state=state, watchlist_path=wl_path, debounce_seconds=0.0)
+    wf.start()
+    assert wf.is_paused()
+
+    # check_for_resume is a no-op while the root is still missing.
+    wf.check_for_resume()
+    assert wf.is_paused()
+
+    # Create the root; re-check should flip paused off and start observer.
+    root.mkdir()
+    wf.check_for_resume()
+    try:
+        assert not wf.is_paused()
+        # Observer is running (attribute set).
+        assert wf._observer is not None
+    finally:
+        wf.stop()
+
+
+def test_watch_folder_check_for_resume_is_noop_when_already_running(tmp_path: Path):
+    """Calling check_for_resume on a healthy (non-paused) watcher must
+    not recreate the Observer (which would leak a thread)."""
+    from core.watch_folder import WatchFolder
+
+    root = tmp_path / "live"
+    root.mkdir()
+    state = _fresh_state(tmp_path)
+    wl_path = _seed_watchlist(tmp_path)
+
+    wf = WatchFolder(root=root, state=state, watchlist_path=wl_path, debounce_seconds=0.0)
+    wf.start()
+    try:
+        assert not wf.is_paused()
+        obs_before = wf._observer
+        wf.check_for_resume()
+        assert wf._observer is obs_before  # same instance, not re-started
+    finally:
+        wf.stop()

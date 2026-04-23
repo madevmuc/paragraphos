@@ -940,6 +940,15 @@ def main() -> int:
     if watch_folder is not None:
         app._watch_folder = watch_folder
         qapp.aboutToQuit.connect(watch_folder.stop)
+
+        from PyQt6.QtCore import QTimer
+
+        _wf_timer = QTimer()
+        _wf_timer.setInterval(30_000)  # 30 s
+        _wf_timer.timeout.connect(app._watch_folder.check_for_resume)
+        _wf_timer.start()
+        app._watch_folder_timer = _wf_timer  # keep-alive reference
+        qapp.aboutToQuit.connect(_wf_timer.stop)
     # New-install migration: flip ``setup_completed`` for legacy users
     # whose customised folder paths imply they've already done the work
     # the setup dialog asks about. Fresh installs see the dialog once;

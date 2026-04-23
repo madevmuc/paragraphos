@@ -13,8 +13,9 @@ event we:
      ``slug_for_watch`` derivation.
 
 If the watch root doesn't exist at start() time, the observer marks
-itself paused (``is_paused()``) and emits nothing until start() is
-called again on a now-existing path.
+itself paused (``is_paused()``). Callers poll ``check_for_resume()``
+on a timer; once the root reappears (e.g. an external drive is
+re-mounted) it auto-resumes without requiring an app restart.
 """
 
 from __future__ import annotations
@@ -65,6 +66,20 @@ class WatchFolder:
 
     def is_paused(self) -> bool:
         return self._paused
+
+    def check_for_resume(self) -> None:
+        """If paused (root missing), re-run ``start()``. Idempotent —
+        does nothing while the observer is already running.
+
+        Intended to be called on a ~30 s ``QTimer`` so an unplugged +
+        re-plugged external drive auto-resumes without an app restart.
+        """
+        if not self._paused:
+            return
+        if not self.root.exists():
+            return
+        logger.info("watch: root reappeared, resuming: %s", self.root)
+        self.start()
 
     def start(self) -> None:
         from watchdog.events import FileSystemEventHandler
