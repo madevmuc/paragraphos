@@ -198,3 +198,153 @@ def test_duration_seconds_returns_none_on_failure(monkeypatch):
 
     monkeypatch.setattr(local_source.subprocess, "run", fake_run)
     assert local_source.duration_seconds(Path("/nonexistent.mp4")) is None
+
+
+def _seed_watchlist(tmp_path: Path):
+    from core.models import Watchlist
+
+    wl = Watchlist()
+    wl_path = tmp_path / "watchlist.yaml"
+    wl.save(wl_path)
+    return wl_path
+
+
+def test_ingest_file_creates_synthetic_show_and_episode(tmp_path: Path):
+    from core import local_source
+    from core.local_source import ingest_file
+    from core.models import Watchlist
+
+    f = tmp_path / "a.wav"
+    f.write_bytes(b"hello")
+    state = _fresh_state(tmp_path)
+    wl_path = _seed_watchlist(tmp_path)
+
+    # ffprobe returns audio + a 42-s duration
+    def fake_has_audio(_p):
+        return True
+
+    def fake_duration(_p):
+        return 42
+
+    local_source.has_audio_stream = fake_has_audio  # type: ignore[assignment]
+    local_source.duration_seconds = fake_duration  # type: ignore[assignment]
+
+    guid = ingest_file(f, show_slug=None, state=state, watchlist_path=wl_path)
+
+    # GUID is sha256:<hex>
+    assert guid.startswith("sha256:")
+
+    # Synthetic show created
+    wl = Watchlist.load(wl_path)
+    slugs = [s.slug for s in wl.shows]
+    assert "files" in slugs
+    show = next(s for s in wl.shows if s.slug == "files")
+    assert show.source == "local-drop"
+
+    # Episode row persisted
+    ep = state.get_episode(guid)
+    assert ep is not None
+    assert ep["show_slug"] == "files"
+    assert ep["duration_sec"] == 42
+    assert ep["status"] == "pending"
+
+
+def test_ingest_file_rejects_video_without_audio(tmp_path: Path):
+    from core import local_source
+    from core.local_source import IngestError, ingest_file
+
+    f = tmp_path / "a.mp4"
+    f.write_bytes(b"x")
+    state = _fresh_state(tmp_path)
+    wl_path = _seed_watchlist(tmp_path)
+
+    local_source.has_audio_stream = lambda p: False  # type: ignore[assignment]
+    local_source.duration_seconds = lambda p: None  # type: ignore[assignment]
+
+    import pytest
+
+    with pytest.raises(IngestError, match="no audio"):
+        ingest_file(f, show_slug=None, state=state, watchlist_path=wl_path)
+
+
+def test_ingest_file_rejects_over_duration_cap(tmp_path: Path):
+    from core import local_source
+    from core.local_source import IngestError, ingest_file
+
+    f = tmp_path / "big.mp4"
+    f.write_bytes(b"x")
+    state = _fresh_state(tmp_path)
+    wl_path = _seed_watchlist(tmp_path)
+
+    local_source.has_audio_stream = lambda p: True  # type: ignore[assignment]
+    # 5 hours
+    local_source.duration_seconds = lambda p: 5 * 3600  # type: ignore[assignment]
+
+    import pytest
+
+    with pytest.raises(IngestError, match="duration cap"):
+        ingest_file(f, show_slug=None, state=state, watchlist_path=wl_path, max_duration_hours=4)
+
+
+def test_ingest_folder_recursive(tmp_path: Path):
+    from core import local_source
+    from core.local_source import ingest_folder
+
+    root = tmp_path / "field"
+    (root / "2026-01").mkdir(parents=True)
+    (root / "2026-01" / "a.wav").write_bytes(b"a")
+    (root / "b.wav").write_bytes(b"b")
+    # A non-media file that must be skipped
+    (root / "notes.txt").write_bytes(b"x")
+
+    state = _fresh_state(tmp_path)
+    wl_path = _seed_watchlist(tmp_path)
+
+    local_source.has_audio_stream = lambda p: True  # type: ignore[assignment]
+    local_source.duration_seconds = lambda p: 30  # type: ignore[assignment]
+
+    guids = ingest_folder(root, show_slug=None, state=state, watchlist_path=wl_path, recursive=True)
+    assert len(guids) == 2
+    from core.models import Watchlist
+
+    wl = Watchlist.load(wl_path)
+    assert any(s.slug == "field" and s.source == "local-folder" for s in wl.shows)
+
+
+def test_ingest_url_dispatches_through_yt_dlp(tmp_path: Path, monkeypatch):
+    from core import local_source
+    from core.local_source import ingest_url
+
+    state = _fresh_state(tmp_path)
+    wl_path = _seed_watchlist(tmp_path)
+
+    # Fake yt-dlp metadata probe
+    monkeypatch.setattr(
+        local_source,
+        "_yt_dlp_probe",
+        lambda url: {
+            "id": "abc123",
+            "extractor": "Vimeo",
+            "uploader": "Acme Films",
+            "title": "Annual Talk",
+            "upload_date": "20260301",
+            "duration": 1234,
+        },
+    )
+
+    guid = ingest_url(
+        "https://vimeo.com/12345", show_slug=None, state=state, watchlist_path=wl_path
+    )
+    assert guid == "Vimeo:abc123"
+
+    from core.models import Watchlist
+
+    wl = Watchlist.load(wl_path)
+    show = next(s for s in wl.shows if s.slug == "acme-films")
+    assert show.source == "url"
+
+    ep = state.get_episode(guid)
+    assert ep is not None
+    assert ep["title"] == "Annual Talk"
+    assert ep["pub_date"] == "2026-03-01"
+    assert ep["duration_sec"] == 1234

@@ -12,8 +12,10 @@ import json
 import logging
 import shutil
 import subprocess
+from datetime import date, datetime, timezone
 from pathlib import Path
 
+from core.models import Show, Watchlist
 from core.sanitize import slugify
 from core.state import StateStore
 
@@ -170,3 +172,218 @@ def duration_seconds(path: Path) -> int | None:
         return int(dur) if dur > 0 else None
     except (json.JSONDecodeError, ValueError, TypeError):
         return None
+
+
+# Extensions ffmpeg handles on the audio-extract path. We gate on this
+# set rather than asking ffprobe blindly on every file in a directory
+# scan — keeps a folder-import of a mixed directory cheap.
+_MEDIA_EXTS = frozenset(
+    {
+        ".mp3",
+        ".m4a",
+        ".m4b",
+        ".wav",
+        ".aiff",
+        ".aif",
+        ".flac",
+        ".ogg",
+        ".oga",
+        ".opus",
+        ".mp4",
+        ".m4v",
+        ".mov",
+        ".mkv",
+        ".webm",
+        ".avi",
+        ".wmv",
+    }
+)
+
+
+class IngestError(ValueError):
+    """Raised when a file/folder/URL cannot be ingested. Message is safe
+    to surface to the user as the Failed reason."""
+
+
+def _ensure_show(
+    slug: str,
+    *,
+    source: str,
+    title: str,
+    watchlist_path: Path,
+) -> None:
+    """Create the synthetic show in watchlist.yaml if missing. Idempotent."""
+    wl = Watchlist.load(watchlist_path)
+    if any(s.slug == slug for s in wl.shows):
+        return
+    wl.shows.append(
+        Show(
+            slug=slug,
+            title=title,
+            rss="",  # synthetic shows have no feed
+            source=source,
+            enabled=True,
+            whisper_prompt="",
+            language="",  # inherit default
+        )
+    )
+    wl.save(watchlist_path)
+
+
+def _format_upload_date(yyyymmdd: str) -> str:
+    """yt-dlp returns ``YYYYMMDD``; state expects ``YYYY-MM-DD``."""
+    if len(yyyymmdd) == 8 and yyyymmdd.isdigit():
+        return f"{yyyymmdd[0:4]}-{yyyymmdd[4:6]}-{yyyymmdd[6:8]}"
+    return yyyymmdd or date.today().isoformat()
+
+
+def ingest_file(
+    path: Path,
+    *,
+    show_slug: str | None,
+    state: StateStore,
+    watchlist_path: Path,
+    source: str = "local-drop",
+    max_duration_hours: int = 4,
+) -> str:
+    """Ingest one local file. Returns the episode GUID.
+
+    Raises :class:`IngestError` for unsupported formats, missing audio,
+    over-cap duration, or unreadable files. Creates the target show on
+    first use.
+    """
+    p = Path(path).resolve()
+    if p.suffix.lower() not in _MEDIA_EXTS:
+        raise IngestError(f"unsupported format: {p.suffix or '<no ext>'}")
+    if not p.exists():
+        raise IngestError(f"file does not exist: {p}")
+
+    if not has_audio_stream(p):
+        raise IngestError("file has no audio stream (video-only or unreadable)")
+
+    dur = duration_seconds(p)
+    if dur is not None and dur > max_duration_hours * 3600:
+        raise IngestError(
+            f"exceeds duration cap ({max_duration_hours} h) — change "
+            "Settings → Local sources if intentional"
+        )
+
+    slug = show_slug or slug_for_drop()
+    title_fallback = p.stem[:120]
+    _ensure_show(
+        slug,
+        source=source,
+        title=title_fallback if slug == slug_for_drop() else slug,
+        watchlist_path=watchlist_path,
+    )
+
+    guid = f"sha256:{sha256_of(p, state=state)}"
+    # pub_date: file's mtime-date (round to day)
+    mtime = datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc).date()
+    state.upsert_episode(
+        show_slug=slug,
+        guid=guid,
+        title=p.stem,
+        pub_date=mtime.isoformat(),
+        mp3_url=f"file://{p}",
+        duration_sec=dur,
+    )
+    # Remember the origin path for the pipeline copy-or-symlink step.
+    state.set_meta(f"local_path:{guid}", str(p))
+    return guid
+
+
+def ingest_folder(
+    folder: Path,
+    *,
+    show_slug: str | None,
+    state: StateStore,
+    watchlist_path: Path,
+    recursive: bool = True,
+    max_duration_hours: int = 4,
+) -> list[str]:
+    """One-shot folder import: queue every supported media file under
+    ``folder``. Non-media files and files already ingested (same sha256)
+    are silently skipped.
+    """
+    folder = Path(folder).resolve()
+    slug = slug_for_folder_import(folder, override=show_slug)
+    it = folder.rglob("*") if recursive else folder.iterdir()
+    guids: list[str] = []
+    for p in it:
+        if not p.is_file():
+            continue
+        if p.suffix.lower() not in _MEDIA_EXTS:
+            continue
+        try:
+            g = ingest_file(
+                p,
+                show_slug=slug,
+                state=state,
+                watchlist_path=watchlist_path,
+                source="local-folder",
+                max_duration_hours=max_duration_hours,
+            )
+            guids.append(g)
+        except IngestError as e:
+            logger.info("skip %s: %s", p, e)
+    return guids
+
+
+def _yt_dlp_probe(url: str) -> dict:
+    """Probe ``url`` with ``yt-dlp --dump-single-json -s``.
+
+    Returns the metadata dict (id / uploader / title / upload_date /
+    duration). Kept as a module-level function so tests can
+    monkey-patch it without spawning yt-dlp.
+    """
+    from core.ytdlp import ytdlp_path
+
+    r = subprocess.run(
+        [str(ytdlp_path()), "--dump-single-json", "-s", "--no-warnings", url],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if r.returncode != 0 or not r.stdout:
+        raise IngestError(f"yt-dlp could not probe {url!r}: {r.stderr.strip()[:200]}")
+    try:
+        return json.loads(r.stdout)
+    except json.JSONDecodeError as e:
+        raise IngestError(f"yt-dlp returned non-JSON for {url!r}: {e}") from e
+
+
+def ingest_url(
+    url: str,
+    *,
+    show_slug: str | None,
+    state: StateStore,
+    watchlist_path: Path,
+) -> str:
+    """Ingest a pasted URL via yt-dlp's generic extractor. Returns the
+    episode GUID (``<Extractor>:<id>``). Actual audio download happens
+    later in the pipeline's URL branch.
+    """
+    info = _yt_dlp_probe(url)
+    vid_id = info.get("id") or ""
+    extractor = info.get("extractor") or "generic"
+    uploader = info.get("uploader")
+    slug = show_slug or slug_for_url(url, uploader=uploader)
+
+    _ensure_show(
+        slug,
+        source="url",
+        title=uploader or slug,
+        watchlist_path=watchlist_path,
+    )
+
+    guid = f"{extractor}:{vid_id}" if vid_id else url
+    state.upsert_episode(
+        show_slug=slug,
+        guid=guid,
+        title=info.get("title") or url,
+        pub_date=_format_upload_date(info.get("upload_date") or ""),
+        mp3_url=url,
+        duration_sec=info.get("duration") or None,
+    )
+    return guid
