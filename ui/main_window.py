@@ -24,6 +24,7 @@ from core.sources import youtube_enabled
 from ui.about_dialog import AboutPane
 from ui.app_context import AppContext
 from ui.failed_tab import FailedTab
+from ui.library_tab import LibraryTab
 from ui.log_dock import LogDock, LogsPane
 from ui.menu_bar import build_menu_bar
 from ui.queue_tab import QueueTab
@@ -153,9 +154,13 @@ class MainWindow(QMainWindow):
 
         # Sidebar
         self.sidebar = Sidebar()
-        self.sidebar.add_group("Library")
+        self.sidebar.add_group("Workspace")
         for key, label in (("shows", "Shows"), ("queue", "Queue"), ("failed", "Failed")):
             self.sidebar.add_item(key, label)
+        # Standalone leaf — sits between Workspace and System without
+        # its own group header. Sidebar.add_item is group-agnostic so
+        # this just appends another row at the same indent level.
+        self.sidebar.add_item("library", "Library")
         self.sidebar.add_group("System")
         for key, label in (("settings", "Settings"), ("logs", "Logs"), ("about", "About")):
             self.sidebar.add_item(key, label)
@@ -174,6 +179,7 @@ class MainWindow(QMainWindow):
         self.shows_tab = ShowsTab(self.ctx)
         self.queue_tab = QueueTab(self.ctx)
         self.failed_tab = FailedTab(self.ctx)
+        self.library_tab = LibraryTab(self.ctx)
         self.settings_pane = SettingsPane(self.ctx)
         self.logs_pane = LogsPane(self)
         self.about_pane = AboutPane(self)
@@ -183,6 +189,7 @@ class MainWindow(QMainWindow):
             self.shows_tab,
             self.queue_tab,
             self.failed_tab,
+            self.library_tab,
             self.settings_pane,
             self.logs_pane,
             self.about_pane,
@@ -192,9 +199,10 @@ class MainWindow(QMainWindow):
             "shows": 0,
             "queue": 1,
             "failed": 2,
-            "settings": 3,
-            "logs": 4,
-            "about": 5,
+            "library": 3,
+            "settings": 4,
+            "logs": 5,
+            "about": 6,
         }
         # Honour the landing-tab choice — sidebar highlight was set
         # earlier; now point the stack at the matching page.
