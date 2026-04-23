@@ -620,44 +620,30 @@ class MainWindow(QMainWindow):
     def on_online_changed(self, online: bool) -> None:
         """Slot wired from ``core.connectivity.ConnectivityMonitor``.
 
-        When the network drops, pause the queue and surface a banner so
-        the user knows why nothing is moving. When it returns, clear the
-        pause flag, re-queue any episodes that failed with a network-
-        class error in the last ``auto_resume_failed_window_hours`` hours,
-        and trigger an immediate check so work resumes without a manual
-        kick.
+        When the network drops we DON'T pause the queue — already-
+        downloaded episodes still transcribe locally (whisper.cpp needs
+        no network). Feed-fetch and new downloads will fail naturally
+        and pile up under ``status='failed'`` with network-class error
+        text; on reconnect we re-queue those.
 
-        ``paused_reason`` discriminates between this auto-pause and a
-        user-initiated pause (Queue tab) so the auto-resume path won't
-        steamroll an explicit user choice.
+        Just surface a banner explaining the partial impact. The worker
+        keeps draining its `downloaded` orphan-recovery path, so the
+        queue keeps moving on items that don't need bytes from the
+        network.
         """
         from core.connectivity import is_network_error
 
         state = self.ctx.state
         if not online:
-            state.set_meta("queue_paused", "1")
-            state.set_meta("paused_reason", "offline")
             self._banner_state = "offline"
             self.banner_label.setText(
-                "Offline — queue paused, will resume when connection returns."
+                "Offline — feeds + new downloads pause; transcription continues "
+                "on already-downloaded episodes. Will auto-resume on reconnect."
             )
             self.banner_action_btn.setVisible(False)
             self._apply_banner_style()
             self.banner.setVisible(True)
             return
-
-        # Online again — only auto-resume when WE were the ones who paused.
-        if state.get_meta("paused_reason") != "offline":
-            # Hide the offline banner if it was up but DON'T touch the
-            # pause flag — a user-initiated pause stays paused.
-            if self._banner_state == "offline":
-                self._banner_state = ""
-                self.banner.setVisible(False)
-                self._refresh_banner()
-            return
-
-        state.set_meta("queue_paused", "0")
-        state.set_meta("paused_reason", "")
 
         # Re-queue network-failed episodes from the configurable window.
         # SELECT-then-UPDATE per row: the Python-side classifier filter is

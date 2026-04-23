@@ -118,16 +118,64 @@ class ParagraphosApp(QObject):
             from core import ytdlp as _ytdlp_mod
 
             ytdlp_present = _ytdlp_mod.is_installed()
+            ytdlp_version = "—"
+            if ytdlp_present:
+                try:
+                    proc = subprocess.run(
+                        [str(_ytdlp_mod.ytdlp_path()), "--version"],
+                        capture_output=True,
+                        text=True,
+                        timeout=4,
+                    )
+                    if proc.returncode == 0:
+                        ytdlp_version = proc.stdout.strip().splitlines()[0]
+                except Exception:
+                    pass
             whisper_present = bool(shutil.which("whisper-cli"))
+            whisper_version = "—"
+            if whisper_present:
+                try:
+                    proc = subprocess.run(
+                        ["whisper-cli", "--help"],
+                        capture_output=True,
+                        text=True,
+                        timeout=2,
+                    )
+                    # whisper-cli writes a short banner to stderr — first line.
+                    line = (proc.stderr or proc.stdout or "").strip().splitlines()[0:1]
+                    if line:
+                        whisper_version = line[0][:80]
+                except Exception:
+                    pass
             ffmpeg_present = bool(shutil.which("ffmpeg"))
+
+            # Hardware-aware recommendations vs. current settings — log any
+            # mismatch so support tickets show 'is the user on the optimal
+            # tuning?' at a glance.
+            try:
+                from core.hw import recommended_multiproc_split, recommended_parallel_workers
+
+                rec_par = recommended_parallel_workers()
+                rec_mp = recommended_multiproc_split()
+            except Exception:
+                rec_par = None
+                rec_mp = None
+
             s = self.ctx.settings
             log.info(
                 "paragraphos startup | "
                 "version=%s | macOS=%s (%s) | python=%s | "
                 "cpu_cores=%s | ram=%s | "
-                "tooling: whisper-cli=%s yt-dlp=%s ffmpeg=%s | "
-                "settings: model=%s parallel=%s multiproc=%s fast_mode=%s "
-                "auto_start=%s sources_podcasts=%s sources_youtube=%s",
+                "tooling: whisper-cli=%s (%s) yt-dlp=%s (%s) ffmpeg=%s | "
+                "settings: model=%s parallel=%s%s multiproc=%s%s fast_mode=%s "
+                "auto_start=%s auto_start_delay=%ss save_srt=%s "
+                "mp3_retention_days=%s "
+                "sources_podcasts=%s sources_youtube=%s "
+                "youtube_default_language=%s youtube_default_transcript_source=%s "
+                "rss_concurrency=%s download_concurrency=%s use_etag_cache=%s "
+                "library_scan_cache=%s notify_mode=%s "
+                "connectivity_monitor=%s auto_resume_window_h=%s "
+                "show_log_dock=%s",
                 _PARAGRAPHOS_VERSION,
                 platform.mac_ver()[0] or "unknown",
                 platform.machine(),
@@ -135,15 +183,34 @@ class ParagraphosApp(QObject):
                 cpu_cores or "?",
                 ram_gb,
                 "yes" if whisper_present else "no",
+                whisper_version,
                 "yes" if ytdlp_present else "no",
+                ytdlp_version,
                 "yes" if ffmpeg_present else "no",
                 s.whisper_model,
                 s.parallel_transcribe,
+                f" (rec={rec_par})"
+                if rec_par is not None and rec_par != s.parallel_transcribe
+                else "",
                 s.whisper_multiproc,
+                f" (rec={rec_mp})" if rec_mp is not None and rec_mp != s.whisper_multiproc else "",
                 s.whisper_fast_mode,
                 s.auto_start_queue,
+                getattr(s, "auto_start_delay_seconds", 5),
+                s.save_srt,
+                s.mp3_retention_days,
                 s.sources_podcasts,
                 s.sources_youtube,
+                getattr(s, "youtube_default_language", "de"),
+                s.youtube_default_transcript_source,
+                s.rss_concurrency,
+                s.download_concurrency,
+                s.use_etag_cache,
+                s.library_scan_cache,
+                s.notify_mode,
+                getattr(s, "connectivity_monitor_enabled", True),
+                getattr(s, "auto_resume_failed_window_hours", 24),
+                getattr(s, "show_log_dock", False),
             )
         except Exception as _exc:  # noqa: BLE001
             log.warning("paragraphos startup fingerprint failed: %s", _exc)
