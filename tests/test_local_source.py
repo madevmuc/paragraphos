@@ -170,6 +170,46 @@ def test_has_audio_stream_false_on_ffprobe_failure(monkeypatch):
     assert local_source.has_audio_stream(Path("/nonexistent.mp4")) is False
 
 
+def test_probe_audio_state_distinguishes_no_audio_from_error(monkeypatch):
+    from core import local_source
+
+    # Case 1: returncode=0 + audio stream present → "audio"
+    def fake_audio(args, **kw):
+        class R:
+            returncode = 0
+            stdout = '{"streams":[{"codec_type":"audio","codec_name":"aac"}]}'
+            stderr = ""
+
+        return R()
+
+    monkeypatch.setattr(local_source.subprocess, "run", fake_audio)
+    assert local_source.probe_audio_state(Path("/nonexistent.mp4")) == "audio"
+
+    # Case 2: returncode=0 + only a video stream → "no_audio"
+    def fake_video_only(args, **kw):
+        class R:
+            returncode = 0
+            stdout = '{"streams":[{"codec_type":"video","codec_name":"h264"}]}'
+            stderr = ""
+
+        return R()
+
+    monkeypatch.setattr(local_source.subprocess, "run", fake_video_only)
+    assert local_source.probe_audio_state(Path("/nonexistent.mp4")) == "no_audio"
+
+    # Case 3: returncode=1 (ffprobe error) → "error"
+    def fake_error(args, **kw):
+        class R:
+            returncode = 1
+            stdout = ""
+            stderr = "Invalid data found"
+
+        return R()
+
+    monkeypatch.setattr(local_source.subprocess, "run", fake_error)
+    assert local_source.probe_audio_state(Path("/nonexistent.mp4")) == "error"
+
+
 def test_duration_seconds_reads_format_duration(monkeypatch):
     from core import local_source
 

@@ -142,6 +142,42 @@ def has_audio_stream(path: Path) -> bool:
     return False
 
 
+def probe_audio_state(path: Path) -> str:
+    """Return one of ``'audio'`` | ``'no_audio'`` | ``'error'``.
+
+    Used by the watch folder to distinguish "file had no audio" (final
+    answer, don't retry) from "ffprobe had a problem" (file may still
+    be writing — worth one retry).
+    """
+    try:
+        r = subprocess.run(
+            [
+                _ffprobe_bin(),
+                "-v",
+                "error",
+                "-show_streams",
+                "-of",
+                "json",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return "error"
+    if r.returncode != 0 or not r.stdout:
+        return "error"
+    try:
+        data = json.loads(r.stdout)
+    except json.JSONDecodeError:
+        return "error"
+    for s in data.get("streams", []):
+        if s.get("codec_type") == "audio":
+            return "audio"
+    return "no_audio"
+
+
 def duration_seconds(path: Path) -> int | None:
     """Return the media's duration in whole seconds, or None if ffprobe
     can't tell. Used for the over-cap guard and for populating

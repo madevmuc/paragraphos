@@ -6,8 +6,9 @@ event we:
   1. Skip non-media extensions (cheap ``_MEDIA_EXTS`` check).
   2. Debounce ``debounce_seconds`` so a file mid-write finishes before
      ffprobe looks at it.
-  3. ffprobe the file; retry once after 5 s if it fails (e.g. the file
-     is still being written by a slow exporter).
+  3. ffprobe the file; retry once after 5 s only if ffprobe *errored*
+     (the file may still be being written by a slow exporter). A clean
+     "no audio" result short-circuits without the retry.
   4. Call :func:`core.local_source.ingest_file` with the watched root's
      ``slug_for_watch`` derivation.
 
@@ -33,6 +34,13 @@ from core.local_source import (
 from core.state import StateStore
 
 logger = logging.getLogger(__name__)
+
+# Bound concurrent ingest workers so a user dragging hundreds of files
+# into the watched root can't spawn hundreds of threads each sleeping +
+# ffprobe-ing + copying in parallel. 4 is empirical: ffprobe is I/O
+# dominated, the staging copy is disk-bound, and most consumer SSDs
+# start thrashing past ~4 concurrent sequential reads.
+_INGEST_SEMAPHORE = threading.Semaphore(4)
 
 
 class WatchFolder:
@@ -84,6 +92,24 @@ class WatchFolder:
                     daemon=True,
                 ).start()
 
+            def on_moved(self, event):
+                # Many exporters (Zoom Cloud, browser downloads finalizing
+                # from .crdownload, `mv` across filesystems, OBS, rsync)
+                # write to a temp file and rename to the final name. That
+                # fires on_moved, not on_created — without this handler
+                # those drops are silently ignored.
+                if event.is_directory:
+                    return
+                p = Path(event.dest_path)
+                if p.suffix.lower() not in _MEDIA_EXTS:
+                    return
+                threading.Thread(
+                    target=handler_self._handle_new_file,
+                    args=(p,),
+                    name="wf-ingest",
+                    daemon=True,
+                ).start()
+
         obs = Observer()
         obs.schedule(_Handler(), str(self.root), recursive=True)
         obs.start()
@@ -100,25 +126,37 @@ class WatchFolder:
                 pass
 
     def _handle_new_file(self, p: Path) -> None:
-        """Debounce + ffprobe gate + ingest_file."""
-        time.sleep(self.debounce_seconds)
-        if not local_source.has_audio_stream(p):
-            # Writer may still be flushing the container; retry once.
-            time.sleep(5.0)
-            if not local_source.has_audio_stream(p):
-                logger.info("watch: skipping %s — no audio stream (post-retry)", p)
-                return
+        """Debounce + ffprobe gate + ingest_file.
 
-        slug = slug_for_watch(p, self.root)
-        try:
-            guid = ingest_file(
-                p,
-                show_slug=slug,
-                state=self.state,
-                watchlist_path=self.watchlist_path,
-                source="local-folder",
-                max_duration_hours=self.max_duration_hours,
-            )
-            logger.info("watch: queued %s → %s (%s)", p.name, slug, guid)
-        except IngestError as e:
-            logger.warning("watch: skip %s: %s", p, e)
+        Runs under ``_INGEST_SEMAPHORE`` so concurrent drops queue up
+        instead of stampeding. The debounce sleep, ffprobe gate, and
+        ingest_file call all happen while holding a slot — this keeps
+        the bound real even when the debounce itself is non-trivial.
+        """
+        with _INGEST_SEMAPHORE:
+            time.sleep(self.debounce_seconds)
+            state = local_source.probe_audio_state(p)
+            if state == "no_audio":
+                logger.info("watch: skipping %s — no audio stream", p)
+                return
+            if state == "error":
+                # Writer may still be flushing the container; retry once.
+                time.sleep(5.0)
+                state = local_source.probe_audio_state(p)
+                if state != "audio":
+                    logger.info("watch: skipping %s — no audio stream (post-retry)", p)
+                    return
+
+            slug = slug_for_watch(p, self.root)
+            try:
+                guid = ingest_file(
+                    p,
+                    show_slug=slug,
+                    state=self.state,
+                    watchlist_path=self.watchlist_path,
+                    source="local-folder",
+                    max_duration_hours=self.max_duration_hours,
+                )
+                logger.info("watch: queued %s → %s (%s)", p.name, slug, guid)
+            except IngestError as e:
+                logger.warning("watch: skip %s: %s", p, e)
