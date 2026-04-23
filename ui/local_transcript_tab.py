@@ -25,7 +25,6 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QPushButton,
     QSizePolicy,
     QVBoxLayout,
@@ -33,6 +32,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.local_source import IngestError, ingest_file, ingest_folder, ingest_url
+from ui.themes import current_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +91,7 @@ class _DropSurface(QFrame):
             "Supports .mp3 / .m4a / .wav / .mp4 / .mov / .mkv / .webm / … "
             "and similar formats ffmpeg can decode."
         )
-        hint.setStyleSheet("color: palette(mid);")
+        hint.setStyleSheet(f"color: {current_tokens()['ink_3']};")
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         hint.setWordWrap(True)
         v.addWidget(hint)
@@ -157,11 +157,26 @@ class LocalTranscriptTab(QWidget):
         url_row.addWidget(self._url_btn)
         root.addLayout(url_row)
 
+        # Status line — inline feedback for every ingest action. Avoids
+        # the invisible-success problem where a user drops a file, the
+        # episode queues silently, and the user thinks nothing happened.
+        self._status_label = QLabel("")
+        self._status_label.setWordWrap(True)
+        self._status_label.setStyleSheet(f"color: {current_tokens()['ink_3']}; padding: 4px 2px;")
+        root.addWidget(self._status_label)
+
     # ── public entry points (also used by MainWindow global drop) ──────
 
     def handle_paths(self, paths: Iterable[Path]) -> None:
         max_hours = int(self._ctx.settings.local_max_duration_hours)
         wl_path = self._ctx.data_dir / "watchlist.yaml"
+        paths = list(paths)
+        if not paths:
+            return
+        self._set_status(
+            f"Queueing {len(paths)} file{'s' if len(paths) != 1 else ''}…",
+            kind="info",
+        )
         for p in paths:
             self._submit(
                 _IngestRunnable(
@@ -178,6 +193,7 @@ class LocalTranscriptTab(QWidget):
 
     def handle_url(self, url: str) -> None:
         self._url_btn.setEnabled(False)
+        self._set_status(f"Probing URL {url}… (up to 60 s)", kind="info")
         wl_path = self._ctx.data_dir / "watchlist.yaml"
         r = _IngestRunnable(
             "url",
@@ -232,6 +248,11 @@ class LocalTranscriptTab(QWidget):
         )
         for g in guids:
             self.ingested.emit(g)
+        n = len(guids)
+        self._set_status(
+            f"Queued {n} file{'s' if n != 1 else ''} from {folder.name} — open the Queue tab to see them.",
+            kind="success" if n else "info",
+        )
 
     def _on_url_clicked(self) -> None:
         text = self._url_edit.text().strip()
@@ -247,9 +268,28 @@ class LocalTranscriptTab(QWidget):
             except ValueError:
                 pass
             if err is not None:
-                QMessageBox.warning(self, "Can't ingest", f"{_label}: {err}")
+                self._set_status(f"Couldn't ingest {_label}: {err}", kind="error")
                 return
+            self._set_status(
+                f"Queued {_label} → {guid} — open the Queue tab to see it.",
+                kind="success",
+            )
             self.ingested.emit(guid)
 
         runnable.done.connect(_handle)
         QThreadPool.globalInstance().start(runnable)
+
+    def _set_status(self, text: str, *, kind: str = "info") -> None:
+        """Update the inline status line below the three zones.
+
+        Colours are theme-aware so the line stays legible in both light
+        and dark mode. ``kind`` selects the token: info/success/error.
+        """
+        tok = current_tokens()
+        color = {
+            "info": tok["ink_3"],
+            "success": tok.get("ink_2", tok["ink_3"]),
+            "error": tok.get("danger", tok["ink_3"]),
+        }.get(kind, tok["ink_3"])
+        self._status_label.setStyleSheet(f"color: {color}; padding: 4px 2px;")
+        self._status_label.setText(text)
