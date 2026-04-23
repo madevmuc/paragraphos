@@ -45,13 +45,37 @@ class QueueTab(QWidget):
 
         v = QVBoxLayout(self)
 
-        # Big-visible hero dashboard shown only while a run is active.
-        self.hero = QueueHero(
-            ctx,
-            on_pause=self._pause,
-            on_stop=self._stop,
-            parent=self,
-        )
+        # Single toolbar at the top — Start / Pause / Stop / Refresh /
+        # Remove all. Pre-2026-04-23 these lived at the bottom of the
+        # page AND duplicated Pause+Stop on the hero card; consolidated
+        # here so the hero only renders state, never actions.
+        h = QHBoxLayout()
+        self.start_btn = QPushButton("Start")
+        self.start_btn.clicked.connect(self._start)
+        self.pause_btn = QPushButton("Pause")
+        self.pause_btn.clicked.connect(self._pause)
+        self.stop_btn = QPushButton("Stop")
+        self.stop_btn.clicked.connect(self._stop)
+        refresh = QPushButton("Refresh")
+        refresh.clicked.connect(self.refresh)
+        # Empties the queue — marks every pending/in-flight episode as
+        # done so the worker stops picking them up. Confirm dialog
+        # because there's no undo.
+        self.clear_btn = QPushButton("Remove all items from queue")
+        self.clear_btn.clicked.connect(self._clear_queue)
+        # Two-stage Stop bookkeeping. First click → graceful (current
+        # transcription finishes, worker exits between episodes). Second
+        # click → force-stop, kills running whisper-cli + yt-dlp + the
+        # worker QThread.
+        self._stop_pressed_once = False
+        for b in (self.start_btn, self.pause_btn, self.stop_btn, refresh, self.clear_btn):
+            h.addWidget(b)
+        h.addStretch()
+        v.addLayout(h)
+
+        # Big-visible hero dashboard — always-visible state card (idle =
+        # grey ring + dashes; active = colored ring + live stats).
+        self.hero = QueueHero(ctx, parent=self)
         v.addWidget(self.hero)
 
         # Header — status summary
@@ -118,29 +142,8 @@ class QueueTab(QWidget):
         self.table.horizontalHeader().sectionClicked.connect(self._on_header_clicked)
         v.addWidget(self.table)
 
-        h = QHBoxLayout()
-        self.start_btn = QPushButton("Start")
-        self.start_btn.clicked.connect(self._start)
-        self.pause_btn = QPushButton("Pause")
-        self.pause_btn.clicked.connect(self._pause)
-        self.stop_btn = QPushButton("Stop")
-        self.stop_btn.clicked.connect(self._stop)
-        refresh = QPushButton("Refresh")
-        refresh.clicked.connect(self.refresh)
-        # Empties the queue — marks every pending/in-flight episode as
-        # done so the worker stops picking them up. Confirm dialog
-        # because there's no undo.
-        self.clear_btn = QPushButton("Remove all items from queue")
-        self.clear_btn.clicked.connect(self._clear_queue)
-        # Two-stage Stop bookkeeping. First click → graceful (current
-        # transcription finishes, worker exits between episodes). Second
-        # click → force-stop, kills running whisper-cli + yt-dlp + the
-        # worker QThread.
-        self._stop_pressed_once = False
-        for b in (self.start_btn, self.pause_btn, self.stop_btn, refresh, self.clear_btn):
-            h.addWidget(b)
-        h.addStretch()
-        v.addLayout(h)
+        # (Buttons already created above as the top toolbar — _update_btns
+        # syncs their enabled/text state from the queue's current run-state.)
         self._update_btns()
 
         self._tick_timer = QTimer(self)

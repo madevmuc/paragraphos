@@ -287,13 +287,17 @@ class _DownloadPool(QThread):
                 # for progress reporting (episode_done payload).
                 self._out_q.put((show, ep, outcome))
         finally:
-            # Only the last worker standing pushes the end-of-stream
-            # sentinel so the transcribe worker sees exactly one.
+            # Only the last download-worker standing pushes end-of-stream
+            # sentinels — one per transcribe consumer (set externally as
+            # `consumer_count`, default 1 for backward compat). Multiple
+            # transcribe workers each block on `in_q.get()`; each needs
+            # its own sentinel to exit cleanly.
             with self._remaining_lock:
                 self._remaining -= 1
                 last = self._remaining == 0
             if last:
-                self._out_q.put(_SHUTDOWN)
+                for _ in range(getattr(self, "consumer_count", 1)):
+                    self._out_q.put(_SHUTDOWN)
 
     def run(self) -> None:
         # No pre-priming: workers claim from DB on each iteration so a
@@ -324,15 +328,30 @@ class _TranscribeWorker(QThread):
     # slug, guid, action, done_idx, total_pending, show_title, ep_title
     episode_done = pyqtSignal(str, str, str, int, int, str, str)
 
-    def __init__(self, *, in_q, pctx_for, total: int, stop_flag: threading.Event):
+    def __init__(
+        self,
+        *,
+        in_q,
+        pctx_for,
+        total: int,
+        stop_flag: threading.Event,
+        done_counter: list | None = None,
+        done_lock: threading.Lock | None = None,
+    ):
         super().__init__()
         self._in_q = in_q
         self._pctx_for = pctx_for
         self._total = total
         self._stop = stop_flag
+        # Shared atomic counter so N parallel workers report a coherent
+        # done_idx to the UI. List wrapper because ints are immutable;
+        # lock guards the increment so no two workers ever emit the
+        # same index. Default to a private counter for backwards-compat
+        # with single-worker callers.
+        self._done_counter = done_counter if done_counter is not None else [0]
+        self._done_lock = done_lock if done_lock is not None else threading.Lock()
 
     def run(self) -> None:
-        done_idx = 0
         while True:
             # A timeout-based get so we periodically notice stop_flag even
             # when the download side is stuck.
@@ -359,7 +378,9 @@ class _TranscribeWorker(QThread):
                     # should turn errors into PipelineResult, but guard.
                     r = PipelineResult("failed", outcome.guid, str(e))
 
-            done_idx += 1
+            with self._done_lock:
+                self._done_counter[0] += 1
+                done_idx = self._done_counter[0]
             if r.action == "failed":
                 self.progress.emit(f"    [{r.action}]")
                 for line in r.detail.splitlines():
@@ -641,12 +662,33 @@ class CheckAllThread(QThread):
             stop_flag=self._stop_event,
             workers=dl_conc,
         )
-        tr = _TranscribeWorker(
-            in_q=q,
-            pctx_for=self._pctx_for,
-            total=total,
-            stop_flag=self._stop_event,
-        )
+        # Spawn `parallel_transcribe` transcribe workers (default 1).
+        # Pre-2026-04-23 only one was created regardless of the setting,
+        # so users with parallel_transcribe=2+ saw a single transcribing
+        # row at a time despite paying the configuration cost. All
+        # workers share the same in_q (queue.Queue is thread-safe) and
+        # the same stop_event; shutdown sends N _SHUTDOWN sentinels via
+        # the download pool's existing terminator (one per consumer).
+        n_tr = max(int(self.settings.parallel_transcribe or 1), 1)
+        # Shared atomic counter so the UI sees a coherent done_idx
+        # across all parallel workers (workers race to increment).
+        shared_done_counter = [0]
+        shared_done_lock = threading.Lock()
+        trs = [
+            _TranscribeWorker(
+                in_q=q,
+                pctx_for=self._pctx_for,
+                total=total,
+                stop_flag=self._stop_event,
+                done_counter=shared_done_counter,
+                done_lock=shared_done_lock,
+            )
+            for _ in range(n_tr)
+        ]
+        # Tell the download pool how many sentinels to enqueue at end-of-
+        # work so every consumer gets one and exits cleanly. Set as an
+        # attribute the pool will read in its terminator (added below).
+        dl.consumer_count = n_tr
         # Re-emit child signals on this thread so existing wiring stays
         # valid. CRITICAL: DirectConnection. The default AutoConnection
         # would be Queued (child workers and CheckAllThread run on
@@ -655,8 +697,9 @@ class CheckAllThread(QThread):
         # the re-emits would be silently dropped. `.emit()` is thread-
         # safe regardless of which thread invokes it.
         dl.progress.connect(self.progress.emit, type=Qt.ConnectionType.DirectConnection)
-        tr.progress.connect(self.progress.emit, type=Qt.ConnectionType.DirectConnection)
-        tr.episode_done.connect(self.episode_done.emit, type=Qt.ConnectionType.DirectConnection)
+        for tr in trs:
+            tr.progress.connect(self.progress.emit, type=Qt.ConnectionType.DirectConnection)
+            tr.episode_done.connect(self.episode_done.emit, type=Qt.ConnectionType.DirectConnection)
 
         # Poll the persisted pause flag from a short helper thread — when
         # set we trip the shared stop event, draining both workers.
@@ -674,9 +717,11 @@ class CheckAllThread(QThread):
         pw.start()
 
         dl.start()
-        tr.start()
+        for tr in trs:
+            tr.start()
         dl.wait()
-        tr.wait()
+        for tr in trs:
+            tr.wait()
         pause_watch_stop.set()
 
         self.finished_all.emit()

@@ -127,6 +127,34 @@ class TranscriptionError(RuntimeError):
     pass
 
 
+def _explain_exit(rc: int) -> str:
+    """Map a subprocess exit code to a one-line human explanation. Used
+    in TranscriptionError messages so a user reading the log can tell
+    "you clicked Stop" from "the kernel killed it for OOM" from "whisper
+    crashed". Negative codes follow Python's subprocess convention
+    (the process died from signal -rc); positive codes are the binary's
+    own exit status."""
+    if rc == -9 or rc == 137:
+        return "killed (SIGKILL — usually the Stop button's force-kill, or macOS OOM)"
+    if rc == -15 or rc == 143:
+        return "terminated (SIGTERM — graceful stop request)"
+    if rc == -2 or rc == 130:
+        return "interrupted (SIGINT — Ctrl-C)"
+    if rc == -6 or rc == 134:
+        return "aborted (SIGABRT — whisper-cli internal assertion)"
+    if rc == -11 or rc == 139:
+        return "segfault (SIGSEGV — whisper-cli crash; report with stderr)"
+    if rc == 124:
+        return "timeout (per-MP3 deadline exceeded)"
+    if rc == 127:
+        return "command not found (whisper-cli or its loader missing)"
+    if rc == 0:
+        return "ok"
+    if rc < 0:
+        return f"killed by signal {-rc}"
+    return f"exited with non-zero status {rc}"
+
+
 @dataclass(frozen=True)
 class TranscribeResult:
     md_path: Path
@@ -326,7 +354,7 @@ def transcribe_episode(
                 pass
         if result.returncode != 0:
             raise TranscriptionError(
-                f"whisper-cli exit {result.returncode}  "
+                f"whisper-cli exit {result.returncode} ({_explain_exit(result.returncode)})  "
                 f"mp3={mp3_path.name}  model={model_path.name}  "
                 f"slug={slug!r}\n"
                 f"  stderr (last 400): {(result.stderr or '')[-400:]!r}\n"

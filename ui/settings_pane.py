@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QTime, QTimer
+from PyQt6.QtCore import QEvent, QObject, Qt, QTime, QTimer
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -23,6 +23,17 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+
+class _NoScrollFilter(QObject):
+    """Eat ``QEvent.Wheel`` on the watched widget. Installed on every
+    QSpinBox / QComboBox / QSlider in the settings pane so a stray
+    scroll over a focused field doesn't silently change the value."""
+
+    def eventFilter(self, _obj, event):  # noqa: N802 — Qt API
+        if event.type() == QEvent.Type.Wheel:
+            return True  # consumed; don't step the value
+        return False
 
 
 class _FieldContainer(QWidget):
@@ -600,6 +611,25 @@ class SettingsPane(QWidget):
         root.addWidget(self.rerun_setup_btn, alignment=Qt.AlignmentFlag.AlignLeft)
 
         root.addStretch()
+
+        # Disable scroll-wheel value edits on every numeric / dropdown
+        # widget. The default Qt behaviour is to step the value when the
+        # mouse-wheel rolls over a focused QSpinBox / QComboBox / QSlider —
+        # users mistakenly bumped settings while scrolling the pane. The
+        # widgets stay fully editable (type, click arrows, focus + arrow
+        # keys); only wheel-stepping is suppressed.
+        from PyQt6.QtWidgets import QAbstractSpinBox as _ASpin
+        from PyQt6.QtWidgets import QSlider as _Slider
+
+        self._noscroll_filter = _NoScrollFilter(self)
+        for cls in (_ASpin, QComboBox, _Slider):
+            for w in self.findChildren(cls):
+                w.installEventFilter(self._noscroll_filter)
+                # Click-to-focus only — without StrongFocus the wheel
+                # event handler in some styles still re-arms after the
+                # filter consumes the event. ClickFocus disables the
+                # auto-focus-on-hover that was the original trigger.
+                w.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
     def _on_rerun_setup_clicked(self) -> None:
         """Re-open the guided setup dialog. Delegates to the same helper
