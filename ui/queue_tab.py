@@ -119,7 +119,17 @@ class QueueTab(QWidget):
         self.stop_btn.clicked.connect(self._stop)
         refresh = QPushButton("Refresh")
         refresh.clicked.connect(self.refresh)
-        for b in (self.start_btn, self.pause_btn, self.stop_btn, refresh):
+        # Empties the queue — marks every pending/in-flight episode as
+        # done so the worker stops picking them up. Confirm dialog
+        # because there's no undo.
+        self.clear_btn = QPushButton("Remove all items from queue")
+        self.clear_btn.clicked.connect(self._clear_queue)
+        # Two-stage Stop bookkeeping. First click → graceful (current
+        # transcription finishes, worker exits between episodes). Second
+        # click → force-stop, kills running whisper-cli + yt-dlp + the
+        # worker QThread.
+        self._stop_pressed_once = False
+        for b in (self.start_btn, self.pause_btn, self.stop_btn, refresh, self.clear_btn):
             h.addWidget(b)
         h.addStretch()
         v.addLayout(h)
@@ -244,8 +254,69 @@ class QueueTab(QWidget):
         self._update_btns()
 
     def _stop(self):
-        self._shows_tab()._stop()
+        # Dual-stage: graceful first, force on the second click.
+        if not self._stop_pressed_once:
+            self._stop_pressed_once = True
+            self._shows_tab()._stop()
+            self.stop_btn.setText("Stop now (force)")
+            self.stop_btn.setEnabled(True)  # keep clickable for the force step
+            return
+        # Force-stop: kill any running whisper-cli + yt-dlp subprocesses
+        # so the in-flight transcription / download dies immediately.
+        # Then terminate the worker QThread as a last resort.
+        self._stop_pressed_once = False
+        self.stop_btn.setText("Stop")
+        try:
+            import subprocess
+
+            subprocess.run(["pkill", "-9", "-f", "whisper-cli"], capture_output=True, check=False)
+            subprocess.run(["pkill", "-9", "-f", "yt-dlp"], capture_output=True, check=False)
+        except Exception:
+            pass
+        try:
+            t = self._shows_tab()._thread
+            if t is not None and t.isRunning():
+                t.terminate()
+                t.wait(2000)
+        except Exception:
+            pass
+        # Reset stranded in-flight rows so the user can re-trigger cleanly.
+        try:
+            self.ctx.state.recover_in_flight()
+        except Exception:
+            pass
+        self.ctx.queue.running = False
         self._update_btns()
+        self.refresh()
+
+    def _clear_queue(self):
+        from PyQt6.QtWidgets import QMessageBox
+
+        # SQL counts up the rows that will be touched so the dialog is honest.
+        with self.ctx.state._conn() as c:
+            row = c.execute(
+                "SELECT COUNT(*) AS n FROM episodes "
+                "WHERE status IN ('pending','downloading','downloaded','transcribing')"
+            ).fetchone()
+        n = int(row["n"] or 0) if row else 0
+        if n == 0:
+            QMessageBox.information(self, "Queue is already empty", "Nothing to remove.")
+            return
+        reply = QMessageBox.question(
+            self,
+            "Remove all items from queue",
+            f"Mark all {n} pending / in-flight episode(s) as done? "
+            "They won't be picked up again. Existing transcripts are kept.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        moved = self.ctx.state.clear_pending()
+        self._last_table_refresh = 0.0
+        self.refresh()
+        QMessageBox.information(
+            self, "Queue cleared", f"{moved} episode(s) removed from the queue."
+        )
 
     def _update_btns(self):
         running = self.ctx.queue.running
@@ -253,7 +324,12 @@ class QueueTab(QWidget):
         self.start_btn.setEnabled(not running)
         self.start_btn.setText("Resume" if paused else "Start")
         self.pause_btn.setEnabled(running and not paused)
+        # Stop button enabled only while running. Reset its dual-stage
+        # state when the run actually ends (not just on graceful click).
         self.stop_btn.setEnabled(running)
+        if not running and self._stop_pressed_once:
+            self._stop_pressed_once = False
+            self.stop_btn.setText("Stop")
 
     # ── rendering ─────────────────────────────────────────────
 

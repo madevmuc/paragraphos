@@ -84,6 +84,69 @@ class ParagraphosApp(QObject):
         super().__init__()
         self.ctx = AppContext.load(DATA_DIR)
         setup_logging(DATA_DIR, retention_days=self.ctx.settings.log_retention_days)
+        # One-line system fingerprint at startup — useful when users send
+        # logs for debugging. Carefully NO PII: no username, no hostname,
+        # no IP, no file paths, no watchlist content. macOS version,
+        # arch, CPU/RAM, Python + Paragraphos version, key tuning + tool
+        # presence.
+        import logging
+        import platform
+        import shutil
+
+        from core.version import VERSION as _PARAGRAPHOS_VERSION
+
+        log = logging.getLogger(__name__)
+        try:
+            ram_gb = "?"
+            try:
+                import subprocess
+
+                proc = subprocess.run(
+                    ["sysctl", "-n", "hw.memsize"], capture_output=True, text=True, timeout=2
+                )
+                if proc.returncode == 0 and proc.stdout.strip().isdigit():
+                    ram_gb = f"{int(proc.stdout) // (1024**3)} GB"
+            except Exception:
+                pass
+            try:
+                from core.hw import detect
+
+                _hw = detect()
+                cpu_cores = _hw[1] if isinstance(_hw, tuple) else None
+            except Exception:
+                cpu_cores = None
+            from core import ytdlp as _ytdlp_mod
+
+            ytdlp_present = _ytdlp_mod.is_installed()
+            whisper_present = bool(shutil.which("whisper-cli"))
+            ffmpeg_present = bool(shutil.which("ffmpeg"))
+            s = self.ctx.settings
+            log.info(
+                "paragraphos startup | "
+                "version=%s | macOS=%s (%s) | python=%s | "
+                "cpu_cores=%s | ram=%s | "
+                "tooling: whisper-cli=%s yt-dlp=%s ffmpeg=%s | "
+                "settings: model=%s parallel=%s multiproc=%s fast_mode=%s "
+                "auto_start=%s sources_podcasts=%s sources_youtube=%s",
+                _PARAGRAPHOS_VERSION,
+                platform.mac_ver()[0] or "unknown",
+                platform.machine(),
+                platform.python_version(),
+                cpu_cores or "?",
+                ram_gb,
+                "yes" if whisper_present else "no",
+                "yes" if ytdlp_present else "no",
+                "yes" if ffmpeg_present else "no",
+                s.whisper_model,
+                s.parallel_transcribe,
+                s.whisper_multiproc,
+                s.whisper_fast_mode,
+                s.auto_start_queue,
+                s.sources_podcasts,
+                s.sources_youtube,
+            )
+        except Exception as _exc:  # noqa: BLE001
+            log.warning("paragraphos startup fingerprint failed: %s", _exc)
         self._thread: CheckAllThread | None = None
         self._run_tally: dict[str, object] = {}
 

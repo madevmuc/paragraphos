@@ -208,6 +208,19 @@ class StateStore:
             )
             return cur.rowcount
 
+    def clear_pending(self) -> int:
+        """Empty the queue: mark every pending / downloading / downloaded
+        / transcribing episode as ``done`` so the worker stops picking
+        them up. Used by the Queue tab's 'Remove all items' button.
+        Returns the number of rows touched.
+        """
+        with self._conn() as c:
+            cur = c.execute(
+                "UPDATE episodes SET status='done', priority=0 "
+                "WHERE status IN ('pending','downloading','downloaded','transcribing')"
+            )
+            return cur.rowcount or 0
+
     def set_meta(self, key: str, value: str) -> None:
         with self._conn() as c:
             c.execute(

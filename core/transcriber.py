@@ -33,10 +33,34 @@ WHISPER_BIN = _locate_whisper_bin()
 MODEL_PATH = Path.home() / ".config" / "open-wispr" / "models" / "ggml-large-v3-turbo.bin"
 LANGUAGE = "de"
 THREADS = "6"
-# Generous timeout: a 60-min podcast at ~1.5× realtime finishes in <6 min
-# on an M2 Pro. 10 min covers 2-hour episodes; anything beyond means
-# whisper-cli hung on corrupt audio and we want to fail fast.
-WHISPER_TIMEOUT_SEC = 600
+# Hard floor for the dynamic timeout — guarantees at least 30 min for any
+# MP3 even when the file-size heuristic would yield less (small files
+# never need it; this is just defensive).
+WHISPER_TIMEOUT_FLOOR_SEC = 1800
+
+
+def _whisper_timeout(mp3_path: Path) -> int:
+    """Compute a per-episode whisper-cli timeout from the MP3 file size.
+
+    History: a hardcoded 600 s timed out hour-long podcasts on slow
+    macs (Intel + multiproc=1 + beam=5/best=5 default). For ~64 kbps
+    podcast MP3s 1 MB ≈ 2 min audio; allow 90 s wall-time per MB plus
+    120 s base. So:
+
+      40 MB (≈80 min audio)  → ~62 min timeout
+      80 MB (≈160 min audio) → ~122 min timeout
+      150 MB (≈300 min audio)→ ~227 min timeout
+
+    Floored at 30 min so tiny MP3s still have headroom on slow CPUs.
+    Falls back to the floor when the file isn't yet on disk (test code
+    paths, mostly).
+    """
+    try:
+        mb = mp3_path.stat().st_size / (1024 * 1024)
+    except OSError:
+        return WHISPER_TIMEOUT_FLOOR_SEC
+    return max(WHISPER_TIMEOUT_FLOOR_SEC, int(mb * 90) + 120)
+
 
 # Natural German podcast speech runs ~140-180 wpm. Below 30 → silence or hallucination.
 MIN_WPM_GUARD = 30
@@ -159,6 +183,10 @@ def transcribe_episode(
             cmd += ["-p", str(processors)]
         if whisper_prompt:
             cmd += ["--prompt", whisper_prompt]
+        # Per-episode timeout scaled to MP3 size — see _whisper_timeout
+        # docstring. Keeps slow Intel macs from hard-failing on hour-long
+        # podcasts while still detecting genuine hangs.
+        timeout_sec = _whisper_timeout(mp3_path)
         if progress_cb is None:
             # Classic blocking path — keeps `subprocess.run` so existing
             # tests that mock it stay valid. Used by the CLI, tests,
@@ -168,11 +196,11 @@ def transcribe_episode(
                     cmd,
                     capture_output=True,
                     text=True,
-                    timeout=WHISPER_TIMEOUT_SEC,
+                    timeout=timeout_sec,
                 )
             except subprocess.TimeoutExpired as te:
                 raise TranscriptionError(
-                    f"whisper-cli timed out after {WHISPER_TIMEOUT_SEC}s  "
+                    f"whisper-cli timed out after {timeout_sec}s  "
                     f"mp3={mp3_path.name}  slug={slug!r}\n"
                     f"  partial stderr: {(te.stderr or b'')[-300:]!r}"
                 ) from te
@@ -228,11 +256,11 @@ def transcribe_episode(
                             stdout=stdout_f,
                             stderr=subprocess.PIPE,
                             text=True,
-                            timeout=WHISPER_TIMEOUT_SEC,
+                            timeout=timeout_sec,
                         )
                     except subprocess.TimeoutExpired as te:
                         raise TranscriptionError(
-                            f"whisper-cli timed out after {WHISPER_TIMEOUT_SEC}s  "
+                            f"whisper-cli timed out after {timeout_sec}s  "
                             f"mp3={mp3_path.name}  slug={slug!r}\n"
                             f"  partial stderr: {(te.stderr or b'')[-300:]!r}"
                         ) from te
