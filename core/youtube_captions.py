@@ -61,6 +61,58 @@ def vtt_to_srt(vtt: str) -> str:
     return "\n".join(out)
 
 
+def _list_available_sub_langs(video_id: str, *, auto_ok: bool = False) -> list[str]:
+    """Query yt-dlp for the languages of the video's manual subtitles.
+
+    Returns the language codes in YouTube's listed order (typically the
+    uploader's chosen primary first). Empty list if yt-dlp errors out.
+    Used by fetch_manual_captions to pick a viable language when the
+    requested one isn't available.
+    """
+    if not ytdlp.is_installed():
+        return []
+    cmd = [
+        str(ytdlp.ytdlp_path()),
+        "--list-subs",
+        "--skip-download",
+        f"https://www.youtube.com/watch?v={video_id}",
+    ]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    except subprocess.TimeoutExpired:
+        return []
+    if proc.returncode != 0:
+        return []
+    out = proc.stdout
+    # Output format:
+    #   [info] Available subtitles for <id>:
+    #   Language Name       Formats
+    #   en       English    vtt, srt, ...
+    #   de       Deutsch    vtt, srt, ...
+    in_manual = False
+    in_auto = False
+    langs: list[str] = []
+    for raw in out.splitlines():
+        line = raw.strip()
+        low = line.lower()
+        if "available subtitles" in low:
+            in_manual, in_auto = True, False
+            continue
+        if "available automatic captions" in low:
+            in_manual, in_auto = False, auto_ok
+            continue
+        if not (in_manual or in_auto):
+            continue
+        # Skip the header row "Language Name Formats".
+        if line.startswith("Language") or not line:
+            continue
+        code = line.split(None, 1)[0]
+        # Lang codes are alpha or alpha-alpha (e.g., en, en-en, mfe-ar).
+        if code and code[0].isalpha():
+            langs.append(code)
+    return langs
+
+
 def fetch_manual_captions(
     video_id: str,
     out_basename: Path,
@@ -72,27 +124,49 @@ def fetch_manual_captions(
 
     `out_basename` is e.g. `/tmp/xyz/video` (no extension); yt-dlp will
     write `<basename>.<lang>.vtt` next to it.
+
+    Language fallback: tries `lang` first, then `en`, then whatever
+    yt-dlp lists as available. This avoids the "TED show created with
+    German default → no German subs → fall through to audio" failure
+    mode where the video DOES have English subs but we asked for the
+    wrong language.
     """
     if not ytdlp.is_installed():
         raise NoCaptionsAvailable("yt-dlp not installed")
-    extra = ["--sub-langs", lang, "--skip-download", "--sub-format", "vtt"]
-    if auto_ok:
-        extra.insert(0, "--write-auto-subs")
-    cmd = [
-        str(ytdlp.ytdlp_path()),
-        "--write-subs",
-        *extra,
-        "-o",
-        str(out_basename),
-        f"https://www.youtube.com/watch?v={video_id}",
-    ]
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-    if proc.returncode != 0:
-        raise NoCaptionsAvailable(proc.stderr.strip())
 
-    vtt_path = out_basename.with_suffix(f".{lang}.vtt")
-    if not vtt_path.exists():
-        raise NoCaptionsAvailable(f"no caption file produced: {vtt_path}")
-    srt_path = out_basename.with_suffix(".srt")
-    srt_path.write_text(vtt_to_srt(vtt_path.read_text(encoding="utf-8")), encoding="utf-8")
-    return srt_path
+    # Build the candidate-language list: requested first, then en, then
+    # whatever's actually available on the video (probed once via
+    # --list-subs). Dedup while preserving order.
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for code in [lang, "en", *_list_available_sub_langs(video_id, auto_ok=auto_ok)]:
+        if code and code not in seen:
+            candidates.append(code)
+            seen.add(code)
+
+    last_err = ""
+    for try_lang in candidates:
+        extra = ["--sub-langs", try_lang, "--skip-download", "--sub-format", "vtt"]
+        if auto_ok:
+            extra.insert(0, "--write-auto-subs")
+        cmd = [
+            str(ytdlp.ytdlp_path()),
+            "--write-subs",
+            *extra,
+            "-o",
+            str(out_basename),
+            f"https://www.youtube.com/watch?v={video_id}",
+        ]
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        if proc.returncode != 0:
+            last_err = proc.stderr.strip() or "yt-dlp non-zero exit"
+            continue
+        vtt_path = out_basename.with_suffix(f".{try_lang}.vtt")
+        if not vtt_path.exists():
+            last_err = f"no caption file produced for lang={try_lang}"
+            continue
+        srt_path = out_basename.with_suffix(".srt")
+        srt_path.write_text(vtt_to_srt(vtt_path.read_text(encoding="utf-8")), encoding="utf-8")
+        return srt_path
+
+    raise NoCaptionsAvailable(last_err or "no caption track found")

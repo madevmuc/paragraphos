@@ -1217,6 +1217,11 @@ class AddShowDialog(QDialog):
             "backlog": backlog_mode,
             "artwork_url": preview.get("artwork_url", "") or "",
             "source": "youtube",
+            # YouTube content is overwhelmingly English; default the
+            # captions/whisper language to "en" so caption fetch finds
+            # the manual `en` subtitle most channels ship. The user can
+            # change this in Show Details if a channel is non-English.
+            "language": "en",
         }
         self._do_save(show_dict)
 
@@ -1237,7 +1242,11 @@ class AddShowDialog(QDialog):
             QMessageBox.warning(self, "Missing", "RSS URL required.")
             return
 
-        model = Show(
+        # Honour show["language"] if the caller passed one (the YouTube
+        # path forces "en"); fall back to the model default ("de") for
+        # podcast modes, which is what existing users expect.
+        _lang = (show.get("language") or "").strip()
+        model_kwargs = dict(
             slug=slug,
             title=(show.get("title") or "").strip() or slug,
             rss=rss,
@@ -1245,6 +1254,9 @@ class AddShowDialog(QDialog):
             artwork_url=(show.get("artwork_url") or "").strip(),
             source=(show.get("source") or "podcast"),
         )
+        if _lang:
+            model_kwargs["language"] = _lang
+        model = Show(**model_kwargs)
         self.updated_watchlist.shows.append(model)
         self.updated_watchlist.save(self.ctx.data_dir / "watchlist.yaml")
 
