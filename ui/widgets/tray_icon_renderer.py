@@ -1,13 +1,14 @@
-"""Render the tray icon — painter-drawn glyph when idle, live fraction when running.
+"""Render the tray icon — painter-drawn glyph as a macOS template image.
 
-Idle: draws a bold "P" via QPainter so the glyph fills the canvas and is
-visible in the macOS menu bar. Earlier versions tried to use a bundled
-`MenuBarIconTemplate.png` here, but the bundled template's glyph was a
-tiny shape on a 22×22 transparent canvas — visually almost invisible
-next to neighbouring menu-bar icons. The painter route always wins now.
-Running: draws `3/12` (or current counter) into a 22×22 / 44×44 pixmap via
-QPainter — source of truth for color is `QGuiApplication.styleHints()
-.colorScheme()`, per the icon handoff.
+macOS treats menu-bar icons specially: only icons marked as template
+images (NSImage.isTemplate / QIcon.setIsMask(True)) get the system's
+correct sizing, auto-tinting for light/dark + accent colours, and
+priority placement (don't get hidden behind the macOS 26 menu-bar
+overflow chevron). The renderer therefore draws the glyph as a black-
+on-transparent ALPHA MASK and flips the resulting QIcon to mask mode;
+macOS auto-tints from the alpha shape.
+
+Idle: bold "P" filling the canvas. Running: live "3/12" fraction.
 """
 
 from __future__ import annotations
@@ -15,30 +16,22 @@ from __future__ import annotations
 from typing import Optional
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QFont, QGuiApplication, QIcon, QPainter, QPixmap
+from PyQt6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
 
 
 class IconRenderer:
     def __init__(self, base_size: int = 22):
         self._base = base_size
 
-    def _fg(self) -> QColor:
-        """Near-black on a light menu bar, near-white on a dark one.
-
-        Uses `styleHints().colorScheme()` — the menu bar always follows
-        the system appearance even if individual apps force a theme
-        override. Values from handoff lines 162–164.
-        """
-        scheme = QGuiApplication.styleHints().colorScheme()
-        if scheme == Qt.ColorScheme.Dark:
-            return QColor(0xEC, 0xEC, 0xEC)
-        return QColor(0x1A, 0x1A, 0x1A)
-
     def _draw(self, text: str, pm: QPixmap) -> None:
+        # Template images on macOS are alpha-only — the OS ignores pen
+        # colour and only uses the alpha shape. Draw in opaque black so
+        # the glyph silhouette becomes the alpha mask exactly.
         pm.fill(QColor(0, 0, 0, 0))
         p = QPainter(pm)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setPen(self._fg())
+        p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+        p.setPen(QColor(0, 0, 0, 255))
         f = QFont()
         # Single-glyph idle ("P") wants a big point size so it fills the
         # menu-bar canvas; multi-char fractions ("12/40") need to fit too.
@@ -60,15 +53,18 @@ class IconRenderer:
         elif running and total > 0:
             text = f"{done}/{total}"
         else:
-            # Idle: always paint "P" — the bundled template PNG had a
-            # too-tiny glyph in too-much whitespace.
             text = "P"
 
+        # 1× (22 px) for non-Retina + 2× (44 px) for Retina menu bars.
         pm1 = QPixmap(self._base, self._base)
+        pm1.setDevicePixelRatio(1.0)
         self._draw(text, pm1)
         pm2 = QPixmap(self._base * 2, self._base * 2)
+        pm2.setDevicePixelRatio(2.0)
         self._draw(text, pm2)
 
         icon = QIcon(pm1)
         icon.addPixmap(pm2)
+        # macOS template image — system handles tint + sizing + overflow.
+        icon.setIsMask(True)
         return icon
