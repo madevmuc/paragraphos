@@ -31,12 +31,51 @@ class ShowsTab(QWidget):
         self.queue_listener = None  # set by MainWindow — receives queue signals
 
         layout = QVBoxLayout(self)
-        self.global_stats_label = QLabel()
-        self.global_stats_label.setStyleSheet(
-            "padding:8px 12px; background:palette(alternate-base); border-radius:4px;"
+
+        # All toolbars at the top so the action layout matches Queue +
+        # Failed (consolidated 2026-04-23). Two rows: always-on actions
+        # first, bulk-on-selection second (disabled until rows picked).
+        action_row = QHBoxLayout()
+        self.add_btn = QPushButton("Add Podcast / Show…")
+        self.add_btn.clicked.connect(self._add)
+        self.curated_btn = QPushButton("Add Episodes…")
+        self.curated_btn.clicked.connect(self._curated)
+        self.check_btn = QPushButton("Start / Check Now")
+        self.check_btn.clicked.connect(self._check)
+        self.pause_btn = QPushButton("Pause")
+        self.pause_btn.clicked.connect(self._pause)
+        self.stop_btn = QPushButton("Stop")
+        self.stop_btn.setEnabled(False)
+        self.stop_btn.clicked.connect(self._stop)
+        self.refresh_btn = QPushButton("Refresh")
+        self.refresh_btn.clicked.connect(self.refresh)
+        self.health_btn = QPushButton("Check feeds")
+        self.health_btn.clicked.connect(self._check_feed_health)
+        self.retry_failed_feeds_btn = QPushButton("Retry failed feeds")
+        self.retry_failed_feeds_btn.setToolTip(
+            "Clear backoff and immediately re-fetch every feed currently "
+            "marked fail. Useful after fixing a connectivity issue."
         )
-        self.global_stats_label.setTextFormat(Qt.TextFormat.RichText)
-        layout.addWidget(self.global_stats_label)
+        self.retry_failed_feeds_btn.clicked.connect(self._retry_failed_feeds)
+        self.rescan_btn = QPushButton("Rescan library")
+        self.rescan_btn.clicked.connect(self._rescan_library)
+        self.rescan_btn.setToolTip(
+            "Count words + durations for all existing transcripts (one-time)"
+        )
+        for b in (
+            self.add_btn,
+            self.curated_btn,
+            self.check_btn,
+            self.pause_btn,
+            self.stop_btn,
+            self.refresh_btn,
+            self.health_btn,
+            self.retry_failed_feeds_btn,
+            self.rescan_btn,
+        ):
+            action_row.addWidget(b)
+        action_row.addStretch()
+        layout.addLayout(action_row)
 
         # Bulk-action toolbar — operates on all currently selected rows.
         # Buttons are disabled until the table has a selection.
@@ -57,6 +96,13 @@ class ShowsTab(QWidget):
             bulk_row.addWidget(b)
         bulk_row.addStretch()
         layout.addLayout(bulk_row)
+
+        self.global_stats_label = QLabel()
+        self.global_stats_label.setStyleSheet(
+            "padding:8px 12px; background:palette(alternate-base); border-radius:4px;"
+        )
+        self.global_stats_label.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(self.global_stats_label)
 
         # Filter toolbar — summary label on the left, filter button + count
         # pill on the right. The legacy standalone QLineEdit search was
@@ -110,48 +156,10 @@ class ShowsTab(QWidget):
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
         layout.addWidget(self.table)
 
-        btns = QHBoxLayout()
-        self.add_btn = QPushButton("Add Podcast / Show…")
-        self.add_btn.clicked.connect(self._add)
-        self.curated_btn = QPushButton("Add Episodes…")
-        self.curated_btn.clicked.connect(self._curated)
-        self.check_btn = QPushButton("Start / Check Now")
-        self.check_btn.clicked.connect(self._check)
-        self.pause_btn = QPushButton("Pause")
-        self.pause_btn.clicked.connect(self._pause)
-        self.stop_btn = QPushButton("Stop")
-        self.stop_btn.setEnabled(False)
-        self.stop_btn.clicked.connect(self._stop)
-        self.refresh_btn = QPushButton("Refresh")
-        self.refresh_btn.clicked.connect(self.refresh)
-        self.health_btn = QPushButton("Check feeds")
-        self.health_btn.clicked.connect(self._check_feed_health)
-        self.retry_failed_feeds_btn = QPushButton("Retry failed feeds")
-        self.retry_failed_feeds_btn.setToolTip(
-            "Clear backoff and immediately re-fetch every feed currently "
-            "marked fail. Useful after fixing a connectivity issue."
-        )
-        self.retry_failed_feeds_btn.clicked.connect(self._retry_failed_feeds)
-        self.rescan_btn = QPushButton("Rescan library")
-        self.rescan_btn.clicked.connect(self._rescan_library)
-        self.rescan_btn.setToolTip(
-            "Count words + durations for all existing transcripts (one-time)"
-        )
-        for b in (
-            self.add_btn,
-            self.curated_btn,
-            self.check_btn,
-            self.pause_btn,
-            self.stop_btn,
-            self.refresh_btn,
-            self.health_btn,
-            self.retry_failed_feeds_btn,
-            self.rescan_btn,
-        ):
-            btns.addWidget(b)
-        btns.addStretch()
-        layout.addLayout(btns)
-
+        # (Action + bulk button rows live at the top of the tab — see
+        # the consolidation block above. The bottom button row that
+        # used to live here was removed 2026-04-23 so Shows / Queue /
+        # Failed all keep their toolbars in the same screen position.)
         self.refresh()
 
     def _open_details(self, index) -> None:
