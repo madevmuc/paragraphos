@@ -123,3 +123,78 @@ def test_slug_for_url_uses_uploader_when_available():
     assert slug_for_url("https://vimeo.com/12345", uploader="Acme Films") == "acme-films"
     assert slug_for_url("https://example.com/x", uploader="") == "web"
     assert slug_for_url("https://example.com/x", uploader=None) == "web"
+
+
+def test_has_audio_stream_true_for_audio_file(monkeypatch):
+    from core import local_source
+
+    def fake_run(args, **kw):
+        class R:
+            returncode = 0
+            stdout = '{"streams":[{"codec_type":"audio","codec_name":"aac"}]}'
+            stderr = ""
+
+        return R()
+
+    monkeypatch.setattr(local_source.subprocess, "run", fake_run)
+    assert local_source.has_audio_stream(Path("/nonexistent.mp4")) is True
+
+
+def test_has_audio_stream_false_for_silent_video(monkeypatch):
+    from core import local_source
+
+    def fake_run(args, **kw):
+        class R:
+            returncode = 0
+            stdout = '{"streams":[{"codec_type":"video","codec_name":"h264"}]}'
+            stderr = ""
+
+        return R()
+
+    monkeypatch.setattr(local_source.subprocess, "run", fake_run)
+    assert local_source.has_audio_stream(Path("/nonexistent.mp4")) is False
+
+
+def test_has_audio_stream_false_on_ffprobe_failure(monkeypatch):
+    from core import local_source
+
+    def fake_run(args, **kw):
+        class R:
+            returncode = 1
+            stdout = ""
+            stderr = "Invalid data found"
+
+        return R()
+
+    monkeypatch.setattr(local_source.subprocess, "run", fake_run)
+    assert local_source.has_audio_stream(Path("/nonexistent.mp4")) is False
+
+
+def test_duration_seconds_reads_format_duration(monkeypatch):
+    from core import local_source
+
+    def fake_run(args, **kw):
+        class R:
+            returncode = 0
+            stdout = '{"format":{"duration":"183.42"}}'
+            stderr = ""
+
+        return R()
+
+    monkeypatch.setattr(local_source.subprocess, "run", fake_run)
+    assert local_source.duration_seconds(Path("/nonexistent.mp4")) == 183
+
+
+def test_duration_seconds_returns_none_on_failure(monkeypatch):
+    from core import local_source
+
+    def fake_run(args, **kw):
+        class R:
+            returncode = 1
+            stdout = ""
+            stderr = ""
+
+        return R()
+
+    monkeypatch.setattr(local_source.subprocess, "run", fake_run)
+    assert local_source.duration_seconds(Path("/nonexistent.mp4")) is None

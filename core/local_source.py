@@ -8,7 +8,10 @@ the existing ``shows → episodes`` model via synthetic shows. See
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
+import shutil
+import subprocess
 from pathlib import Path
 
 from core.sanitize import slugify
@@ -89,3 +92,81 @@ def slug_for_url(url: str, *, uploader: str | None) -> str:
     if uploader:
         return slugify(uploader)
     return "web"
+
+
+def _ffprobe_bin() -> str:
+    """Find ``ffprobe``. Mirrors core.transcriber._locate_ffmpeg_dir so a
+    .app launch with a bare PATH still finds Homebrew ffprobe."""
+    found = shutil.which("ffprobe")
+    if found:
+        return found
+    for p in ("/opt/homebrew/bin/ffprobe", "/usr/local/bin/ffprobe"):
+        if Path(p).exists():
+            return p
+    return "/opt/homebrew/bin/ffprobe"  # surface via existence check at call time
+
+
+def has_audio_stream(path: Path) -> bool:
+    """True if ffprobe reports at least one ``audio`` stream on ``path``.
+    Returns False on any ffprobe error (missing binary, corrupt file,
+    unreadable path) — caller turns that into a user-visible Failed
+    reason without crashing."""
+    try:
+        r = subprocess.run(
+            [
+                _ffprobe_bin(),
+                "-v",
+                "error",
+                "-show_streams",
+                "-of",
+                "json",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    if r.returncode != 0 or not r.stdout:
+        return False
+    try:
+        data = json.loads(r.stdout)
+    except json.JSONDecodeError:
+        return False
+    for s in data.get("streams", []):
+        if s.get("codec_type") == "audio":
+            return True
+    return False
+
+
+def duration_seconds(path: Path) -> int | None:
+    """Return the media's duration in whole seconds, or None if ffprobe
+    can't tell. Used for the over-cap guard and for populating
+    ``episodes.duration_sec``."""
+    try:
+        r = subprocess.run(
+            [
+                _ffprobe_bin(),
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "json",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if r.returncode != 0 or not r.stdout:
+        return None
+    try:
+        data = json.loads(r.stdout)
+        dur = float(data.get("format", {}).get("duration", 0))
+        return int(dur) if dur > 0 else None
+    except (json.JSONDecodeError, ValueError, TypeError):
+        return None
