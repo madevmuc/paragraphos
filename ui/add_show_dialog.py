@@ -1196,16 +1196,32 @@ class AddShowDialog(QDialog):
             videos = [v for v in videos if (v.get("timestamp") or 0) >= cutoff]
 
         # Build a manifest the existing _do_save funnel understands.
+        # Date sourcing: yt-dlp --flat-playlist returns `timestamp`
+        # (Unix epoch seconds), not `upload_date`. Convert to ISO so
+        # build_slug doesn't fall back to 1970-01-01 in the filename.
+        import time as _time
+
         manifest = []
         for v in videos:
             vid = v.get("id") or v.get("url") or ""
             if not vid:
                 continue
+            ts = v.get("timestamp") or 0
+            pub = ""
+            if ts:
+                pub = _time.strftime("%Y-%m-%d", _time.gmtime(int(ts)))
+            elif v.get("upload_date"):
+                # Some yt-dlp paths emit YYYYMMDD instead — normalise.
+                ud = str(v["upload_date"])
+                if len(ud) == 8 and ud.isdigit():
+                    pub = f"{ud[:4]}-{ud[4:6]}-{ud[6:8]}"
+                else:
+                    pub = ud
             manifest.append(
                 {
                     "guid": vid,
                     "title": v.get("title") or vid,
-                    "pubDate": v.get("upload_date") or "",
+                    "pubDate": pub,
                     # YouTube videos have no MP3 enclosure — leave blank;
                     # the YouTube pipeline branch resolves the source itself.
                     "mp3_url": f"https://www.youtube.com/watch?v={vid}",

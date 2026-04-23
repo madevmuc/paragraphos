@@ -9,7 +9,13 @@ FIX = Path(__file__).parent / "fixtures"
 
 
 @respx.mock
-def test_scrape_og_audio():
+def test_scrape_og_audio(monkeypatch):
+    # _is_private_ip does a real DNS lookup; on networks where
+    # cdn.podigee.com resolves to a private IP (custom resolvers,
+    # filtered DNS, captive portal) the SSRF guard fires before respx
+    # can mock the call. Mock _is_private_ip itself to keep this test
+    # network-independent.
+    monkeypatch.setattr("core.security._is_private_ip", lambda host: False)
     respx.head("https://example.com/ep42").respond(200, headers={"content-type": "text/html"})
     respx.get("https://example.com/ep42").respond(
         200,
