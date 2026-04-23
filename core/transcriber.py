@@ -29,7 +29,52 @@ def _locate_whisper_bin() -> str:
     return "/opt/homebrew/bin/whisper-cli"
 
 
+def _locate_ffmpeg_dir() -> str | None:
+    """Return the directory containing ``ffmpeg``, or None.
+
+    Whisper-cli shells out to ffmpeg internally for non-WAV inputs
+    (mp3, m4a, mp4 podcasts). When Paragraphos.app is launched from
+    /Applications its PATH is ``/usr/bin:/bin`` only — Homebrew binaries
+    are invisible. With ffmpeg missing, whisper-cli silently exits 0
+    with no transcript output for any non-WAV file, manifesting as a
+    "expected outputs missing" TranscriptionError ~700 ms after launch.
+    Surfacing the discovered directory via the subprocess env's PATH
+    fixes that without forcing the user to re-shim their shell.
+    """
+    found = shutil.which("ffmpeg")
+    if found:
+        return str(Path(found).parent)
+    for p in ("/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"):
+        if Path(p).exists():
+            return str(Path(p).parent)
+    return None
+
+
 WHISPER_BIN = _locate_whisper_bin()
+_FFMPEG_DIR = _locate_ffmpeg_dir()
+
+
+def _whisper_subprocess_env() -> dict[str, str] | None:
+    """Build the ``env=`` dict for whisper-cli subprocess calls.
+
+    Returns ``None`` (= inherit os.environ) when no augmentation is
+    needed — keeps the existing test suite stable, since most tests
+    mock subprocess.run and don't care about env. Returns a dict with
+    the ffmpeg directory prepended to PATH whenever we know where
+    ffmpeg lives but it isn't already on the inherited PATH.
+    """
+    import os
+
+    if _FFMPEG_DIR is None:
+        return None
+    inherited_path = os.environ.get("PATH", "")
+    if _FFMPEG_DIR in inherited_path.split(":"):
+        return None
+    env = os.environ.copy()
+    env["PATH"] = f"{_FFMPEG_DIR}:{inherited_path}" if inherited_path else _FFMPEG_DIR
+    return env
+
+
 MODEL_PATH = Path.home() / ".config" / "open-wispr" / "models" / "ggml-large-v3-turbo.bin"
 LANGUAGE = "de"
 THREADS = "6"
@@ -197,6 +242,7 @@ def transcribe_episode(
                     capture_output=True,
                     text=True,
                     timeout=timeout_sec,
+                    env=_whisper_subprocess_env(),
                 )
             except subprocess.TimeoutExpired as te:
                 raise TranscriptionError(
@@ -257,6 +303,7 @@ def transcribe_episode(
                             stderr=subprocess.PIPE,
                             text=True,
                             timeout=timeout_sec,
+                            env=_whisper_subprocess_env(),
                         )
                     except subprocess.TimeoutExpired as te:
                         raise TranscriptionError(

@@ -147,7 +147,14 @@ class ParagraphosApp(QObject):
                         whisper_version = line[0][:80]
                 except Exception:
                     pass
-            ffmpeg_present = bool(shutil.which("ffmpeg"))
+            # Use the same locator the transcriber's PATH-augmenter uses,
+            # so the fingerprint matches whisper-cli's actual visibility
+            # (a .app launched from /Applications has /usr/bin:/bin only;
+            # shutil.which alone misses the Homebrew copy that the
+            # subprocess env hands to whisper-cli).
+            from core.transcriber import _locate_ffmpeg_dir as _ff_dir
+
+            ffmpeg_present = _ff_dir() is not None
 
             # Hardware-aware recommendations vs. current settings — log any
             # mismatch so support tickets show 'is the user on the optimal
