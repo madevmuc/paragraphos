@@ -97,6 +97,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Paragraphos")
+        self.setAcceptDrops(True)
         self.ctx = AppContext.load(DATA_DIR)
 
         central = QWidget()
@@ -186,8 +187,24 @@ class MainWindow(QMainWindow):
         self.about_pane = AboutPane(self)
         # Let ShowsTab forward queue signals to the queue tab.
         self.shows_tab.queue_listener = self.queue_tab  # type: ignore[attr-defined]
+
+        # Shows page composition: DropZone card above the ShowsTab. Kept in
+        # a plain container so the stack only sees one widget per page.
+        from ui.drop_zone import DropZone
+
+        self.drop_zone = DropZone(
+            state=self.ctx.state,
+            watchlist_path=self.ctx.data_dir / "watchlist.yaml",
+            max_duration_hours=self.ctx.settings.local_max_duration_hours,
+        )
+        shows_page = QWidget()
+        shows_layout = QVBoxLayout(shows_page)
+        shows_layout.setContentsMargins(0, 0, 0, 0)
+        shows_layout.addWidget(self.drop_zone)
+        shows_layout.addWidget(self.shows_tab, stretch=1)
+
         for w in (
-            self.shows_tab,
+            shows_page,
             self.queue_tab,
             self.failed_tab,
             self.library_tab,
@@ -316,6 +333,15 @@ class MainWindow(QMainWindow):
         h = int(avail.height() * 0.90)
         self.resize(w, h)
         self.move(avail.x() + (avail.width() - w) // 2, avail.y() + (avail.height() - h) // 2)
+
+    def dragEnterEvent(self, event):  # noqa: N802 — Qt override
+        md = event.mimeData()
+        if md.hasUrls() or md.hasText():
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):  # noqa: N802 — Qt override
+        # Delegate to the Shows-page drop zone so behaviour matches.
+        self.drop_zone.dropEvent(event)
 
     def closeEvent(self, event) -> None:  # noqa: N802 — Qt override
         from PyQt6.QtCore import QSettings
