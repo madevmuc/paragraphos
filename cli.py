@@ -947,6 +947,50 @@ def cmd_ingest_folder(args: argparse.Namespace) -> int:
 
 
 # ────────────────────────────────────────────────────────────────────────
+# watch-folder management
+# ────────────────────────────────────────────────────────────────────────
+
+
+def cmd_watch_add(args: argparse.Namespace) -> int:
+    """Enable the watch-folder source and set the root path. v1.3 supports
+    a single root via Settings.watch_folder_root; multi-root is follow-up."""
+    s = _settings()
+    s.watch_folder_enabled = True
+    s.watch_folder_root = str(Path(args.path).expanduser().resolve())
+    s.save(DATA / "settings.yaml")
+    print(f"watch folder: {s.watch_folder_root} (enabled)")
+    return 0
+
+
+def cmd_watch_remove(_args: argparse.Namespace) -> int:
+    """Disable the watch-folder source. The root path is preserved on disk
+    so re-enabling with `watch add` is not required if the path is unchanged."""
+    s = _settings()
+    s.watch_folder_enabled = False
+    s.save(DATA / "settings.yaml")
+    print("watch folder disabled")
+    return 0
+
+
+def cmd_watch_list(args: argparse.Namespace) -> int:
+    """Show current watch-folder config (enabled / root / post-action /
+    max-duration gate)."""
+    s = _settings()
+    payload = {
+        "enabled": s.watch_folder_enabled,
+        "root": str(Path(s.watch_folder_root).expanduser()),
+        "post": s.watch_folder_post,
+        "max_duration_hours": s.local_max_duration_hours,
+    }
+    _emit(
+        payload,
+        as_json=getattr(args, "json", False),
+        human=f"{'on' if payload['enabled'] else 'off':3} {payload['root']}",
+    )
+    return 0
+
+
+# ────────────────────────────────────────────────────────────────────────
 # settings management
 # ────────────────────────────────────────────────────────────────────────
 
@@ -1145,6 +1189,20 @@ def main() -> int:
         help="only scan the top-level directory",
     )
     s_ifo.set_defaults(fn=cmd_ingest_folder)
+
+    # — watch-folder source
+    s_w = sub.add_parser("watch", help="manage the watch-folder source")
+    w_sub = s_w.add_subparsers(dest="watch_cmd", required=True)
+
+    s_wa = w_sub.add_parser("add", help="enable watching + set the root path")
+    s_wa.add_argument("path")
+    s_wa.set_defaults(fn=cmd_watch_add)
+
+    w_sub.add_parser("remove", help="disable the watcher").set_defaults(fn=cmd_watch_remove)
+
+    s_wl = w_sub.add_parser("list", help="show watch-folder config")
+    s_wl.add_argument("--json", action="store_true")
+    s_wl.set_defaults(fn=cmd_watch_list)
 
     args = p.parse_args()
     return args.fn(args)
