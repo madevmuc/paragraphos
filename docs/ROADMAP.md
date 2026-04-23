@@ -1,9 +1,57 @@
-# Paragraphos Roadmap — v0.5 → v1.0
+# Paragraphos Roadmap
 
-> **Status:** v1.0 shipped 2026-04-21 — this roadmap is now historical.
+> **Current status:** v1.3.0 shipped 2026-04-23. The v0.5→v1.0 plan
+> below is **historical** — kept for reference. The active forward
+> backlog is in **§ "Forward roadmap (post-v1.3)"** at the top of this
+> file.
+
+---
+
+## Forward roadmap (post-v1.3)
+
+### Shipped recently
+| Version    | Date       | Theme                                                 |
+|------------|------------|-------------------------------------------------------|
+| **v1.3.0** | 2026-04-23 | CLI parity for LLM control, feed-health diagnosis,    |
+|            |            | parallel transcribe pool, NAT64 SSRF unwrap, ffmpeg   |
+|            |            | PATH augmentation, queue/shows toolbar consolidation. |
+| v1.2.0     | 2026-04-22 | YouTube ingestion (channels + captions-first).        |
+| v1.1.x     | 2026-04-21 | Tray icon polish, hero card, Library page, offline    |
+|            |            | handling, resizable columns, Workspace rename.        |
+| v1.0.0     | 2026-04-21 | Initial public ship.                                  |
+
+### Next up — candidates (not committed yet)
+
+These have design docs in `docs/plans/` but no implementation yet.
+Pick by user demand + how much they unlock.
+
+| Theme                              | Status        | Notes                                              |
+|------------------------------------|---------------|----------------------------------------------------|
+| **Universal ingest** (files / URLs / watch folder / folder import) | Design ready  | `docs/plans/2026-04-23-universal-ingest*.md` — 14-task TDD plan. |
+| **FTS5 full-text search** across transcripts                       | Not started   | Schema + index design needed; SQLite FTS5 fits the existing state.sqlite. |
+| **OPML import / export**                                           | Not started   | One-way export for backup, two-way for podcast-app interop. |
+| **ID3 chapters in transcripts**                                    | Not started   | Hyperlinked chapter index in the .md per episode.  |
+| **Smart playlists** (saved filter)                                 | Not started   | Reuse the Shows-tab filter popover state.          |
+| **Speaker diarization**                                            | Not started   | tinydiarize or pyannote — adds segments-per-speaker. |
+| **Webhook on episode completion**                                  | Not started   | Trigger external automations (Zapier / shortcuts).|
+| **whisper.cpp stream-mode**                                        | Not started   | Incremental partial-transcript display.            |
+| **LLM summarisation** (Ollama-local or API)                        | Not started   | Per-episode summary + entity extraction.           |
+| **Code signing + notarisation**                                    | Not started   | Drops the right-click→Open Gatekeeper hop.         |
+
+### Standing tech debt
+- `parallel_transcribe` shared `done_idx` counter — works, but the
+  emitted signal arrival order is non-deterministic; UI counts are
+  monotonic but the per-episode rows update slightly out of order.
+- LogDock filter — currently no level/source filter, can get noisy
+  during a check pass with parallel workers.
+
+---
+
+## Historic — Paragraphos Roadmap v0.5 → v1.0
+
+> v1.0 shipped 2026-04-21. The block below is preserved for context.
 > See `docs/plans/2026-04-20-ship-v1.md` for the execution plan that
-> closed it out, and `CHANGELOG.md` for the v1.0.0 entry. Future work
-> is tracked in GitHub issues.
+> closed it out, and `CHANGELOG.md` for the v1.0.0 entry.
 
 > **For Claude:** REQUIRED SUB-SKILL: `superpowers:executing-plans`.
 

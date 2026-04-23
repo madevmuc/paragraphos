@@ -1,5 +1,97 @@
 # Paragraphos Changelog
 
+## v1.3.0 — 2026-04-23 (CLI parity, feed-health diagnosis, parallel transcribe)
+
+### Added — Headless / agent control
+- **Full GUI parity in the CLI** (23 commands). Inspection commands
+  (`status`, `shows`, `show <slug>`, `episodes <slug>`, `failed`,
+  `settings`, `feed-health`) accept `--json` for parseable output.
+  Queue control (`pause`, `resume`, `stop`, `clear-queue`,
+  `priority <guid> <N>`, `run-next <guid>`, `retranscribe <guid>`,
+  `retry-failed`). Show admin (`enable`, `disable`, `remove`,
+  `set <slug> key=value`). Feed retry (`retry-feed`,
+  `retry-all-feeds`). Settings (`set-setting <key> <value>`).
+- **Agent prompt** in Settings → Automation & remote control rewritten
+  to enumerate every command + example task chains.
+
+### Added — Feed-health diagnosis
+- **Categorised feed failures** (`dns / timeout / tls / forbidden / gone /
+  server / malformed / redirect_loop / ssrf / too_large / other`) with
+  per-category recommendation. Surfaced in the Shows-tab pill
+  (`fail · dns`), the new Show Details "Feed health" panel (full
+  message, timestamp, backoff state, suggested fix, **Retry now**
+  button), and the CLI (`feed-health --json` carries the full payload).
+- **Retry failed feeds** toolbar button on the Shows tab clears
+  backoff for every fail-marked feed and re-fetches synchronously.
+
+### Added — Performance + reliability
+- **Parallel transcribe pool** — `parallel_transcribe` setting now
+  actually spawns N `_TranscribeWorker` threads sharing the same
+  download queue + a lock-guarded `done_idx` counter. Pre-v1.3 the
+  setting was read everywhere but always ran one worker.
+- **ffmpeg PATH augmentation** — Paragraphos.app launched from
+  /Applications has PATH=/usr/bin:/bin only, so whisper-cli's internal
+  ffmpeg call failed silently on m4a / mp4 podcast inputs (`exit 0,
+  no transcript`). Locator finds Homebrew ffmpeg and prepends its
+  directory to whisper-cli's subprocess env.
+- **NAT64 / IPv4-mapped IPv6 SSRF unwrap.** Resolvers on macOS
+  DNS64 LANs synthesise addresses in `64:ff9b::/96` (RFC 6052) and
+  `::ffff:0:0/96` (RFC 4291); both classify as `is_reserved=True` so
+  `_is_private_ip` rejected every public host as "private-network".
+  Now unwraps the embedded IPv4 and screens that. Fixed a wave of
+  feed failures users were silently hitting.
+- **Persisted `mp3_path`** in state.sqlite so the orphan-recovery
+  path (download crash → next-launch retry) reads the authoritative
+  on-disk filename instead of guessing the slug, with a glob fallback
+  for legacy rows.
+- **Slot exception handler** (`sys.excepthook`) — uncaught Python
+  exceptions inside Qt slots now log + show a QMessageBox instead of
+  PyQt6's default `qFatal` → SIGABRT.
+- **Connection probe + auto-resume** — already shipped earlier but
+  refined: offline state no longer pauses the queue; downloaded items
+  keep transcribing while feed-fetch is offline. Network-failed
+  episodes from the last 24h re-queue on reconnect.
+
+### UX
+- **Queue tab toolbar consolidated to the top** (Start / Pause / Stop /
+  Refresh / Remove all). Hero card no longer carries duplicate
+  Pause/Stop buttons. Status column header cycles
+  priority → asc → desc → priority on click. Default sort follows
+  pipeline stage (transcribing → downloading → downloaded → pending).
+- **Shows tab toolbar at the top** (matches Queue + Failed). Bulk-on-
+  selection row beneath. New "Retry failed feeds" button.
+- **Settings value widgets** (QSpinBox / QComboBox / QSlider) ignore
+  scroll-wheel events so users don't bump values while scrolling.
+- **Library page** (sidebar entry) — tree | list | preview view of all
+  transcripts on disk.
+- **Workspace** sidebar group rename (was "Library").
+- **Persistent hero card** (idle = grey ring + dashes; active = colored).
+
+### Observability
+- **Startup fingerprint** — single log line per launch with version,
+  macOS, Python, CPU/RAM, whisper-cli + yt-dlp + ffmpeg versions, and
+  every user-tunable setting. Replays into the in-app LogDock on first
+  window-open so users see it without tailing the file.
+- **Humanised exit codes** in TranscriptionError messages
+  (`whisper-cli exit -9 (killed (SIGKILL — usually the Stop button's
+  force-kill, or macOS OOM))`).
+
+### Fixed
+- ShowDetailsDialog `Retry now` no longer crashes the app on success
+  (attribute aliasing in the rebuild path).
+- `feed-health` for old podcast feeds with `.mp4` / `.m4a` enclosures
+  no longer silently fails when ffmpeg is missing from the .app PATH.
+- Resizable header crash on initial layout (sectionResized burst).
+
+### Internal
+- New modules: `core/feed_errors.py`,
+  `tests/test_cli_parser.py`, `tests/test_feed_errors.py`,
+  `tests/test_show_details_feed_health_panel.py`,
+  `tests/test_transcriber_ffmpeg_path.py`.
+- Tests: 99 → 386 passing.
+
+---
+
 ## v1.2.0 — 2026-04-22 (YouTube ingestion)
 
 ### Added
