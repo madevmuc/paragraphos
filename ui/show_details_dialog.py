@@ -178,6 +178,7 @@ class ShowDetailsDialog(QDialog):
 
         root.addLayout(self._build_header())
         root.addLayout(self._build_form())
+        root.addWidget(self._build_feed_health_panel())
         root.addWidget(self._build_advanced_group())
         root.addWidget(self._build_episodes_table(), 1)
         root.addLayout(self._build_footer())
@@ -492,6 +493,124 @@ class ShowDetailsDialog(QDialog):
             return f"{p} pending · {fa} failed"
         except Exception:
             return "—"
+
+    # ── feed health ──────────────────────────────────────────
+
+    def _build_feed_health_panel(self) -> QWidget:
+        """Compact 'Feed health' panel: pill + categorised last error +
+        backoff state + per-category recommendation + Retry-now button.
+        Hidden when feed_health is 'ok' or 'unknown' so a healthy show
+        doesn't carry a permanent 'all is well' badge."""
+        from core.feed_errors import label as _label
+        from core.feed_errors import recommendation as _rec
+
+        state = self.ctx.state
+        slug = self.slug
+        health = state.get_meta(f"feed_health:{slug}") or "unknown"
+        cat = state.get_meta(f"feed_fail_category:{slug}") or ""
+        msg = state.get_meta(f"feed_fail_message:{slug}") or ""
+        at = state.get_meta(f"feed_fail_at:{slug}") or ""
+        backoff_until = state.get_meta(f"feed_backoff_until:{slug}") or ""
+        fail_count = int(state.get_meta(f"feed_fail_count:{slug}") or 0)
+
+        container = QWidget()
+        self._feed_health_container = container
+        if health != "fail":
+            container.setVisible(False)
+            return container
+
+        _t = current_tokens()
+        container.setStyleSheet(
+            f"QWidget#feedHealthPanel {{ background: {_t['surface_alt']}; "
+            f"border: 1px solid {_t['line']}; border-radius: 6px; }}"
+        )
+        container.setObjectName("feedHealthPanel")
+
+        v = QVBoxLayout(container)
+        v.setContentsMargins(12, 10, 12, 10)
+        v.setSpacing(6)
+
+        title_row = QHBoxLayout()
+        title_lbl = QLabel("Feed health")
+        f = QFont()
+        f.setBold(True)
+        title_lbl.setFont(f)
+        title_row.addWidget(title_lbl)
+        pill_text = f"fail · {_label(cat)}" if cat else "fail"
+        pill = Pill(pill_text, kind="fail")
+        title_row.addWidget(pill)
+        title_row.addStretch()
+        retry_btn = QPushButton("Retry now")
+        retry_btn.setToolTip("Clear backoff state and immediately re-fetch this feed.")
+        retry_btn.clicked.connect(self._retry_feed_now)
+        title_row.addWidget(retry_btn)
+        v.addLayout(title_row)
+
+        # Detail lines
+        if at:
+            lbl = QLabel(f"<b>When:</b> {at}")
+            lbl.setStyleSheet("font-size: 12px;")
+            v.addWidget(lbl)
+        if msg:
+            lbl = QLabel(f"<b>Message:</b> {msg[:300]}")
+            lbl.setStyleSheet("font-size: 12px;")
+            lbl.setWordWrap(True)
+            v.addWidget(lbl)
+        if fail_count and backoff_until:
+            lbl = QLabel(
+                f"<b>Backoff:</b> {fail_count} consecutive fails — parked until {backoff_until}"
+            )
+            lbl.setStyleSheet("font-size: 12px;")
+            v.addWidget(lbl)
+        if cat:
+            tip = QLabel(f"<b>Suggested fix:</b> {_rec(cat)}")
+            tip.setStyleSheet(f"color: {_t['ink_3']}; font-size: 12px;")
+            tip.setWordWrap(True)
+            v.addWidget(tip)
+        return container
+
+    def _retry_feed_now(self) -> None:
+        """Clear backoff for this show + re-fetch synchronously. Updates
+        the panel in place (rebuilds via show_dialog refresh would be
+        overkill)."""
+        from datetime import datetime as _dt
+        from datetime import timezone as _tz
+
+        from core.feed_errors import categorize
+        from core.rss import build_manifest
+
+        state = self.ctx.state
+        for k in (
+            "feed_fail_count",
+            "feed_backoff_until",
+            "feed_fail_category",
+            "feed_fail_message",
+            "feed_fail_at",
+        ):
+            state.set_meta(f"{k}:{self.slug}", "0" if k.endswith("count") else "")
+        try:
+            build_manifest(self.show_.rss, timeout=30)
+        except Exception as e:  # noqa: BLE001
+            state.set_meta(f"feed_health:{self.slug}", "fail")
+            state.set_meta(f"feed_fail_category:{self.slug}", categorize(e))
+            state.set_meta(f"feed_fail_message:{self.slug}", str(e)[:500])
+            state.set_meta(f"feed_fail_at:{self.slug}", _dt.now(_tz.utc).isoformat())
+            QMessageBox.warning(
+                self,
+                "Retry failed",
+                f"Feed fetch failed:\n\n{e}",
+            )
+            return
+        state.set_meta(f"feed_health:{self.slug}", "ok")
+        QMessageBox.information(self, "Retry succeeded", "Feed fetch succeeded — backoff cleared.")
+        # Rebuild the panel so the user sees the cleared state immediately.
+        new_panel = self._build_feed_health_panel()
+        old = self._feed_health_container
+        parent_layout = old.parentWidget().layout()
+        idx = parent_layout.indexOf(old)
+        parent_layout.removeWidget(old)
+        old.deleteLater()
+        parent_layout.insertWidget(idx, new_panel)
 
     # ── advanced (collapsed by default) ──────────────────────
 

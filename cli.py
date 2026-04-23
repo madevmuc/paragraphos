@@ -460,12 +460,19 @@ def cmd_show(args: argparse.Namespace) -> int:
             "FROM episodes WHERE show_slug=?",
             (args.slug,),
         ).fetchone()
+    from core.feed_errors import recommendation as _rec
+
+    cat = state.get_meta(f"feed_fail_category:{args.slug}") or ""
     payload = {
         **show.model_dump(),
         "counts": {k: cnt[k] or 0 for k in cnt.keys()},
         "feed_health": state.get_meta(f"feed_health:{args.slug}") or "unknown",
         "feed_fail_count": int(state.get_meta(f"feed_fail_count:{args.slug}") or 0),
         "feed_backoff_until": state.get_meta(f"feed_backoff_until:{args.slug}") or "",
+        "feed_fail_category": cat,
+        "feed_fail_message": state.get_meta(f"feed_fail_message:{args.slug}") or "",
+        "feed_fail_at": state.get_meta(f"feed_fail_at:{args.slug}") or "",
+        "feed_fail_recommendation": _rec(cat) if cat else "",
     }
     if args.json:
         _emit(payload, as_json=True, human="")
@@ -486,6 +493,13 @@ def cmd_show(args: argparse.Namespace) -> int:
         print(f"feed_fail_count: {payload['feed_fail_count']}")
         if payload["feed_backoff_until"]:
             print(f"feed_backoff_until: {payload['feed_backoff_until']}")
+    if cat:
+        print(f"feed_fail_category: {cat}")
+        if payload["feed_fail_at"]:
+            print(f"feed_fail_at:   {payload['feed_fail_at']}")
+        if payload["feed_fail_message"]:
+            print(f"feed_fail_message: {payload['feed_fail_message'][:200]}")
+        print(f"recommendation: {payload['feed_fail_recommendation']}")
     print("counts:")
     for k, v in payload["counts"].items():
         print(f"  {k:14}{v}")
@@ -521,18 +535,27 @@ def cmd_settings(args: argparse.Namespace) -> int:
 
 
 def cmd_feed_health(args: argparse.Namespace) -> int:
-    """Per-show feed health (last known + backoff window)."""
+    """Per-show feed health (last known + backoff window + categorised
+    last error + suggested fix). Use --json if you want the
+    `recommendation` field too — the human view trims to one line."""
+    from core.feed_errors import label, recommendation
+
     state = _state()
     wl = _watchlist()
     targets = [s for s in wl.shows if not args.show or s.slug == args.show]
     out = []
     for s in targets:
+        cat = state.get_meta(f"feed_fail_category:{s.slug}") or ""
         out.append(
             {
                 "slug": s.slug,
                 "feed_health": state.get_meta(f"feed_health:{s.slug}") or "unknown",
                 "fail_count": int(state.get_meta(f"feed_fail_count:{s.slug}") or 0),
                 "backoff_until": state.get_meta(f"feed_backoff_until:{s.slug}") or "",
+                "category": cat,
+                "message": state.get_meta(f"feed_fail_message:{s.slug}") or "",
+                "failed_at": state.get_meta(f"feed_fail_at:{s.slug}") or "",
+                "recommendation": recommendation(cat) if cat else "",
             }
         )
     if args.json:
@@ -541,9 +564,16 @@ def cmd_feed_health(args: argparse.Namespace) -> int:
     if not out:
         print("(no shows)")
         return 0
-    print(f"{'slug':28} {'health':10} {'fails':>5}  backoff_until")
+    print(f"{'slug':28} {'health':10} {'category':14} {'fails':>5}  backoff_until")
     for r in out:
-        print(f"{r['slug']:28} {r['feed_health']:10} {r['fail_count']:>5}  {r['backoff_until']}")
+        cat_pretty = label(r["category"]) if r["category"] else ""
+        print(
+            f"{r['slug']:28} {r['feed_health']:10} {cat_pretty:14} "
+            f"{r['fail_count']:>5}  {r['backoff_until']}"
+        )
+        if r["message"] and args.show:
+            print(f"  msg: {r['message'][:120]}")
+            print(f"  fix: {r['recommendation']}")
     return 0
 
 
@@ -771,6 +801,25 @@ def _clear_feed_backoff(state: StateStore, slug: str) -> None:
     state.set_meta(f"feed_fail_count:{slug}", "0")
     state.set_meta(f"feed_backoff_until:{slug}", "")
     state.set_meta(f"feed_health:{slug}", "unknown")
+    state.set_meta(f"feed_fail_category:{slug}", "")
+    state.set_meta(f"feed_fail_message:{slug}", "")
+    state.set_meta(f"feed_fail_at:{slug}", "")
+
+
+def _record_feed_failure(state: StateStore, slug: str, exc: BaseException) -> None:
+    """Persist failure detail for the manual retry-feed/retry-all-feeds
+    paths. Mirrors what core.backoff.on_failure does without the
+    backoff timer (the user just asked us to retry — don't punish them
+    by re-arming a 7-day pause)."""
+    from datetime import datetime as _dt
+    from datetime import timezone as _tz
+
+    from core.feed_errors import categorize
+
+    state.set_meta(f"feed_health:{slug}", "fail")
+    state.set_meta(f"feed_fail_category:{slug}", categorize(exc))
+    state.set_meta(f"feed_fail_message:{slug}", str(exc)[:500])
+    state.set_meta(f"feed_fail_at:{slug}", _dt.now(_tz.utc).isoformat())
 
 
 def cmd_retry_feed(args: argparse.Namespace) -> int:
@@ -787,7 +836,7 @@ def cmd_retry_feed(args: argparse.Namespace) -> int:
     try:
         manifest = build_manifest(show.rss, timeout=30)
     except Exception as e:
-        state.set_meta(f"feed_health:{args.slug}", "fail")
+        _record_feed_failure(state, args.slug, e)
         print(f"  fetch failed: {e}")
         return 1
     state.set_meta(f"feed_health:{args.slug}", "ok")
@@ -822,7 +871,7 @@ def cmd_retry_all_feeds(_args: argparse.Namespace) -> int:
         try:
             manifest = build_manifest(show.rss, timeout=30)
         except Exception as e:
-            state.set_meta(f"feed_health:{show.slug}", "fail")
+            _record_feed_failure(state, show.slug, e)
             print(f"  ✗ {show.slug}: {e}")
             rc = 1
             continue

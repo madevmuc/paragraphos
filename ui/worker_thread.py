@@ -510,7 +510,7 @@ class CheckAllThread(QThread):
                     try:
                         canonical, manifest, new_etag, new_modified = f.result()
                     except Exception as e:
-                        fails = backoff.on_failure(self.ctx.state, show.slug)
+                        fails = backoff.on_failure(self.ctx.state, show.slug, exc=e)
                         self.progress.emit(f"feed error {show.slug} (fail #{fails}): {e}")
                         continue
                     backoff.on_success(self.ctx.state, show.slug)

@@ -126,6 +126,12 @@ class ShowsTab(QWidget):
         self.refresh_btn.clicked.connect(self.refresh)
         self.health_btn = QPushButton("Check feeds")
         self.health_btn.clicked.connect(self._check_feed_health)
+        self.retry_failed_feeds_btn = QPushButton("Retry failed feeds")
+        self.retry_failed_feeds_btn.setToolTip(
+            "Clear backoff and immediately re-fetch every feed currently "
+            "marked fail. Useful after fixing a connectivity issue."
+        )
+        self.retry_failed_feeds_btn.clicked.connect(self._retry_failed_feeds)
         self.rescan_btn = QPushButton("Rescan library")
         self.rescan_btn.clicked.connect(self._rescan_library)
         self.rescan_btn.setToolTip(
@@ -139,6 +145,7 @@ class ShowsTab(QWidget):
             self.stop_btn,
             self.refresh_btn,
             self.health_btn,
+            self.retry_failed_feeds_btn,
             self.rescan_btn,
         ):
             btns.addWidget(b)
@@ -244,10 +251,39 @@ class ShowsTab(QWidget):
             stored = self.ctx.state.get_meta(f"feed_health:{show.slug}") or ""
             if stored == "ok":
                 pill = Pill("ok", kind="ok")
+                pill.setToolTip("Last feed fetch succeeded.")
             elif stored == "fail":
-                pill = Pill("fail", kind="fail")
+                # Categorised failure detail (written by core.backoff.on_failure
+                # via the worker, or by cli.py's manual retry helpers). Falls
+                # back to plain "fail" if the failure happened before the
+                # categorisation feature shipped.
+                from core.feed_errors import label as _label
+                from core.feed_errors import recommendation as _rec
+
+                cat = self.ctx.state.get_meta(f"feed_fail_category:{show.slug}") or ""
+                msg = self.ctx.state.get_meta(f"feed_fail_message:{show.slug}") or ""
+                at = self.ctx.state.get_meta(f"feed_fail_at:{show.slug}") or ""
+                until = self.ctx.state.get_meta(f"feed_backoff_until:{show.slug}") or ""
+                text = f"fail · {_label(cat)}" if cat else "fail"
+                pill = Pill(text, kind="fail")
+                tip_lines = []
+                if cat:
+                    tip_lines.append(f"Category: {_label(cat)}")
+                if at:
+                    tip_lines.append(f"When: {at}")
+                if msg:
+                    tip_lines.append(f"Message: {msg[:300]}")
+                if until:
+                    tip_lines.append(f"Backoff: parked until {until}")
+                if cat:
+                    tip_lines.append("")
+                    tip_lines.append(_rec(cat))
+                tip_lines.append("")
+                tip_lines.append("Open Show details → Feed health to retry now.")
+                pill.setToolTip("\n".join(tip_lines))
             else:
                 pill = Pill("?", kind="idle")
+                pill.setToolTip("No feed check has run yet for this show.")
             h.addWidget(pill)
             self.table.setCellWidget(row, FEED_COL, pill_container)
             self._feed_pills[show.slug] = pill
@@ -566,6 +602,52 @@ class ShowsTab(QWidget):
                 continue
             pill.set_kind("ok" if health.ok else "fail")
             pill.setText("✅" if health.ok else f"⚠ {health.reason}")
+
+    def _retry_failed_feeds(self) -> None:
+        """Clear backoff + immediately re-fetch every feed marked fail.
+        Synchronous — blocks for ~1 s per failed feed. Replaces the
+        sqlite-poke an LLM agent would otherwise have to script."""
+        from datetime import datetime as _dt
+        from datetime import timezone as _tz
+
+        from core.feed_errors import categorize
+        from core.rss import build_manifest
+
+        state = self.ctx.state
+        failed = [
+            s
+            for s in self.ctx.watchlist.shows
+            if (state.get_meta(f"feed_health:{s.slug}") or "") == "fail"
+        ]
+        if not failed:
+            self._log("no failed feeds to retry")
+            return
+        self._log(f"retrying {len(failed)} failed feed(s)…")
+        ok = 0
+        for show in failed:
+            # Clear backoff state per slug.
+            for k in (
+                "feed_fail_count",
+                "feed_backoff_until",
+                "feed_fail_category",
+                "feed_fail_message",
+                "feed_fail_at",
+            ):
+                state.set_meta(f"{k}:{show.slug}", "0" if k.endswith("count") else "")
+            try:
+                build_manifest(show.rss, timeout=30)
+            except Exception as e:  # noqa: BLE001
+                state.set_meta(f"feed_health:{show.slug}", "fail")
+                state.set_meta(f"feed_fail_category:{show.slug}", categorize(e))
+                state.set_meta(f"feed_fail_message:{show.slug}", str(e)[:500])
+                state.set_meta(f"feed_fail_at:{show.slug}", _dt.now(_tz.utc).isoformat())
+                self._log(f"  ✗ {show.slug}: {e}")
+                continue
+            state.set_meta(f"feed_health:{show.slug}", "ok")
+            self._log(f"  ✓ {show.slug}")
+            ok += 1
+        self._log(f"retry complete — {ok}/{len(failed)} ok")
+        self.refresh()
 
     def _toggle(self, slug: str) -> None:
         for show in self.ctx.watchlist.shows:
