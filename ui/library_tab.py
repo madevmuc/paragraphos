@@ -218,7 +218,10 @@ class LibraryTab(QWidget):
 
     @staticmethod
     def _source_glyph(source: str) -> str:
-        return "▶" if source == "youtube" else "🎙"
+        # 📺 TV for YouTube (better mental model than the play-triangle —
+        # the user reads the tree as 'what kind of show is this'); 🎙 mic
+        # stays for podcasts.
+        return "📺" if source == "youtube" else "🎙"
 
     # ── Tree ─────────────────────────────────────────────────────
     def _build_tree(self) -> None:
@@ -364,7 +367,7 @@ class LibraryTab(QWidget):
             return
         show_title, source = self._show_meta(r["show_slug"])
         self.preview_title.setText(r.get("title") or "")
-        pill = "▶ YouTube" if source == "youtube" else "🎙 Podcast"
+        pill = "📺 YouTube" if source == "youtube" else "🎙 Podcast"
         self.preview_subtitle.setText(f"{show_title} · {(r.get('pub_date') or '')[:10]} · {pill}")
         md_path: Path = r["md_path"]
         try:

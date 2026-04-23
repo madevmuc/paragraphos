@@ -10,9 +10,30 @@ with the default ``source="podcast"``.
 from __future__ import annotations
 
 import zipfile
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
+
+# Mirror core.transcriber.STALE_YEARS so both renderers flag the same age.
+_STALE_YEARS = 1
+
+
+def _age_banner(pub_date_str: str) -> str:
+    """Return the standard 'Episode vom YYYY-MM-DD (vor N Tagen)' callout
+    + a stale warning when the episode is older than _STALE_YEARS. Empty
+    string when the date can't be parsed (banner suppressed silently)."""
+    try:
+        d = date.fromisoformat(pub_date_str[:10])
+    except (ValueError, TypeError):
+        return ""
+    age_days = (date.today() - d).days
+    out = f"> [!info] Episode vom {d.isoformat()} (vor {age_days} Tagen)\n"
+    if age_days > 365 * _STALE_YEARS:
+        out += (
+            f"> [!warning] ⚠ Stale: Folge ist älter als "
+            f"{_STALE_YEARS} Jahr(e) — zeitkritische Aussagen prüfen.\n"
+        )
+    return out + "\n"
 
 
 def export_show(slug: str, output_root: Path, export_dir: Path) -> Path:
@@ -60,14 +81,15 @@ def render_episode_markdown(
     youtube_id: Optional[str] = None,
     channel_id: Optional[str] = None,
     transcript_source: Optional[str] = None,
+    pub_date: str = "",
 ) -> str:
     """Render an episode `.md` (frontmatter + body) for the given source.
 
     For ``source="youtube"`` the frontmatter gains ``youtube_id``,
     ``youtube_url``, ``channel_id`` and ``transcript_source`` keys, and the
-    body is prefixed with a ``[Watch on YouTube](...)`` link. For
-    ``source="podcast"`` (default) only the show/title metadata is emitted,
-    keeping the renderer safe to call from non-YouTube paths.
+    body is prefixed with a ``[Watch on YouTube](...)`` link. ``pub_date``
+    (ISO YYYY-MM-DD) drives the standard age callout that the podcast
+    renderer also emits — keeps Obsidian render parity across sources.
     """
     fm: list[str] = ["---"]
     fm.append(f"show_slug: {show_slug}")
@@ -87,6 +109,9 @@ def render_episode_markdown(
     if source == "youtube" and youtube_id:
         body_parts.append(f"[Watch on YouTube](https://youtu.be/{youtube_id})")
         body_parts.append("")
+    banner = _age_banner(pub_date)
+    if banner:
+        body_parts.append(banner.rstrip("\n"))
     body_parts.append(_srt_to_plain_text(srt_text))
 
     return "\n".join(fm) + "\n\n" + "\n".join(body_parts) + "\n"

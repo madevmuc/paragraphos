@@ -379,6 +379,7 @@ def _process_youtube_episode(
         youtube_id=vid,
         channel_id=ctx.youtube_channel_id or None,
         transcript_source=transcript_source,
+        pub_date=ep.get("pub_date") or "",
     )
     md_out = show_dir / f"{slug}.md"
     srt_out = show_dir / f"{slug}.srt"

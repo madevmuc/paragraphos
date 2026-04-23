@@ -76,14 +76,14 @@ class QueueHero(QWidget):
         # put it; long titles get elided in setText via QFontMetrics.
         self.ep_title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.ep_title.setMinimumWidth(0)
-        pause = QPushButton("Pause")
-        pause.clicked.connect(self._on_pause)
-        stop = QPushButton("Stop")
-        stop.clicked.connect(self._on_stop)
+        self.pause_btn = QPushButton("Pause")
+        self.pause_btn.clicked.connect(self._on_pause)
+        self.stop_btn = QPushButton("Stop")
+        self.stop_btn.clicked.connect(self._on_stop)
         top.addWidget(self.pill)
         top.addWidget(self.ep_title, stretch=1)
-        top.addWidget(pause)
-        top.addWidget(stop)
+        top.addWidget(self.pause_btn)
+        top.addWidget(self.stop_btn)
         top_w = QWidget()
         top_w.setLayout(top)
         grid.addWidget(top_w, 0, 1)
@@ -122,9 +122,34 @@ class QueueHero(QWidget):
     def refresh(self) -> None:
         q = self.ctx.queue
         if not q.running or not q.started_at:
-            self.hide()
+            # Idle state — keep the card visible. ProgressRing renders a
+            # grey pause glyph; pill turns 'idle'; pause/stop disabled;
+            # stats reset to dashes. The QSS gives the idle card a muted
+            # border via the dynamic 'state' property below.
+            self.show()
+            self.setProperty("state", "idle")
+            self.style().unpolish(self)
+            self.style().polish(self)
+            self.ring.set_idle(True)
+            self.pill.set_kind("idle")
+            self.pill.setText("idle")
+            self.ep_title.setText("Queue is idle. Click Start to begin a check pass.")
+            self.ep_title.setToolTip("")
+            self.pause_btn.setEnabled(False)
+            self.stop_btn.setEnabled(False)
+            for value, sub in self.stat_widgets.values():
+                value.setText("—")
+                sub.setText("")
             return
         self.show()
+        self.setProperty("state", "active")
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self.ring.set_idle(False)
+        self.pill.set_kind("running")
+        self.pill.setText("running")
+        self.pause_btn.setEnabled(True)
+        self.stop_btn.setEnabled(True)
         self.ring.set_progress(q.done, q.total)
 
         now = datetime.now()
