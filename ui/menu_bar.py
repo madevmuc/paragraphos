@@ -12,6 +12,7 @@ from pathlib import Path
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QAction, QKeySequence
 from PyQt6.QtWidgets import (
+    QDialog,
     QHBoxLayout,
     QLabel,
     QMenu,
@@ -43,6 +44,9 @@ def build_menu_bar(window) -> QMenuBar:
     a = QAction("Import OPML…", window)
     a.setShortcut("Ctrl+Shift+I")
     a.triggered.connect(lambda: _import_opml(window))
+    f.addAction(a)
+    a = QAction("Import folder…", window)
+    a.triggered.connect(lambda: _import_folder(window))
     f.addAction(a)
     a = QAction("Export Show…", window)
     a.setShortcut("Ctrl+Shift+E")
@@ -319,6 +323,29 @@ def _import_opml(window) -> None:
     # Stash on window so the QThread isn't GC'd mid-flight.
     window._opml_import_thread = thread
     thread.start()
+
+
+def _import_folder(window) -> None:
+    from core.local_source import ingest_folder
+    from ui.import_folder_dialog import ImportFolderDialog
+
+    dlg = ImportFolderDialog(window)
+    if dlg.exec() != QDialog.DialogCode.Accepted:
+        return
+    folder = dlg.chosen_folder()
+    if folder is None:
+        return
+    guids = ingest_folder(
+        folder,
+        show_slug=dlg.show_slug(),
+        state=window.ctx.state,
+        watchlist_path=window.ctx.data_dir / "watchlist.yaml",
+        recursive=dlg.recursive(),
+        max_duration_hours=window.ctx.settings.local_max_duration_hours,
+    )
+    window.statusBar().showMessage(
+        f"Imported {len(guids)} file{'s' if len(guids) != 1 else ''}", 5000
+    )
 
 
 def _selected_slug(window) -> str | None:
