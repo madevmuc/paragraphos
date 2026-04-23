@@ -99,17 +99,10 @@ QHeaderView::section {{
     padding: 4px 8px;
 }}
 
-/* Buttons — native unless role-tagged. */
-QPushButton {{
-    background: {surface};
-    color: {ink};
-    border: 1px solid {line};
-    border-radius: 5px;
-    padding: 4px 10px;
-}}
-QPushButton:hover {{ background: {surface_alt}; }}
-QPushButton:disabled {{ color: {ink_3}; }}
-
+/* Buttons — leave the default QPushButton un-styled so macOS renders
+   its native rounded-rectangle "BezelButton" with the system gradient,
+   shadow, and 26.x glassy feel. We only override two role-tagged
+   variants where the design needs more emphasis than native gives. */
 QPushButton[role="primary"] {{
     background: {accent};
     color: #ffffff;

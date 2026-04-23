@@ -111,7 +111,7 @@ class ShowsTab(QWidget):
         layout.addWidget(self.table)
 
         btns = QHBoxLayout()
-        self.add_btn = QPushButton("Add Podcast…")
+        self.add_btn = QPushButton("Add Podcast / Show…")
         self.add_btn.clicked.connect(self._add)
         self.curated_btn = QPushButton("Add Episodes…")
         self.curated_btn.clicked.connect(self._curated)

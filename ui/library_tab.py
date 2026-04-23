@@ -308,6 +308,11 @@ class LibraryTab(QWidget):
             self._current_guid = None
             self._set_empty_preview()
             self._set_action_buttons_enabled(False)
+        # Auto-select the top row (most recent episode by pub_date DESC)
+        # when nothing is currently selected. Gives the user an immediate
+        # preview when they switch shows, instead of an empty right pane.
+        if self.table.rowCount() > 0 and not self.table.selectedItems():
+            self.table.selectRow(0)
 
     # ── Selection → preview ──────────────────────────────────────
     def _on_row_select(self) -> None:
