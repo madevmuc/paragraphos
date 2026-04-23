@@ -49,7 +49,12 @@ class QueueTab(QWidget):
         # Remove all. Pre-2026-04-23 these lived at the bottom of the
         # page AND duplicated Pause+Stop on the hero card; consolidated
         # here so the hero only renders state, never actions.
+        # Margins explicitly zeroed so the first button's x-position
+        # exactly matches the same toolbar in Shows + Failed (Qt's
+        # implicit defaults aren't always identical across QHBoxLayout
+        # instances built in different files / construction orders).
         h = QHBoxLayout()
+        h.setContentsMargins(0, 0, 0, 0)
         self.start_btn = QPushButton("Start")
         self.start_btn.clicked.connect(self._start)
         self.pause_btn = QPushButton("Pause")

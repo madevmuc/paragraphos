@@ -35,7 +35,10 @@ class ShowsTab(QWidget):
         # All toolbars at the top so the action layout matches Queue +
         # Failed (consolidated 2026-04-23). Two rows: always-on actions
         # first, bulk-on-selection second (disabled until rows picked).
+        # Zero contentsMargins so the first button's x-position lines
+        # up with the equivalent toolbar in Queue + Failed.
         action_row = QHBoxLayout()
+        action_row.setContentsMargins(0, 0, 0, 0)
         self.add_btn = QPushButton("Add Podcast / Show…")
         self.add_btn.clicked.connect(self._add)
         self.curated_btn = QPushButton("Add Episodes…")
@@ -80,6 +83,7 @@ class ShowsTab(QWidget):
         # Bulk-action toolbar — operates on all currently selected rows.
         # Buttons are disabled until the table has a selection.
         bulk_row = QHBoxLayout()
+        bulk_row.setContentsMargins(0, 0, 0, 0)
         self._bulk_disable = QPushButton("Disable selected")
         self._bulk_enable = QPushButton("Enable selected")
         self._bulk_stale = QPushButton("Mark stale selected")

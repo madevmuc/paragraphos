@@ -42,7 +42,10 @@ class FailedTab(QWidget):
         v = QVBoxLayout(self)
 
         # Toolbar above the table — preserves the existing bulk actions.
+        # Zero contentsMargins so the first button's x-position lines
+        # up with the equivalent toolbar in Queue + Shows.
         h = QHBoxLayout()
+        h.setContentsMargins(0, 0, 0, 0)
         retry_all = QPushButton("Retry all")
         retry_all.clicked.connect(self._retry_all)
         add_q = QPushButton("Add failed to queue")
