@@ -176,6 +176,18 @@ class StateStore:
         with self._conn() as c:
             c.execute("UPDATE episodes SET priority=? WHERE guid=?", (priority, guid))
 
+    def set_mp3_path(self, guid: str, mp3_path: str) -> None:
+        """Persist the actual on-disk MP3 path so the orphan-recovery
+        path (next launch after a crash between download and transcribe)
+        can find the file even when the slug-derived path differs from
+        what was actually written. Pre-2026-04-23 this was reconstructed
+        from (pub_date, title, episode_number) on every transcribe call;
+        when the in-memory ep_num_map didn't carry the episode_number
+        for orphans, the rebuild defaulted to '0000' and missed the
+        real file (saved with the genuine episode number)."""
+        with self._conn() as c:
+            c.execute("UPDATE episodes SET mp3_path=? WHERE guid=?", (mp3_path, guid))
+
     def set_status(
         self, guid: str, status: EpisodeStatus, *, error_text: Optional[str] = None
     ) -> None:

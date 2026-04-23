@@ -136,6 +136,11 @@ def download_phase(
             guid=guid,
             result=PipelineResult("failed", guid, err),
         )
+    # Persist the actual on-disk path BEFORE flipping status — orphan
+    # recovery on next launch reads mp3_path back and avoids the
+    # slug-rebuild guesswork that defaulted to episode_number='0000'
+    # and missed files saved with the real episode number.
+    ctx.state.set_mp3_path(guid, str(mp3_path))
     ctx.state.set_status(guid, EpisodeStatus.DOWNLOADED)
     return DownloadOutcome(
         guid=guid,

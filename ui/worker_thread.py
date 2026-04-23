@@ -233,12 +233,50 @@ class _DownloadPool(QThread):
                 if prior_status == "downloaded":
                     from core.pipeline import build_slug
 
-                    slug = build_slug(ep["pub_date"], ep["title"], ep_num)
                     show_dir = pctx.output_root / show.slug
-                    mp3_path = show_dir / "audio" / f"{slug}.mp3"
-                    if not mp3_path.exists():
+                    # Prefer the persisted mp3_path (set by download_phase
+                    # 2026-04-23+); fall back to slug-rebuild for legacy
+                    # rows downloaded before the column was wired. If
+                    # neither exists, glob the audio dir as a last-resort
+                    # — covers the case where the original ep_num is
+                    # unknown to this run.
+                    persisted = (ep.get("mp3_path") or "").strip()
+                    mp3_path = Path(persisted) if persisted else None
+                    if mp3_path is None or not mp3_path.exists():
+                        guess_slug = build_slug(ep["pub_date"], ep["title"], ep_num)
+                        cand = show_dir / "audio" / f"{guess_slug}.mp3"
+                        if cand.exists():
+                            mp3_path = cand
+                        else:
+                            # Glob: same date prefix + same title suffix,
+                            # any episode_number in between. Catches the
+                            # downloaded-with-real-ep-num / orphan-recovery-
+                            # rebuilds-with-0000 mismatch.
+                            from core.sanitize import slugify as _slugify
+
+                            date_prefix = (ep["pub_date"] or "")[:10]
+                            title_part = _slugify(ep["title"] or "")[:60]
+                            audio_dir = show_dir / "audio"
+                            if audio_dir.is_dir():
+                                hits = sorted(audio_dir.glob(f"{date_prefix}_*.mp3"))
+                                # Prefer matches that also contain the title's
+                                # leading slug fragment so two episodes from
+                                # the same date don't get crossed.
+                                titled = [
+                                    p for p in hits if title_part and title_part[:20] in p.name
+                                ]
+                                hit = (titled or hits)[0] if (titled or hits) else None
+                                if hit is not None:
+                                    mp3_path = hit
+                                    # Backfill the persisted path so the next
+                                    # orphan-recovery doesn't have to glob.
+                                    self._ctx.state.set_mp3_path(ep["guid"], str(mp3_path))
+                    if mp3_path is None or not mp3_path.exists():
                         self._ctx.state.set_status(ep["guid"], EpisodeStatus.PENDING)
                         continue
+                    # Slug derived from the actual filename so transcribe
+                    # writes <slug>.md / .srt next to a consistent name.
+                    slug = mp3_path.stem
                     self.progress.emit(f"  ↻ {ep['title'][:80]} (orphan → transcribe)")
                     self._out_q.put(
                         (

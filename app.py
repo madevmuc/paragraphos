@@ -198,7 +198,13 @@ class ParagraphosApp(QObject):
                 rec_mp = None
 
             s = self.ctx.settings
-            log.info(
+            # Pre-format the full message once so we can both (a) send it
+            # to the file handler now and (b) replay it into the in-app
+            # LogDock later (after MainWindow wires one). Logging it to
+            # the file early matters for post-crash debugging; surfacing
+            # it in the dock matters so a user who opens Logs without
+            # tailing the log file still sees what they're running.
+            _fingerprint_msg = (
                 "paragraphos startup | "
                 "version=%s | macOS=%s (%s) | python=%s | "
                 "cpu_cores=%s | ram=%s | "
@@ -211,7 +217,8 @@ class ParagraphosApp(QObject):
                 "rss_concurrency=%s download_concurrency=%s use_etag_cache=%s "
                 "library_scan_cache=%s notify_mode=%s "
                 "connectivity_monitor=%s auto_resume_window_h=%s "
-                "show_log_dock=%s",
+                "show_log_dock=%s"
+            ) % (
                 _PARAGRAPHOS_VERSION,
                 platform.mac_ver()[0] or "unknown",
                 platform.machine(),
@@ -249,8 +256,13 @@ class ParagraphosApp(QObject):
                 getattr(s, "auto_resume_failed_window_hours", 24),
                 getattr(s, "show_log_dock", False),
             )
+            log.info(_fingerprint_msg)
+            # Stash for replay into the LogDock once open_window wires
+            # one — see _replay_fingerprint_into_dock below.
+            self._startup_fingerprint_msg = _fingerprint_msg
         except Exception as _exc:  # noqa: BLE001
             log.warning("paragraphos startup fingerprint failed: %s", _exc)
+            self._startup_fingerprint_msg = None
         self._thread: CheckAllThread | None = None
         self._run_tally: dict[str, object] = {}
 
@@ -407,6 +419,7 @@ class ParagraphosApp(QObject):
             self.open_window()
 
     def open_window(self) -> None:
+        first_open = self._window is None
         if self._window is None:
             self._window = MainWindow()
             # If a background check was already running before the window
@@ -419,9 +432,30 @@ class ParagraphosApp(QObject):
                 self._window.show_update_banner(
                     self.ctx.update_available_tag, self.ctx.update_available_url
                 )
+        if first_open:
+            # Replay the startup fingerprint into the dock + logs pane so
+            # a user who opens Logs can see exactly which tool versions
+            # and settings this process is running with. The fingerprint
+            # is logged to the file handler during __init__ (before the
+            # dock exists), but the in-app dock only receives messages
+            # passed to its .append() API.
+            self._replay_fingerprint_into_dock()
         self._window.show()
         self._window.raise_()
         self._window.activateWindow()
+
+    def _replay_fingerprint_into_dock(self) -> None:
+        msg = getattr(self, "_startup_fingerprint_msg", None)
+        if not msg or self._window is None:
+            return
+        try:
+            self._window.log_dock.append(msg)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            self._window.logs_pane.append(msg)
+        except Exception:  # noqa: BLE001
+            pass
 
     def _run_check_on_gui_thread(self) -> None:
         # Scheduled fire (APScheduler cron) — keep force=False so parked
