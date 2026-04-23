@@ -91,7 +91,6 @@ class ParagraphosApp(QObject):
         # presence.
         import logging
         import platform
-        import shutil
 
         from core.version import VERSION as _PARAGRAPHOS_VERSION
 
@@ -118,43 +117,73 @@ class ParagraphosApp(QObject):
             from core import ytdlp as _ytdlp_mod
 
             ytdlp_present = _ytdlp_mod.is_installed()
-            ytdlp_version = "—"
-            if ytdlp_present:
-                try:
-                    proc = subprocess.run(
-                        [str(_ytdlp_mod.ytdlp_path()), "--version"],
-                        capture_output=True,
-                        text=True,
-                        timeout=4,
-                    )
-                    if proc.returncode == 0:
-                        ytdlp_version = proc.stdout.strip().splitlines()[0]
-                except Exception:
-                    pass
-            whisper_present = bool(shutil.which("whisper-cli"))
-            whisper_version = "—"
-            if whisper_present:
-                try:
-                    proc = subprocess.run(
-                        ["whisper-cli", "--help"],
-                        capture_output=True,
-                        text=True,
-                        timeout=2,
-                    )
-                    # whisper-cli writes a short banner to stderr — first line.
-                    line = (proc.stderr or proc.stdout or "").strip().splitlines()[0:1]
-                    if line:
-                        whisper_version = line[0][:80]
-                except Exception:
-                    pass
-            # Use the same locator the transcriber's PATH-augmenter uses,
-            # so the fingerprint matches whisper-cli's actual visibility
-            # (a .app launched from /Applications has /usr/bin:/bin only;
-            # shutil.which alone misses the Homebrew copy that the
-            # subprocess env hands to whisper-cli).
+            # yt-dlp is a PyInstaller-bundled binary — its first
+            # `--version` call costs ~11 s on cold cache (measured
+            # 2026-04-23). Blocking the GUI startup that long is
+            # unacceptable. Cache the value in meta after the first
+            # successful probe; on subsequent launches read from cache.
+            # If absent, log "—" and kick off an out-of-band probe in a
+            # daemon thread that updates the meta — next launch picks
+            # it up. Yt-dlp self-updates weekly so the cached value
+            # never drifts more than 7 days.
+            ytdlp_version = self.ctx.state.get_meta("ytdlp_version_cached") or "—"
+            if ytdlp_present and ytdlp_version == "—":
+                import threading
+
+                def _probe_ytdlp():
+                    try:
+                        p = subprocess.run(
+                            [str(_ytdlp_mod.ytdlp_path()), "--version"],
+                            capture_output=True,
+                            text=True,
+                            timeout=20,
+                        )
+                        if p.returncode == 0:
+                            v = p.stdout.strip().splitlines()[0]
+                            if v:
+                                self.ctx.state.set_meta("ytdlp_version_cached", v)
+                    except Exception:
+                        pass
+
+                threading.Thread(
+                    target=_probe_ytdlp, name="ytdlp-version-probe", daemon=True
+                ).start()
+            # Use the locator the transcriber's PATH-augmenter uses (NOT
+            # bare shutil.which), so the fingerprint matches what
+            # whisper-cli is actually invoked as. On a .app launched
+            # from /Applications the inherited PATH is /usr/bin:/bin
+            # only — shutil.which("whisper-cli") returns None even
+            # though the binary lives at /opt/homebrew/bin and
+            # transcription works fine via WHISPER_BIN's resolved path.
+            from core.transcriber import WHISPER_BIN as _WBIN
             from core.transcriber import _locate_ffmpeg_dir as _ff_dir
 
-            ffmpeg_present = _ff_dir() is not None
+            def _homebrew_version(bin_path: Path) -> str:
+                """Extract a Homebrew formula's version from the symlink
+                target, e.g. /opt/homebrew/Cellar/whisper-cpp/1.8.4/bin/...
+                → '1.8.4'. Avoids spawning the binary (whisper-cli's
+                first-launch GGML init costs seconds + dumps an unhelpful
+                BLAS-backend banner that's not a version)."""
+                try:
+                    real = Path(bin_path).resolve()
+                    parts = real.parts
+                    if "Cellar" in parts:
+                        i = parts.index("Cellar")
+                        # parts[i+1] = formula name, parts[i+2] = version
+                        if i + 2 < len(parts):
+                            return parts[i + 2]
+                except Exception:
+                    pass
+                return "—"
+
+            whisper_bin_path = Path(_WBIN)
+            whisper_present = whisper_bin_path.exists()
+            whisper_version = _homebrew_version(whisper_bin_path) if whisper_present else "—"
+            ffmpeg_dir_path = _ff_dir()
+            ffmpeg_present = ffmpeg_dir_path is not None
+            ffmpeg_version = (
+                _homebrew_version(Path(ffmpeg_dir_path) / "ffmpeg") if ffmpeg_present else "—"
+            )
 
             # Hardware-aware recommendations vs. current settings — log any
             # mismatch so support tickets show 'is the user on the optimal
@@ -173,7 +202,7 @@ class ParagraphosApp(QObject):
                 "paragraphos startup | "
                 "version=%s | macOS=%s (%s) | python=%s | "
                 "cpu_cores=%s | ram=%s | "
-                "tooling: whisper-cli=%s (%s) yt-dlp=%s (%s) ffmpeg=%s | "
+                "tooling: whisper-cli=%s (%s) yt-dlp=%s (%s) ffmpeg=%s (%s) | "
                 "settings: model=%s parallel=%s%s multiproc=%s%s fast_mode=%s "
                 "auto_start=%s auto_start_delay=%ss save_srt=%s "
                 "mp3_retention_days=%s "
@@ -194,6 +223,7 @@ class ParagraphosApp(QObject):
                 "yes" if ytdlp_present else "no",
                 ytdlp_version,
                 "yes" if ffmpeg_present else "no",
+                ffmpeg_version,
                 s.whisper_model,
                 s.parallel_transcribe,
                 f" (rec={rec_par})"
