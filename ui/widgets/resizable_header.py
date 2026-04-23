@@ -75,16 +75,44 @@ def make_resizable(
     save_timer.setInterval(300)
 
     def _persist():
-        out: dict[str, int] = {}
-        for col in range(n_cols):
-            if col == stretch_col:
-                # Stretch columns have no persistent width; recomputed on layout.
-                continue
-            out[str(col)] = int(table.columnWidth(col))
-        QSettings().setValue(settings_key, json.dumps(out))
+        try:
+            out: dict[str, int] = {}
+            cols_now = header.count()
+            for col in range(cols_now):
+                if col == stretch_col:
+                    # Stretch columns have no persistent width; recomputed on layout.
+                    continue
+                out[str(col)] = int(table.columnWidth(col))
+            QSettings().setValue(settings_key, json.dumps(out))
+        except RuntimeError:
+            # Underlying Qt C++ object was deleted (e.g. table closed).
+            return
 
     save_timer.timeout.connect(_persist)
-    header.sectionResized.connect(lambda *_: save_timer.start())
+
+    # Suppress the initial flurry of sectionResized events fired during
+    # widget construction + first reparenting (addWidget into a stack
+    # cascades style → layout → header re-fits). Persisting those would
+    # overwrite the user's saved widths with Qt's transient layout values
+    # AND, separately, accessing the timer from a slot fired mid-reparent
+    # has been seen to segfault on PyQt6 6.7. Only honour resizes after
+    # the first 1 s — by then the widget has settled into its real layout.
+    table._resizable_armed_at = QTimer(table)
+    table._resizable_armed_at.setSingleShot(True)
+    table._resizable_armed_at.setInterval(1000)
+    table._resizable_armed_at.start()
+    armed_timer = table._resizable_armed_at
+
+    def _on_section_resized(*_args):
+        try:
+            if armed_timer.isActive():
+                # Still in the initial-settle window — ignore.
+                return
+            save_timer.start()
+        except RuntimeError:
+            return
+
+    header.sectionResized.connect(_on_section_resized)
 
     # Context menu — Reset columns.
     def _on_header_menu(pos):

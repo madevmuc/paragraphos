@@ -84,6 +84,12 @@ def test_persists_and_restores(qapp, tmp_path):
         defaults={0: 60, 2: 80, 3: 90},
     )
     table1.setColumnWidth(2, 222)
+    # The helper suppresses sectionResized for the first 1 s of widget
+    # life to avoid stomping saved widths with Qt's transient initial-
+    # layout values + dodging a PyQt6 reparent-cascade segfault. Force
+    # the suppression timer expired so this synthetic emit goes through.
+    if hasattr(table1, "_resizable_armed_at"):
+        table1._resizable_armed_at.stop()
     # sectionResized(logicalIndex, oldSize, newSize)
     table1.horizontalHeader().sectionResized.emit(2, 80, 222)
 
