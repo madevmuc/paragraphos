@@ -807,6 +807,28 @@ def _acquire_single_instance_lock():
         return None
 
 
+def maybe_start_watch_folder(
+    *,
+    settings,
+    state,
+    watchlist_path,
+):
+    """Create + start a WatchFolder iff enabled in settings. Returns the
+    instance (or None). Callers own the stop()."""
+    from core.watch_folder import WatchFolder
+
+    if not getattr(settings, "watch_folder_enabled", False):
+        return None
+    wf = WatchFolder(
+        root=Path(settings.watch_folder_root).expanduser(),
+        state=state,
+        watchlist_path=watchlist_path,
+        max_duration_hours=settings.local_max_duration_hours,
+    )
+    wf.start()
+    return wf
+
+
 def _install_slot_exception_handler() -> None:
     """Replace ``sys.excepthook`` so a Python exception raised inside a
     PyQt6 slot logs + (best-effort) shows a non-fatal dialog instead of
@@ -907,6 +929,17 @@ def main() -> int:
             lambda online: app._window.on_online_changed(online) if app._window else None
         )
         app._conn_monitor.start()
+    # Universal-ingest watch folder — starts iff the user opted in via
+    # Settings. Observes the chosen root recursively and ingests any
+    # dropped-in media file through ``core.local_source``.
+    watch_folder = maybe_start_watch_folder(
+        settings=app.ctx.settings,
+        state=app.ctx.state,
+        watchlist_path=app.ctx.data_dir / "watchlist.yaml",
+    )
+    if watch_folder is not None:
+        app._watch_folder = watch_folder
+        qapp.aboutToQuit.connect(watch_folder.stop)
     # New-install migration: flip ``setup_completed`` for legacy users
     # whose customised folder paths imply they've already done the work
     # the setup dialog asks about. Fresh installs see the dialog once;
