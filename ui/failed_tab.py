@@ -6,7 +6,6 @@ from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QHBoxLayout,
-    QHeaderView,
     QMenu,
     QMessageBox,
     QPushButton,
@@ -69,11 +68,20 @@ class FailedTab(QWidget):
             ["Show", "Episode", "Reason", "Tries", "Last attempt", ""]
         )
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        header = self.table.horizontalHeader()
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
-        self.table.setColumnWidth(5, 40)
+
+        from ui.widgets.resizable_header import make_resizable
+
+        # Columns: 0 Show, 1 Episode (stretch — varies most), 2 Reason
+        # (was a second Stretch — only one column can effectively absorb
+        # spare space, so this drops to Interactive with a generous
+        # default), 3 Tries, 4 Last attempt, 5 ⋯ menu button (fixed).
+        make_resizable(
+            self.table,
+            settings_key="failed/columns",
+            stretch_col=1,
+            fixed_cols={5: 40},
+            defaults={0: 140, 2: 280, 3: 60, 4: 150},
+        )
         v.addWidget(self.table)
 
         # guid → raw error text, for Copy-error / Show-log handlers.

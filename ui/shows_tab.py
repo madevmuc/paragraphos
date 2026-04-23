@@ -6,7 +6,6 @@ from PyQt6.QtCore import QSettings, Qt
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (
     QHBoxLayout,
-    QHeaderView,
     QLabel,
     QMenu,
     QMessageBox,
@@ -94,7 +93,16 @@ class ShowsTab(QWidget):
         self.table.setHorizontalHeaderLabels(
             ["Slug", "Title", "On", "Total", "Done", "Pending", "Feed"]
         )
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        from ui.widgets.resizable_header import make_resizable
+
+        # Columns: 0 Slug, 1 Title (stretch), 2 On, 3 Total, 4 Done,
+        # 5 Pending, 6 Feed.
+        make_resizable(
+            self.table,
+            settings_key="shows/columns",
+            stretch_col=1,
+            defaults={0: 140, 2: 40, 3: 60, 4: 60, 5: 70, 6: 70},
+        )
         self.table.horizontalHeader().setSortIndicatorShown(True)
         self.table.setSortingEnabled(True)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)

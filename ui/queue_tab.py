@@ -7,7 +7,6 @@ from datetime import datetime, timedelta
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QHBoxLayout,
-    QHeaderView,
     QLabel,
     QMenu,
     QPushButton,
@@ -90,15 +89,18 @@ class QueueTab(QWidget):
                 "Finish ≈",
             ]
         )
-        _hdr = self.table.horizontalHeader()
-        _hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        # Auto-fit everything except Status — Status has a fixed width
-        # so the live "transcribing · XXX%" update doesn't resize the
-        # column (and cascade a layout twitch) every second.
-        for _col in (0, 1, 2, 5, 6, 7):
-            _hdr.setSectionResizeMode(_col, QHeaderView.ResizeMode.ResizeToContents)
-        _hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
-        self.table.setColumnWidth(4, 150)
+        from ui.widgets.resizable_header import make_resizable
+
+        # Columns: 0 Show, 1 Pub Date, 2 Ep#, 3 Title (stretch),
+        # 4 Status (fixed — live "transcribing · NN%" would jitter
+        # under any content-fit policy), 5 Audio, 6 Whisper, 7 Finish ≈.
+        make_resizable(
+            self.table,
+            settings_key="queue/columns",
+            stretch_col=3,
+            fixed_cols={4: 150},
+            defaults={0: 120, 1: 100, 2: 50, 5: 70, 6: 80, 7: 90},
+        )
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._on_context_menu)
         v.addWidget(self.table)
