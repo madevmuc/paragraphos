@@ -72,3 +72,54 @@ def test_sha256_of_rehashes_when_mtime_changes(tmp_path: Path):
     h2 = sha256_of(f, state=state)
     # SHA-256 of b"world"
     assert h2 == "486ea46224d1bb4fb680f34f7c9ad96a8f24ec88be73ea8e5a6c65260e9cb8a7"
+
+
+def test_slug_for_drop_default():
+    from core.local_source import slug_for_drop
+
+    assert slug_for_drop() == "files"
+
+
+def test_slug_for_watch_uses_top_level_subfolder(tmp_path: Path):
+    from core.local_source import slug_for_watch
+
+    root = tmp_path / "to-be-transcribed"
+    root.mkdir()
+    (root / "Zoom Meetings").mkdir()
+    f = root / "Zoom Meetings" / "team-standup.mp4"
+    f.write_bytes(b"")
+    assert slug_for_watch(f, root) == "zoom-meetings"
+
+
+def test_slug_for_watch_falls_back_when_at_root(tmp_path: Path):
+    from core.local_source import slug_for_watch
+
+    root = tmp_path / "to-be-transcribed"
+    root.mkdir()
+    f = root / "loose.wav"
+    f.write_bytes(b"")
+    assert slug_for_watch(f, root) == "files"
+
+
+def test_slug_for_folder_import_uses_basename(tmp_path: Path):
+    from core.local_source import slug_for_folder_import
+
+    p = tmp_path / "My Field Interviews"
+    p.mkdir()
+    assert slug_for_folder_import(p, override=None) == "my-field-interviews"
+
+
+def test_slug_for_folder_import_honours_override(tmp_path: Path):
+    from core.local_source import slug_for_folder_import
+
+    p = tmp_path / "whatever"
+    p.mkdir()
+    assert slug_for_folder_import(p, override="interviews-2026") == "interviews-2026"
+
+
+def test_slug_for_url_uses_uploader_when_available():
+    from core.local_source import slug_for_url
+
+    assert slug_for_url("https://vimeo.com/12345", uploader="Acme Films") == "acme-films"
+    assert slug_for_url("https://example.com/x", uploader="") == "web"
+    assert slug_for_url("https://example.com/x", uploader=None) == "web"

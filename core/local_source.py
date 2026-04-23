@@ -11,6 +11,7 @@ import hashlib
 import logging
 from pathlib import Path
 
+from core.sanitize import slugify
 from core.state import StateStore
 
 logger = logging.getLogger(__name__)
@@ -54,3 +55,37 @@ def sha256_of(path: Path, *, state: StateStore) -> str:
     hex_s = h.hexdigest()
     state.set_meta(meta_key, f"{st.st_size}:{st.st_mtime_ns}:{hex_s}")
     return hex_s
+
+
+def slug_for_drop() -> str:
+    """Default show slug for drag-drop files with no user-picked show."""
+    return "files"
+
+
+def slug_for_watch(file_path: Path, root: Path) -> str:
+    """Top-level subfolder under ``root`` → show slug. Loose files at the
+    root go to the default drop slug ``files`` so they don't silently
+    create a show named after the root directory itself."""
+    try:
+        rel = Path(file_path).resolve().relative_to(Path(root).resolve())
+    except ValueError:
+        return slug_for_drop()
+    parts = rel.parts
+    if len(parts) < 2:
+        return slug_for_drop()
+    return slugify(parts[0])
+
+
+def slug_for_folder_import(folder: Path, *, override: str | None) -> str:
+    """Slug for a one-shot folder import: ``override`` wins, else folder
+    basename slugified."""
+    if override:
+        return slugify(override)
+    return slugify(Path(folder).name)
+
+
+def slug_for_url(url: str, *, uploader: str | None) -> str:
+    """Slug for a pasted URL: uploader → slug; otherwise ``web`` catch-all."""
+    if uploader:
+        return slugify(uploader)
+    return "web"
