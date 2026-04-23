@@ -107,6 +107,12 @@ class Settings(BaseModel):
     # via Show.youtube_transcript_pref. One of:
     # "captions" | "whisper" | "auto-captions".
     youtube_default_transcript_source: str = "captions"
+    # Default expected caption language (whisper.cpp + yt-dlp lang code)
+    # for newly-added YouTube channels. The Add-YouTube dialog seeds the
+    # per-show language from this. Default "de" matches the user's
+    # German-podcast default; pick "en" if you mostly track English
+    # YouTube channels.
+    youtube_default_language: str = "de"
     # Whether the bottom log dock is visible across all pages. Off by
     # default — power-user diagnostic, surfaced by the Logs sidebar
     # entry and the Ctrl+L shortcut for everyone else.

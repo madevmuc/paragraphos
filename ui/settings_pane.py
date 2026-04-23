@@ -259,6 +259,45 @@ class SettingsPane(QWidget):
         formats_hint.setWordWrap(True)
         root.addWidget(formats_hint)
 
+        # ── YouTube ────────────────────────────────────────────
+        # Visible only when Sources → YouTube channels is checked. The
+        # whole group hides/shows live as the Sources toggle flips.
+        self._yt_section = _section("YouTube")
+        self._yt_widgets: list[QWidget] = []
+        root.addWidget(self._yt_section)
+        self._yt_widgets.append(self._yt_section)
+
+        yt_form = QFormLayout()
+        self.yt_default_lang_combo = QComboBox()
+        self.yt_default_lang_combo.setObjectName("youtube_default_language_combo")
+        self.yt_default_lang_combo.addItem("German (de)", userData="de")
+        self.yt_default_lang_combo.addItem("English (en)", userData="en")
+        _cur_yt_lang = getattr(self.ctx.settings, "youtube_default_language", "de") or "de"
+        for i in range(self.yt_default_lang_combo.count()):
+            if self.yt_default_lang_combo.itemData(i) == _cur_yt_lang:
+                self.yt_default_lang_combo.setCurrentIndex(i)
+                break
+        self.yt_default_lang_combo.currentIndexChanged.connect(self._schedule_save)
+        self._add_field(
+            yt_form,
+            "Default transcript language",
+            self.yt_default_lang_combo,
+            hint=(
+                "Used when adding a new YouTube channel — pre-fills the show's "
+                "language. Caption fetch tries this language first, then English, "
+                "then any other manual sub the video has."
+            ),
+            hint_kind="info",
+        )
+        # Keep references so the YouTube-source toggle can hide the
+        # widgets together. _add_field returns None, so we wrap the form
+        # in a container we can show/hide.
+        yt_form_holder = QWidget()
+        yt_form_holder.setLayout(yt_form)
+        root.addWidget(yt_form_holder)
+        self._yt_widgets.append(yt_form_holder)
+        self._refresh_yt_section_visibility()
+
         # ── Interface ──────────────────────────────────────────
         # Power-user toggle for the bottom log dock that appears across
         # all pages. The Logs sidebar entry + Ctrl+L shortcut stay
@@ -825,14 +864,25 @@ class SettingsPane(QWidget):
 
     def _on_sources_changed(self) -> None:
         """Enforce ≥1 enabled source. If both got unchecked, snap Podcasts
-        back on (signals blocked so we don't recurse) before saving."""
+        back on (signals blocked so we don't recurse) before saving.
+        Also flips visibility of the YouTube settings section."""
         p = self.podcasts_checkbox.isChecked()
         y = self.youtube_checkbox.isChecked()
         if not (p or y):
             self.podcasts_checkbox.blockSignals(True)
             self.podcasts_checkbox.setChecked(True)
             self.podcasts_checkbox.blockSignals(False)
+        self._refresh_yt_section_visibility()
         self._schedule_save()
+
+    def _refresh_yt_section_visibility(self) -> None:
+        """Show / hide the YouTube settings section in lockstep with the
+        Sources → YouTube channels checkbox."""
+        visible = bool(
+            getattr(self, "youtube_checkbox", None) and self.youtube_checkbox.isChecked()
+        )
+        for w in getattr(self, "_yt_widgets", []):
+            w.setVisible(visible)
 
     def _on_show_log_dock_toggled(self, checked: bool) -> None:
         """Apply the log-dock visibility immediately to the running window
@@ -871,6 +921,7 @@ class SettingsPane(QWidget):
         s.sources_podcasts = self.podcasts_checkbox.isChecked()
         s.sources_youtube = self.youtube_checkbox.isChecked()
         s.show_log_dock = self.show_log_dock_cb.isChecked()
+        s.youtube_default_language = self.yt_default_lang_combo.currentData() or "de"
         s.save(self.ctx.data_dir / "settings.yaml")
         from datetime import datetime
 

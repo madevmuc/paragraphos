@@ -933,6 +933,25 @@ class AddShowDialog(QDialog):
         card_v.addWidget(self.yt_card_meta)
         v.addWidget(self.yt_card)
 
+        # Per-show transcript language. Pre-filled from the YouTube
+        # default in Settings → YouTube. Used as the lang code passed to
+        # both yt-dlp's caption fetch (with a fallback chain inside
+        # core.youtube_captions) and whisper-cli (when audio fallback
+        # fires).
+        lang_row = QHBoxLayout()
+        lang_row.addWidget(QLabel("Transcript language:"))
+        self._yt_lang_combo = QComboBox()
+        self._yt_lang_combo.addItem("German (de)", userData="de")
+        self._yt_lang_combo.addItem("English (en)", userData="en")
+        _seed_lang = getattr(self.ctx.settings, "youtube_default_language", "de") or "de"
+        for i in range(self._yt_lang_combo.count()):
+            if self._yt_lang_combo.itemData(i) == _seed_lang:
+                self._yt_lang_combo.setCurrentIndex(i)
+                break
+        lang_row.addWidget(self._yt_lang_combo)
+        lang_row.addStretch(1)
+        v.addLayout(lang_row)
+
         # Backfill choice (default: Only new).
         # Two rows: count-based radios + a time-range dropdown. Picking a
         # time range clears the radios; picking a radio clears the time
@@ -1217,11 +1236,10 @@ class AddShowDialog(QDialog):
             "backlog": backlog_mode,
             "artwork_url": preview.get("artwork_url", "") or "",
             "source": "youtube",
-            # YouTube content is overwhelmingly English; default the
-            # captions/whisper language to "en" so caption fetch finds
-            # the manual `en` subtitle most channels ship. The user can
-            # change this in Show Details if a channel is non-English.
-            "language": "en",
+            # User-picked from the dropdown above (seeded from the
+            # YouTube default language in Settings). Used as lang code
+            # for caption fetch + whisper-cli fallback.
+            "language": self._yt_lang_combo.currentData() or "de",
         }
         self._do_save(show_dict)
 
