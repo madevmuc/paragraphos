@@ -25,9 +25,14 @@ class Show(BaseModel):
     # watchlist.yaml files — ShowDetailsDialog falls back to a 🎙 placeholder
     # when the feed didn't expose artwork.
     artwork_url: str = ""
-    # Source discriminator: "podcast" (RSS feed) or "youtube" (channel
-    # RSS at /feeds/videos.xml?channel_id=UC...). Defaults to "podcast"
-    # for backward compat with existing watchlist.yaml files.
+    # Source discriminator. Values:
+    #   podcast       — RSS feed
+    #   youtube       — channel RSS at /feeds/videos.xml?channel_id=UC...
+    #   local-folder  — a watched folder on disk (rss empty; path in meta)
+    #   local-drop    — drag-drop / Import folder one-offs (rss empty)
+    #   url           — ad-hoc URL ingest via yt-dlp generic extractor
+    # Defaults to "podcast" for backward compat with existing
+    # watchlist.yaml files.
     source: str = "podcast"
     # Per-show YouTube transcript preference. Empty string = inherit from
     # Settings default. Otherwise one of: "captions" | "whisper" | "auto-captions".
@@ -132,6 +137,23 @@ class Settings(BaseModel):
     # auto-resuming after the connection comes back. 24 h covers the
     # overnight / laptop-sleep case without re-running ancient retries.
     auto_resume_failed_window_hours: int = 24
+    # Local source ingest (v1.3.0 "universal ingest").
+    #
+    # ``watch_folder_root`` is expanded via ``Path.expanduser()``; a fresh
+    # install keeps the feature off (``enabled=False``) until the user
+    # opts in via Settings → Local sources. ``post`` chooses what happens
+    # to a watched file after its episode transitions to ``done``:
+    # ``keep`` leaves it in place (default, safest), ``move`` relocates it
+    # to a sibling ``done/`` folder mirroring any subfolder path, and
+    # ``delete`` unlinks it. ``local_max_duration_hours`` gates any ingest
+    # (drop, watch, folder-import) — files exceeding it go to Failed with
+    # a clear reason. 4 h covers long lectures and most board-meeting
+    # recordings without letting an accidentally-queued movie consume a
+    # whole afternoon of whisper time.
+    watch_folder_enabled: bool = False
+    watch_folder_root: str = "~/Paragraphos/to-be-transcribed"
+    watch_folder_post: str = "keep"
+    local_max_duration_hours: int = 4
 
     @field_validator("daily_check_time")
     @classmethod

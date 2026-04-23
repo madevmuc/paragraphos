@@ -63,3 +63,21 @@ def test_show_source_accepts_youtube():
         source="youtube",
     )
     assert s.source == "youtube"
+
+
+def test_show_source_accepts_local_variants():
+    from core.models import Show
+
+    for src in ("local-folder", "local-drop", "url"):
+        s = Show(slug="x", title="X", rss="", source=src)
+        assert s.source == src
+
+
+def test_settings_has_local_source_defaults():
+    from core.models import Settings
+
+    s = Settings()
+    assert s.watch_folder_enabled is False
+    assert s.watch_folder_root == "~/Paragraphos/to-be-transcribed"
+    assert s.watch_folder_post == "keep"  # keep | move | delete
+    assert s.local_max_duration_hours == 4

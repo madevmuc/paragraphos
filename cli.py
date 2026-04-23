@@ -889,6 +889,108 @@ def cmd_retry_all_feeds(_args: argparse.Namespace) -> int:
 
 
 # ────────────────────────────────────────────────────────────────────────
+# one-off ingest (file / url / folder) — stdout = GUID(s) for agent chains
+# ────────────────────────────────────────────────────────────────────────
+
+
+def cmd_ingest_file(args: argparse.Namespace) -> int:
+    from core.local_source import IngestError, ingest_file
+
+    state = _state()
+    try:
+        guid = ingest_file(
+            Path(args.path),
+            show_slug=args.show,
+            state=state,
+            watchlist_path=DATA / "watchlist.yaml",
+            source="local-drop",
+            max_duration_hours=_settings().local_max_duration_hours,
+        )
+    except IngestError as e:
+        print(f"ingest failed: {e}", file=sys.stderr)
+        return 2
+    print(guid)
+    return 0
+
+
+def cmd_ingest_url(args: argparse.Namespace) -> int:
+    from core.local_source import IngestError, ingest_url
+
+    try:
+        guid = ingest_url(
+            args.url,
+            show_slug=args.show,
+            state=_state(),
+            watchlist_path=DATA / "watchlist.yaml",
+        )
+    except IngestError as e:
+        print(f"ingest failed: {e}", file=sys.stderr)
+        return 2
+    print(guid)
+    return 0
+
+
+def cmd_ingest_folder(args: argparse.Namespace) -> int:
+    from core.local_source import ingest_folder
+
+    guids = ingest_folder(
+        Path(args.path),
+        show_slug=args.show,
+        state=_state(),
+        watchlist_path=DATA / "watchlist.yaml",
+        recursive=args.recursive,
+        max_duration_hours=_settings().local_max_duration_hours,
+    )
+    for g in guids:
+        print(g)
+    return 0
+
+
+# ────────────────────────────────────────────────────────────────────────
+# watch-folder management
+# ────────────────────────────────────────────────────────────────────────
+
+
+def cmd_watch_add(args: argparse.Namespace) -> int:
+    """Enable the watch-folder source and set the root path. v1.3 supports
+    a single root via Settings.watch_folder_root; multi-root is follow-up."""
+    s = _settings()
+    s.watch_folder_enabled = True
+    s.watch_folder_root = str(Path(args.path).expanduser().resolve())
+    s.save(DATA / "settings.yaml")
+    print(f"watch folder: {s.watch_folder_root} (enabled)")
+    return 0
+
+
+def cmd_watch_remove(_args: argparse.Namespace) -> int:
+    """Disable the watch-folder source. The root path is preserved on disk
+    so re-enabling with `watch add` is not required if the path is unchanged."""
+    s = _settings()
+    s.watch_folder_enabled = False
+    s.save(DATA / "settings.yaml")
+    print("watch folder disabled")
+    return 0
+
+
+def cmd_watch_list(args: argparse.Namespace) -> int:
+    """Show current watch-folder config (enabled / root / post-action /
+    max-duration gate)."""
+    s = _settings()
+    payload = {
+        "enabled": s.watch_folder_enabled,
+        "root": str(Path(s.watch_folder_root).expanduser()),
+        "post": s.watch_folder_post,
+        "max_duration_hours": s.local_max_duration_hours,
+    }
+    _emit(
+        payload,
+        as_json=getattr(args, "json", False),
+        human=f"{'on' if payload['enabled'] else 'off':3} {payload['root']}",
+    )
+    return 0
+
+
+# ────────────────────────────────────────────────────────────────────────
 # settings management
 # ────────────────────────────────────────────────────────────────────────
 
@@ -1061,6 +1163,46 @@ def main() -> int:
     s_ss.add_argument("key")
     s_ss.add_argument("value")
     s_ss.set_defaults(fn=cmd_set_setting)
+
+    # — one-off ingest
+    s_ing = sub.add_parser("ingest", help="one-off ingest of a file / URL / folder")
+    ing_sub = s_ing.add_subparsers(dest="ingest_what", required=True)
+
+    s_if = ing_sub.add_parser("file", help="ingest one local media file")
+    s_if.add_argument("path")
+    s_if.add_argument("--show", default=None)
+    s_if.set_defaults(fn=cmd_ingest_file)
+
+    s_iu = ing_sub.add_parser("url", help="ingest a URL via yt-dlp generic extractor")
+    s_iu.add_argument("url")
+    s_iu.add_argument("--show", default=None)
+    s_iu.set_defaults(fn=cmd_ingest_url)
+
+    s_ifo = ing_sub.add_parser("folder", help="ingest every supported file in a folder")
+    s_ifo.add_argument("path")
+    s_ifo.add_argument("--show", default=None)
+    s_ifo.add_argument("--recursive", action="store_true", default=True)
+    s_ifo.add_argument(
+        "--no-recursive",
+        dest="recursive",
+        action="store_false",
+        help="only scan the top-level directory",
+    )
+    s_ifo.set_defaults(fn=cmd_ingest_folder)
+
+    # — watch-folder source
+    s_w = sub.add_parser("watch", help="manage the watch-folder source")
+    w_sub = s_w.add_subparsers(dest="watch_cmd", required=True)
+
+    s_wa = w_sub.add_parser("add", help="enable watching + set the root path")
+    s_wa.add_argument("path")
+    s_wa.set_defaults(fn=cmd_watch_add)
+
+    w_sub.add_parser("remove", help="disable the watcher").set_defaults(fn=cmd_watch_remove)
+
+    s_wl = w_sub.add_parser("list", help="show watch-folder config")
+    s_wl.add_argument("--json", action="store_true")
+    s_wl.set_defaults(fn=cmd_watch_list)
 
     args = p.parse_args()
     return args.fn(args)

@@ -275,14 +275,25 @@ class AddShowDialog(QDialog):
         self.name_input = QLineEdit()
         self.name_input.setPlaceholderText("e.g. Lex Fridman Podcast")
         self.name_input.returnPressed.connect(self._search_by_name)
+        self.name_input.textChanged.connect(self._on_name_text_changed)
         row.addWidget(self.name_input, 1)
         search_btn = QPushButton("Search")
         search_btn.clicked.connect(self._search_by_name)
         row.addWidget(search_btn)
         v.addLayout(row)
 
+        # Debounce the search-as-you-type. iTunes rate-limits aggressive
+        # callers and a per-keystroke hit would jitter the results as
+        # the user is still typing. 350 ms pause feels responsive while
+        # coalescing bursts of keys into one request.
+        self._name_search_debounce = QTimer(self)
+        self._name_search_debounce.setSingleShot(True)
+        self._name_search_debounce.setInterval(350)
+        self._name_search_debounce.timeout.connect(self._search_by_name)
+
         self.results = ShowResultsTable()
         self.results.cellDoubleClicked.connect(self._pick_name_result_by_row)
+        self.results.currentCellChanged.connect(self._prefill_from_current_row)
         # Auto-fetch the next page when the user scrolls within ~60 px of
         # the bottom. A visible button interrupts the flow; an infinite-
         # scroll feel is closer to what the app's users expect. Also
@@ -311,7 +322,23 @@ class AddShowDialog(QDialog):
         v.addLayout(self._button_row(on_add=self._add_from_name))
         return page
 
+    def _on_name_text_changed(self, text: str) -> None:
+        """Restart the debounce timer on every keystroke.
+
+        Short or pasted-URL inputs short-circuit — no point firing a
+        search for ``"a"`` and pasted URLs route through the Enter/
+        Search-button path which runs ``find_rss_from_url`` instead.
+        """
+        stripped = text.strip()
+        if len(stripped) < 2 or stripped.startswith(("http://", "https://")):
+            self._name_search_debounce.stop()
+            return
+        self._name_search_debounce.start()
+
     def _search_by_name(self) -> None:
+        # Stop any pending debounce so a manual Enter/click doesn't race
+        # with a still-armed timer.
+        self._name_search_debounce.stop()
         term = self.name_input.text().strip()
         if not term:
             return
@@ -440,6 +467,24 @@ class AddShowDialog(QDialog):
         if url is None:
             return
         self._fill_from_feed_sync(url)
+
+    def _prefill_from_current_row(
+        self, cur_row: int, _cur_col: int, _prev_row: int, _prev_col: int
+    ) -> None:
+        """Pre-fill RSS / title / slug from the in-memory PodcastMatch
+        when the user selects a row (single-click or keyboard nav).
+
+        The full fetch (canonical redirected URL, manifest, whisper prompt)
+        still happens on double-click via ``_pick_name_result_by_row`` —
+        that's the explicit "commit" action. This handler only offers an
+        instant preview so the user sees feedback on selection.
+        """
+        m = self.results.match_for_row(cur_row)
+        if m is None:
+            return
+        self.name_rss.setText(m.feed_url)
+        self.name_title.setText(m.title)
+        self.name_slug.setText(slugify(m.title or ""))
 
     def _fill_from_feed_sync(self, rss: str) -> None:
         try:

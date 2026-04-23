@@ -167,6 +167,86 @@ class SettingsPane(QWidget):
         sources_hint.setWordWrap(True)
         root.addWidget(sources_hint)
 
+        # ── Local sources ──────────────────────────────────────
+        # Watch-folder ingest: drop files into a folder and Paragraphos
+        # auto-queues them. Top-level subfolders become shows. Knobs: the
+        # toggle, the root path, post-transcribe disposition, and the
+        # max-duration guard (files longer than this skip to Failed
+        # instead of wasting hours on a mis-drop).
+        root.addWidget(_section("Local sources"))
+        f_local = QFormLayout()
+
+        self.watch_folder_enabled_cb = QCheckBox("Auto-queue files dropped into the folder below")
+        self.watch_folder_enabled_cb.setObjectName("watch_folder_enabled_checkbox")
+        self.watch_folder_enabled_cb.setChecked(
+            bool(getattr(self.ctx.settings, "watch_folder_enabled", False))
+        )
+        self.watch_folder_enabled_cb.toggled.connect(self._schedule_save)
+        self._add_field(
+            f_local,
+            "Watch folder",
+            self.watch_folder_enabled_cb,
+            hint="auto-queue files dropped into the folder below",
+            hint_kind="info",
+        )
+
+        self.watch_folder_root = QLineEdit(
+            getattr(self.ctx.settings, "watch_folder_root", "") or ""
+        )
+        self.watch_folder_root.setObjectName("watch_folder_root_edit")
+        self.watch_folder_root.textChanged.connect(self._schedule_save)
+        wf_row = QHBoxLayout()
+        wf_row.addWidget(self.watch_folder_root)
+        wf_pick = QPushButton("Browse…")
+        wf_pick.clicked.connect(self._pick_watch_folder)
+        wf_row.addWidget(wf_pick)
+        self._add_field(
+            f_local,
+            "Folder path",
+            self._row_widget(wf_row),
+            hint="top-level subfolders become shows",
+            hint_kind="info",
+        )
+
+        self.watch_folder_post_combo = QComboBox()
+        self.watch_folder_post_combo.setObjectName("watch_folder_post_combo")
+        for label, code in (
+            ("Keep in place", "keep"),
+            ("Move to done/", "move"),
+            ("Delete", "delete"),
+        ):
+            self.watch_folder_post_combo.addItem(label, code)
+        _cur_post = getattr(self.ctx.settings, "watch_folder_post", "keep") or "keep"
+        for i in range(self.watch_folder_post_combo.count()):
+            if self.watch_folder_post_combo.itemData(i) == _cur_post:
+                self.watch_folder_post_combo.setCurrentIndex(i)
+                break
+        self.watch_folder_post_combo.currentIndexChanged.connect(self._schedule_save)
+        self._add_field(
+            f_local,
+            "After transcribing",
+            self.watch_folder_post_combo,
+            hint="what to do with each file once its transcript is written",
+            hint_kind="info",
+        )
+
+        self.local_max_duration_hours = QSpinBox()
+        self.local_max_duration_hours.setObjectName("local_max_duration_hours_spin")
+        self.local_max_duration_hours.setRange(1, 48)
+        self.local_max_duration_hours.setSuffix(" h")
+        self.local_max_duration_hours.setValue(
+            int(getattr(self.ctx.settings, "local_max_duration_hours", 4))
+        )
+        self.local_max_duration_hours.valueChanged.connect(self._schedule_save)
+        self._add_field(
+            f_local,
+            "Max duration (hours)",
+            self.local_max_duration_hours,
+            hint="files longer than this go to Failed instead of transcribing",
+            hint_kind="info",
+        )
+        root.addLayout(f_local)
+
         # ── Library & output ───────────────────────────────────
         root.addWidget(_section("Library & output"))
         f1 = QFormLayout()
@@ -661,6 +741,12 @@ class SettingsPane(QWidget):
         if d:
             self.kb_root.setText(d)
 
+    def _pick_watch_folder(self):
+        start = self._default_picker_dir(self.watch_folder_root.text())
+        d = QFileDialog.getExistingDirectory(self, "Pick watch folder", start)
+        if d:
+            self.watch_folder_root.setText(d)
+
     def _pick_obsidian(self):
         start = self._default_picker_dir(self.obsidian_path.text())
         d = QFileDialog.getExistingDirectory(self, "Pick Obsidian vault", start)
@@ -967,6 +1053,10 @@ class SettingsPane(QWidget):
         s.sources_youtube = self.youtube_checkbox.isChecked()
         s.show_log_dock = self.show_log_dock_cb.isChecked()
         s.youtube_default_language = self.yt_default_lang_combo.currentData() or "de"
+        s.watch_folder_enabled = self.watch_folder_enabled_cb.isChecked()
+        s.watch_folder_root = self.watch_folder_root.text()
+        s.watch_folder_post = self.watch_folder_post_combo.currentData() or "keep"
+        s.local_max_duration_hours = int(self.local_max_duration_hours.value())
         s.save(self.ctx.data_dir / "settings.yaml")
         from datetime import datetime
 
@@ -1121,6 +1211,18 @@ class SettingsPane(QWidget):
             "(language, whisper_prompt, output_override, "
             "youtube_transcript_pref, enabled, source, title, rss, artwork_url)<br>"
             "&nbsp;• <b>import-feeds</b> — bulk-import the curated podcast list<br><br>"
+            "<b>Local ingest</b> (files, folders, URLs — synthetic shows; "
+            "bypasses RSS/YouTube):<br>"
+            "&nbsp;• <b>ingest file &lt;path&gt; [--show SLUG]</b> — one file → "
+            "<code>sha256:&lt;hex&gt;</code> GUID<br>"
+            "&nbsp;• <b>ingest url &lt;url&gt; [--show SLUG]</b> — yt-dlp generic "
+            "extractor → <code>&lt;Extractor&gt;:&lt;id&gt;</code> GUID<br>"
+            "&nbsp;• <b>ingest folder &lt;path&gt; [--show SLUG] [--no-recursive]</b>"
+            " — batch-queue every supported file<br>"
+            "&nbsp;• <b>watch add &lt;path&gt;</b> — enable watch-folder + set "
+            "root. Top-level subfolders become show slugs<br>"
+            "&nbsp;• <b>watch remove</b> / <b>watch list [--json]</b> — disable "
+            "/ inspect the watch-folder config<br><br>"
             "<b>Feed retry</b>:<br>"
             "&nbsp;• <b>retry-feed &lt;slug&gt;</b> — clear backoff + immediate fetch<br>"
             "&nbsp;• <b>retry-all-feeds</b> — same for every feed marked fail<br><br>"
@@ -1216,6 +1318,28 @@ class SettingsPane(QWidget):
             "  import-feeds                         Bulk-import the curated\n"
             "                                       podcast list\n"
             "\n"
+            "Local ingest (v1.3.0 — files, folders, URLs; synthetic shows,\n"
+            "no RSS feed. Good for one-off recordings, pasted clips, or\n"
+            "backfilling a pile of existing audio):\n"
+            "  ingest file <path> [--show SLUG]     One local media file;\n"
+            "                                       prints sha256:<hex> GUID\n"
+            "  ingest url <url> [--show SLUG]       yt-dlp generic extractor\n"
+            "                                       (SoundCloud, Vimeo, any\n"
+            "                                       site yt-dlp recognises);\n"
+            "                                       prints <Extractor>:<id>\n"
+            "  ingest folder <path>                 Batch-queue every\n"
+            "    [--show SLUG]                      supported file in a\n"
+            "    [--no-recursive]                   directory tree\n"
+            "  watch add <path>                     Enable the watch-folder\n"
+            "                                       source + set its root.\n"
+            "                                       New files landing in\n"
+            "                                       top-level subfolders\n"
+            "                                       auto-queue against a\n"
+            "                                       show derived from the\n"
+            "                                       subfolder name.\n"
+            "  watch remove                         Disable the watcher\n"
+            "  watch list [--json]                  Inspect current config\n"
+            "\n"
             "Feed retry (after fixing connectivity, DNS, or a moved feed URL):\n"
             "  retry-feed <slug>                    Clear backoff + immediate\n"
             "                                       fetch for one show\n"
@@ -1267,6 +1391,10 @@ class SettingsPane(QWidget):
             "     retranscribe the 5 newest episodes.'\n"
             "  · 'Check whether parallel_transcribe matches the hardware\n"
             "     recommendation; if not, run set-setting to apply it.'\n"
+            "  · 'Batch-ingest every .wav under ~/Recordings/Zoom/2026-04\n"
+            "     via `ingest folder --show zoom`, then tail `status\n"
+            "     --json` until the queue drains.'\n"
+            "  · 'Ingest the Vimeo URL <url> and run-next once it lands.'\n"
             "\n"
             "Task: <describe what you want the agent to do>\n"
         )

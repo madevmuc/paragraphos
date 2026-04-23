@@ -19,10 +19,10 @@ later.
 > that signalled a change of speaker in a text — the job Paragraphos does
 > for every episode it transcribes.
 
-![Status](https://img.shields.io/badge/status-v1.2.0-green)
+![Status](https://img.shields.io/badge/status-v1.3.0-green)
 ![Platform](https://img.shields.io/badge/platform-macOS_Apple_Silicon-lightgrey)
 ![Python](https://img.shields.io/badge/python-3.12-blue)
-![Tests](https://img.shields.io/badge/tests-386_passing-success)
+![Tests](https://img.shields.io/badge/tests-429_passing-success)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 ---
@@ -33,6 +33,14 @@ later.
   (RSS auto-detect from `<link rel="alternate">`).
 - 📺 **Adds YouTube channels** by handle / channel URL — `yt-dlp`
   lazy-installs on first use and self-updates weekly.
+- 📥 **Ingests any file or URL** — the dedicated **Local Transcript**
+  tab has a big drop zone for audio / video files (`.mp3` / `.m4a` /
+  `.wav` / `.mp4` / `.mov` / `.mkv` / `.webm` / …), a folder-import
+  button for one-shot bulk scans, and a URL field that routes through
+  yt-dlp's generic extractor (SoundCloud, Vimeo, any site it
+  recognises). A watched folder at `~/Paragraphos/to-be-transcribed/`
+  auto-queues new drops; a drop anywhere on the main window navigates
+  to Local Transcript and ingests there.
 - 🗒 **Captions-first for YouTube** — uploader-supplied subtitles are
   used when available (requested language → English → any), with whisper
   as the fallback.
@@ -68,6 +76,20 @@ later.
 **Shows — watchlist overview**
 ![Shows tab](docs/screenshots/shows-tab.png)
 
+**Local Transcript — drag-drop, folder-pick, or URL**
+Top-level tab between Shows and Queue. Three zones: a big drop area for
+audio/video files, a **Choose folder to import…** button for bulk
+scans, and a URL field for anything yt-dlp recognises. Inline status
+line confirms each ingest.
+![Local Transcript](docs/screenshots/local-transcript.png)
+
+**Add show — search-as-you-type**
+Name-mode search fires 350 ms after the last keystroke; rich results
+table shows cover, title, author, episode count, and latest date.
+Single-click a row to pre-fill RSS / Title / Slug; double-click to
+kick off the full metadata fetch + whisper prompt generation.
+![Add show — name search](docs/screenshots/add-show-search.png)
+
 **Queue — live transcribe dashboard**
 Hero with progress ring, per-row Audio / Whisper / Finish columns, status
 cell shows live `transcribing · X%` on the active row.
@@ -75,6 +97,13 @@ cell shows live `transcribing · X%` on the active row.
 
 **Show details — artwork, feed refresh, recent episodes**
 ![Show details](docs/screenshots/show-details.png)
+
+**Settings — Local sources group (watch folder + duration cap)**
+Enable the watch folder, pick a root (top-level subfolders become show
+slugs), choose keep / move / delete after transcribing, and cap the
+per-file duration so an accidentally-dropped movie doesn't monopolise
+whisper for an afternoon.
+![Settings — Local sources](docs/screenshots/settings-local-sources.png)
 
 **Settings — hardware-aware recommendations**
 Inline hints (`✓ recommended: N (16 GB RAM, 8 perf cores detected)`),
@@ -148,6 +177,7 @@ via SQLite WAL — mutations show up live in a running window.
 | Inspection    | `status`, `shows`, `show <slug>`, `episodes <slug>`, `failed`, `settings`, `feed-health` |
 | Queue control | `pause`, `resume`, `stop`, `clear-queue`, `priority <guid> <N>`, `run-next <guid>`, `retranscribe <guid>`, `retry-failed` |
 | Show admin    | `add <name-or-url>`, `enable <slug>`, `disable <slug>`, `remove <slug>`, `set <slug> key=value`, `import-feeds` |
+| Local ingest  | `ingest file <path> [--show SLUG]`, `ingest url <url> [--show SLUG]`, `ingest folder <path> [--show SLUG] [--no-recursive]`, `watch add <path>`, `watch remove`, `watch list [--json]` |
 | Feed retry    | `retry-feed <slug>`, `retry-all-feeds`                                                  |
 | Settings      | `set-setting <key> <value>`                                                             |
 | Pipeline      | `check [--show <slug>] [--limit N]`                                                     |
@@ -173,7 +203,8 @@ domain knowledge of every command + flag.
        ┌───────────────────────────────────────────────────────┐
        │                  Paragraphos.app (PyQt6)              │
        │                                                       │
- tray  ├──► MainWindow (Shows / Queue / Failed / Settings)    │
+ tray  ├──► MainWindow (Shows / Local Transcript / Queue /    │
+       │              Failed / Library / Settings)             │
  icon  │         │                                             │
        │         └─► CheckAllThread (QThread)                  │
        │                │                                      │
@@ -218,10 +249,20 @@ See `About Paragraphos → Security` in the app for the full threat model.
 ### GUI workflows
 
 - **Add Podcast** dialog supports four modes: *By name* (iTunes
-  search), *By URL* (RSS with rich preview), *Paste Apple link*
-  (one-step auto-detect), and **YouTube URL** (channel handle / channel
-  ID, with backfill segmented control). The YouTube mode appears only
-  when *Settings → Sources → YouTube* is enabled.
+  search; search-as-you-type with 350 ms debounce, single-click a row
+  to pre-fill RSS/Title/Slug, double-click to run the full metadata
+  fetch + whisper-prompt suggestion), *By URL* (RSS with rich preview),
+  *Paste Apple link* (one-step auto-detect), and **YouTube URL**
+  (channel handle / channel ID, with backfill segmented control). The
+  YouTube mode appears only when *Settings → Sources → YouTube* is
+  enabled.
+- **Local Transcript tab** — dedicated top-level tab for one-off
+  ingest. Drop audio/video on the big panel, pick a folder to bulk-
+  scan, or paste a URL. Every ingest emits an inline status line; the
+  episode appears in the Queue within a few seconds. The **Local
+  sources** group in Settings exposes the watch-folder root, the
+  after-transcribing action (keep / move / delete), and the max-
+  duration cap.
 - **Sources** in Settings: independent toggles for Podcasts (RSS) and
   YouTube channels. At least one must stay on. Disabling YouTube
   hides the YouTube UI and skips the lazy yt-dlp install.
@@ -327,7 +368,7 @@ paragraphos/
 │   ├── workers.py          # WorkerPool wrapper
 │   └── prompt_gen.py       # whisper_prompt auto-suggestion
 ├── ui/                     # Qt widgets — everything visible
-├── tests/                  # pytest suite (99 tests)
+├── tests/                  # pytest suite (429 tests)
 ├── docs/
 │   ├── ROADMAP.md          # v0.5→v1.0 plan, 6 phases
 │   └── design-handoff/     # mockups for the Phase 6 design refresh

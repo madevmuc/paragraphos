@@ -243,9 +243,86 @@ def process_episode(
     """Serial dedup → download → transcribe → retention (kept for CLI/tests)."""
     if ctx.source == "youtube":
         return _process_youtube_episode(guid, ctx, episode_number=episode_number)
+    if ctx.source == "local":
+        return _process_local_episode(guid, ctx, episode_number=episode_number)
     outcome = download_phase(guid, ctx, episode_number=episode_number)
     if outcome.result is not None:
         return outcome.result
+    return transcribe_phase(outcome, ctx)
+
+
+def _process_local_episode(
+    guid: str, ctx: PipelineContext, *, episode_number: str = "0000"
+) -> PipelineResult:
+    """Local-source branch: dedup → copy/symlink → whisper → retention.
+
+    The source file's absolute path was persisted at ingest time under
+    ``state.meta["local_path:<guid>"]``. We materialise it into the
+    show's staging ``audio/`` directory (copy for robustness — symlink
+    would break on external-drive unmounts later) and then reuse the
+    existing :func:`transcribe_phase` machinery by forging a
+    ``DownloadOutcome``.
+    """
+    import shutil as _shutil
+
+    from core.security import safe_path_within
+
+    ep = ctx.state.get_episode(guid)
+    if ep is None:
+        raise ValueError(f"unknown guid {guid}")
+
+    slug = build_slug(ep["pub_date"], ep["title"], episode_number)
+
+    dup = ctx.library.check_dedup(guid=guid, filename_key=slug)
+    if dup.matched:
+        ctx.state.set_status(guid, EpisodeStatus.DONE)
+        return PipelineResult("skipped", guid, f"dedup/{dup.reason} → {dup.path}")
+
+    src_path_str = ctx.state.get_meta(f"local_path:{guid}") or ""
+    if not src_path_str:
+        err = "local ingest: missing local_path meta"
+        ctx.state.set_status(guid, EpisodeStatus.FAILED, error_text=err)
+        return PipelineResult("failed", guid, err)
+    src = Path(src_path_str)
+    if not src.exists():
+        err = f"local ingest: source file missing on disk: {src}"
+        ctx.state.set_status(guid, EpisodeStatus.FAILED, error_text=err)
+        return PipelineResult("failed", guid, err)
+
+    show_dir = ctx.output_root / ep["show_slug"]
+    audio_dir = show_dir / "audio"
+    audio_dir.mkdir(parents=True, exist_ok=True)
+    # Preserve the user's extension so whisper-cli routes the right
+    # ffmpeg demuxer. build_slug's .mp3 suffix in the podcast path was
+    # an accident of history; for local we keep the real extension.
+    staged = audio_dir / f"{slug}{src.suffix}"
+    safe_path_within(ctx.output_root, staged)
+    safe_path_within(ctx.output_root, show_dir / f"{slug}.md")
+    try:
+        _guard_disk(audio_dir)
+        ctx.state.set_status(guid, EpisodeStatus.DOWNLOADING)
+        _shutil.copy2(src, staged)
+    except DiskSpaceError as e:
+        ctx.state.set_status(guid, EpisodeStatus.PENDING)
+        return PipelineResult("failed", guid, f"disk: {e}")
+    except OSError as e:
+        err = f"local ingest: copy failed [{type(e).__name__}]: {e}"
+        ctx.state.set_status(guid, EpisodeStatus.FAILED, error_text=err)
+        return PipelineResult("failed", guid, err)
+    # Persist staged path before status flip so orphan-recovery on the
+    # next launch can locate the file via state.mp3_path regardless of
+    # extension (podcast path uses .mp3 glob; local stages .wav/.m4a/.mp4).
+    ctx.state.set_mp3_path(guid, str(staged))
+    ctx.state.set_status(guid, EpisodeStatus.DOWNLOADED)
+
+    # Hand off to the existing transcribe machinery via a forged outcome.
+    outcome = DownloadOutcome(
+        guid=guid,
+        mp3_path=staged,
+        show_dir=show_dir,
+        slug=slug,
+        ep=ep,
+    )
     return transcribe_phase(outcome, ctx)
 
 
