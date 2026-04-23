@@ -66,6 +66,40 @@ def test_local_episode_copies_source_and_transcribes(tmp_path: Path):
     assert src.exists()
 
 
+def test_local_episode_records_mp3_path_for_orphan_recovery(tmp_path: Path):
+    src = tmp_path / "a.wav"
+    src.write_bytes(b"fake wav bytes")
+
+    ctx = _local_ctx(tmp_path)
+    _seed_local_episode(ctx, src)
+
+    # Before processing: no staged path recorded yet.
+    pre = ctx.state.get_episode("sha256:deadbeef").get("mp3_path")
+    assert pre is None or pre == ""
+
+    class FakeResult:
+        md_path = tmp_path / "out" / "files" / "x.md"
+        srt_path = tmp_path / "out" / "files" / "x.srt"
+        word_count = 10
+
+    def fake_transcribe(*a, **kw):
+        FakeResult.md_path.parent.mkdir(parents=True, exist_ok=True)
+        FakeResult.md_path.write_text("# x\n\nhello", encoding="utf-8")
+        FakeResult.srt_path.write_text(
+            "1\n00:00:00,000 --> 00:00:01,000\nhello\n", encoding="utf-8"
+        )
+        return FakeResult
+
+    with patch("core.pipeline.transcribe_episode", side_effect=fake_transcribe):
+        process_episode("sha256:deadbeef", ctx)
+
+    ep = ctx.state.get_episode("sha256:deadbeef")
+    recorded = ep["mp3_path"]
+    assert isinstance(recorded, str) and recorded
+    # Extension must be preserved (staged keeps the source suffix).
+    assert recorded.endswith(".wav")
+
+
 def test_local_episode_fails_gracefully_when_source_missing(tmp_path: Path):
     src = tmp_path / "gone.wav"
     ctx = _local_ctx(tmp_path)

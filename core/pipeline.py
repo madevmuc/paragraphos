@@ -309,6 +309,10 @@ def _process_local_episode(
         err = f"local ingest: copy failed [{type(e).__name__}]: {e}"
         ctx.state.set_status(guid, EpisodeStatus.FAILED, error_text=err)
         return PipelineResult("failed", guid, err)
+    # Persist staged path before status flip so orphan-recovery on the
+    # next launch can locate the file via state.mp3_path regardless of
+    # extension (podcast path uses .mp3 glob; local stages .wav/.m4a/.mp4).
+    ctx.state.set_mp3_path(guid, str(staged))
     ctx.state.set_status(guid, EpisodeStatus.DOWNLOADED)
 
     # Hand off to the existing transcribe machinery via a forged outcome.
