@@ -1,5 +1,53 @@
 # Paragraphos Changelog
 
+## v1.3.1 — 2026-04-23 (Local Transcript tab + UX polish)
+
+### Added
+- **Local Transcript** tab — dedicated top-level workspace entry
+  between Shows and Queue. Three visually separated zones: a big
+  drop area for audio/video, a "Choose folder to import…" button,
+  and a URL row. Replaces the v1.3.0 drop card that was embedded
+  on the Shows page. A drop anywhere on the main window
+  auto-navigates to Local Transcript and ingests there.
+- **Shows search-as-you-type** in Add Podcast → By name: results
+  populate ~350 ms after the last keystroke (Enter / Search button
+  still work).
+- **Single-click prefill** on Shows search — selecting a row (mouse
+  or keyboard nav) immediately fills RSS / Title / Slug from the
+  in-memory iTunes match. Double-click still runs the full fetch
+  for the whisper prompt.
+- **Inline ingest feedback** on Local Transcript — status line
+  below the three zones confirms every drop / folder-pick / URL
+  ingest ("Queued a.wav → sha256:… — open the Queue tab to see
+  it."). Replaces the intrusive QMessageBox.
+
+### Fixed
+- **Local Transcript dark-mode contrast** — supported-formats hint
+  now uses the theme-aware `ink_3` token (was unreadable
+  `palette(mid)`).
+- **File URIs on Drops** — `mp3_url` now uses `Path.as_uri()` so
+  paths with spaces / umlauts (`Zoom Meetings/Büro 2026.wav`)
+  produce valid RFC 3986 URIs.
+- **Drop zone UI thread** — file ingest (SHA-256 hashing) and URL
+  probe (yt-dlp up to 60 s) no longer block the main thread; both
+  hoisted onto `QThreadPool.globalInstance()` via `QRunnable`.
+- **Watch-folder auto-resume** — `check_for_resume()` + 30 s
+  `QTimer` in `app.py` revives the paused observer when the
+  watched root re-mounts (e.g. replugged external drive). No app
+  restart required.
+- **Pipeline orphan recovery for non-mp3 stages** — local-source
+  episodes now call `set_mp3_path()` on the staged copy so the
+  crash-recovery glob finds the real filename instead of guessing.
+
+### Docs
+- README refreshed for v1.3.1 (badges, Local Transcript bullet,
+  three new screenshots, CLI table gains "Local ingest" row,
+  architecture panel lists Local Transcript).
+- Settings → Automation & remote control help gains a Local
+  ingest section and two extra example agent tasks.
+
+---
+
 ## v1.3.0 — 2026-04-23 (universal ingest + CLI parity)
 
 ### Added — Universal ingest
