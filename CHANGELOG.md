@@ -1,5 +1,38 @@
 # Paragraphos Changelog
 
+## v1.3.0 — 2026-04-23 (universal ingest)
+
+### Added
+- **Universal ingest.** Beyond RSS podcasts and YouTube channels,
+  Paragraphos now accepts any audio or video file — dropped on the
+  Shows page, dropped anywhere on the main window, pasted as a URL,
+  picked up from a watched folder, or batch-imported from an existing
+  directory.
+- **Drop zone** on the Shows page with a URL line-edit. Files
+  land with default show `files`; URLs dispatch through yt-dlp's
+  generic extractor (~1000 supported sites) and use the uploader as
+  the show slug when known, `web` otherwise.
+- **Watch folder** (Settings → Local sources). New files landing in
+  top-level subfolders auto-queue against a show derived from the
+  subfolder name. `~/Paragraphos/to-be-transcribed/zoom/*.mp4` → show
+  `zoom`.
+- **Folder import** (File → Import folder…). One-shot scan + queue of
+  every supported file in a chosen directory tree.
+- **CLI parity:** `paragraphos ingest file | url | folder`,
+  `paragraphos watch add | remove | list`.
+
+### Internal
+- New modules: `core/local_source.py`, `core/watch_folder.py`,
+  `ui/drop_zone.py`, `ui/import_folder_dialog.py`.
+- `core/pipeline.process_episode` gains a `local` source branch that
+  bypasses `download_mp3` (source files are copied into staging).
+- `Show.source` adds `local-folder | local-drop | url` values alongside
+  `podcast | youtube`.
+- `Settings` gains `watch_folder_enabled / watch_folder_root /
+  watch_folder_post / local_max_duration_hours`.
+
+---
+
 ## v1.3.0 — 2026-04-23 (CLI parity, feed-health diagnosis, parallel transcribe)
 
 ### Added — Headless / agent control

@@ -33,6 +33,10 @@ later.
   (RSS auto-detect from `<link rel="alternate">`).
 - 📺 **Adds YouTube channels** by handle / channel URL — `yt-dlp`
   lazy-installs on first use and self-updates weekly.
+- 📥 **Ingests any file or URL** — drop an `.mp4` / `.wav` / `.m4a` /
+  `.mov` onto the window, or paste a URL (SoundCloud, Vimeo, any site
+  yt-dlp recognises). A watched folder at
+  `~/Paragraphos/to-be-transcribed/` auto-queues new drops.
 - 🗒 **Captions-first for YouTube** — uploader-supplied subtitles are
   used when available (requested language → English → any), with whisper
   as the fallback.
