@@ -1,8 +1,8 @@
 # Paragraphos Changelog
 
-## v1.3.0 — 2026-04-23 (universal ingest)
+## v1.3.0 — 2026-04-23 (universal ingest + CLI parity)
 
-### Added
+### Added — Universal ingest
 - **Universal ingest.** Beyond RSS podcasts and YouTube channels,
   Paragraphos now accepts any audio or video file — dropped on the
   Shows page, dropped anywhere on the main window, pasted as a URL,
@@ -20,20 +20,6 @@
   every supported file in a chosen directory tree.
 - **CLI parity:** `paragraphos ingest file | url | folder`,
   `paragraphos watch add | remove | list`.
-
-### Internal
-- New modules: `core/local_source.py`, `core/watch_folder.py`,
-  `ui/drop_zone.py`, `ui/import_folder_dialog.py`.
-- `core/pipeline.process_episode` gains a `local` source branch that
-  bypasses `download_mp3` (source files are copied into staging).
-- `Show.source` adds `local-folder | local-drop | url` values alongside
-  `podcast | youtube`.
-- `Settings` gains `watch_folder_enabled / watch_folder_root /
-  watch_folder_post / local_max_duration_hours`.
-
----
-
-## v1.3.0 — 2026-04-23 (CLI parity, feed-health diagnosis, parallel transcribe)
 
 ### Added — Headless / agent control
 - **Full GUI parity in the CLI** (23 commands). Inspection commands
@@ -122,8 +108,14 @@
   `tests/test_show_details_feed_health_panel.py`,
   `tests/test_transcriber_ffmpeg_path.py`.
 - Tests: 99 → 386 passing.
-
----
+- New modules: `core/local_source.py`, `core/watch_folder.py`,
+  `ui/drop_zone.py`, `ui/import_folder_dialog.py`.
+- `core/pipeline.process_episode` gains a `local` source branch that
+  bypasses `download_mp3` (source files are copied into staging).
+- `Show.source` adds `local-folder | local-drop | url` values alongside
+  `podcast | youtube`.
+- `Settings` gains `watch_folder_enabled / watch_folder_root /
+  watch_folder_post / local_max_duration_hours`.
 
 ## v1.2.0 — 2026-04-22 (YouTube ingestion)
 
