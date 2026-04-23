@@ -108,6 +108,14 @@ class QueueTab(QWidget):
         # sorting on lets them re-sort by Show / Status / etc. ad-hoc.
         self.table.setSortingEnabled(True)
         self.table.horizontalHeader().setSortIndicatorShown(True)
+        # Status column (col 4) gets a custom 3-way cycle on click:
+        #   priority (default) → ascending → descending → priority …
+        # Qt's natural toggle would only flip asc↔desc; users asked for
+        # the third state to restore the pipeline-stage default order
+        # (transcribing → downloading → downloaded → pending) without
+        # having to click another column to "unsort" Status.
+        self._status_sort_mode = "priority"
+        self.table.horizontalHeader().sectionClicked.connect(self._on_header_clicked)
         v.addWidget(self.table)
 
         h = QHBoxLayout()
@@ -426,21 +434,21 @@ class QueueTab(QWidget):
                 "SELECT show_slug, pub_date, title, status, guid, duration_sec "
                 "FROM episodes "
                 "WHERE status IN ('pending','downloading','downloaded','transcribing') "
-                # Active stages first (transcribing → downloaded →
-                # downloading), then pending by priority + date. Without
-                # this CASE, a large 'pending' backlog would push in-flight
-                # rows past the LIMIT 500 cutoff and hide parallel workers
-                # from the UI.
-                # Active stages first (transcribing → downloaded →
-                # downloading); then pending in WORKER-PROCESSING order
-                # so the table reflects what runs next: priority DESC,
-                # pub_date ASC (oldest first within same priority — the
-                # worker fetches in this order via list_by_status).
+                # Default sort = pipeline-stage order so the user sees
+                # whatever's actively burning CPU at the top:
+                #   transcribing → downloading → downloaded → pending.
+                # Within pending, follow the worker's DB-claim order
+                # (priority DESC, pub_date ASC) so the table reflects
+                # exactly what runs next. The user can override this by
+                # clicking the Status column header (cycles
+                # priority→asc→desc); when they do, _on_status_header_clicked
+                # delegates to Qt's QTableWidget.sortItems and we keep
+                # this SQL order as the "priority" reset.
                 "ORDER BY "
                 "  CASE status "
                 "    WHEN 'transcribing' THEN 0 "
-                "    WHEN 'downloaded'   THEN 1 "
-                "    WHEN 'downloading'  THEN 2 "
+                "    WHEN 'downloading'  THEN 1 "
+                "    WHEN 'downloaded'   THEN 2 "
                 "    ELSE 3 "
                 "  END, "
                 "  priority DESC, pub_date ASC"
@@ -491,6 +499,38 @@ class QueueTab(QWidget):
                 self.table.setItem(row, 7, QTableWidgetItem("—"))
         # Restore click-to-sort after the bulk insertion completes.
         self.table.setSortingEnabled(was_sorting)
+
+    # ── status column 3-way sort ──────────────────────────────
+
+    _STATUS_COL = 4
+
+    def _on_header_clicked(self, col: int) -> None:
+        """Status column cycles priority → asc → desc → priority. Other
+        columns fall through to Qt's built-in sort (already triggered by
+        the click since ``setSortingEnabled(True)``)."""
+        if col != self._STATUS_COL:
+            # User clicked a different column — that's a regular Qt
+            # sort. Reset our Status state so the next Status click
+            # starts fresh from the priority ordering.
+            self._status_sort_mode = "priority"
+            return
+        # Cycle: Qt has already produced asc on the 1st click and desc
+        # on the 2nd click via its natural toggle. The 3rd click is
+        # where we override — undo Qt's sort by repopulating from SQL
+        # and clear the indicator.
+        from PyQt6.QtCore import Qt as _Qt
+
+        if self._status_sort_mode == "priority":
+            self._status_sort_mode = "asc"
+            # Qt already did the asc sort.
+        elif self._status_sort_mode == "asc":
+            self._status_sort_mode = "desc"
+            # Qt already did the desc sort.
+        else:
+            self._status_sort_mode = "priority"
+            self.refresh()
+            # -1 hides the sort indicator, signalling "natural order".
+            self.table.horizontalHeader().setSortIndicator(-1, _Qt.SortOrder.AscendingOrder)
 
     # ── context menu ──────────────────────────────────────────
 
