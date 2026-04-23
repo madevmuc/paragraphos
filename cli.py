@@ -889,6 +889,64 @@ def cmd_retry_all_feeds(_args: argparse.Namespace) -> int:
 
 
 # ────────────────────────────────────────────────────────────────────────
+# one-off ingest (file / url / folder) — stdout = GUID(s) for agent chains
+# ────────────────────────────────────────────────────────────────────────
+
+
+def cmd_ingest_file(args: argparse.Namespace) -> int:
+    from core.local_source import IngestError, ingest_file
+
+    state = _state()
+    try:
+        guid = ingest_file(
+            Path(args.path),
+            show_slug=args.show,
+            state=state,
+            watchlist_path=DATA / "watchlist.yaml",
+            source="local-drop",
+            max_duration_hours=_settings().local_max_duration_hours,
+        )
+    except IngestError as e:
+        print(f"ingest failed: {e}", file=sys.stderr)
+        return 2
+    print(guid)
+    return 0
+
+
+def cmd_ingest_url(args: argparse.Namespace) -> int:
+    from core.local_source import IngestError, ingest_url
+
+    try:
+        guid = ingest_url(
+            args.url,
+            show_slug=args.show,
+            state=_state(),
+            watchlist_path=DATA / "watchlist.yaml",
+        )
+    except IngestError as e:
+        print(f"ingest failed: {e}", file=sys.stderr)
+        return 2
+    print(guid)
+    return 0
+
+
+def cmd_ingest_folder(args: argparse.Namespace) -> int:
+    from core.local_source import ingest_folder
+
+    guids = ingest_folder(
+        Path(args.path),
+        show_slug=args.show,
+        state=_state(),
+        watchlist_path=DATA / "watchlist.yaml",
+        recursive=args.recursive,
+        max_duration_hours=_settings().local_max_duration_hours,
+    )
+    for g in guids:
+        print(g)
+    return 0
+
+
+# ────────────────────────────────────────────────────────────────────────
 # settings management
 # ────────────────────────────────────────────────────────────────────────
 
@@ -1061,6 +1119,32 @@ def main() -> int:
     s_ss.add_argument("key")
     s_ss.add_argument("value")
     s_ss.set_defaults(fn=cmd_set_setting)
+
+    # — one-off ingest
+    s_ing = sub.add_parser("ingest", help="one-off ingest of a file / URL / folder")
+    ing_sub = s_ing.add_subparsers(dest="ingest_what", required=True)
+
+    s_if = ing_sub.add_parser("file", help="ingest one local media file")
+    s_if.add_argument("path")
+    s_if.add_argument("--show", default=None)
+    s_if.set_defaults(fn=cmd_ingest_file)
+
+    s_iu = ing_sub.add_parser("url", help="ingest a URL via yt-dlp generic extractor")
+    s_iu.add_argument("url")
+    s_iu.add_argument("--show", default=None)
+    s_iu.set_defaults(fn=cmd_ingest_url)
+
+    s_ifo = ing_sub.add_parser("folder", help="ingest every supported file in a folder")
+    s_ifo.add_argument("path")
+    s_ifo.add_argument("--show", default=None)
+    s_ifo.add_argument("--recursive", action="store_true", default=True)
+    s_ifo.add_argument(
+        "--no-recursive",
+        dest="recursive",
+        action="store_false",
+        help="only scan the top-level directory",
+    )
+    s_ifo.set_defaults(fn=cmd_ingest_folder)
 
     args = p.parse_args()
     return args.fn(args)
