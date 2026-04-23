@@ -25,6 +25,13 @@ class Show(BaseModel):
     # watchlist.yaml files — ShowDetailsDialog falls back to a 🎙 placeholder
     # when the feed didn't expose artwork.
     artwork_url: str = ""
+    # Source discriminator: "podcast" (RSS feed) or "youtube" (channel
+    # RSS at /feeds/videos.xml?channel_id=UC...). Defaults to "podcast"
+    # for backward compat with existing watchlist.yaml files.
+    source: str = "podcast"
+    # Per-show YouTube transcript preference. Empty string = inherit from
+    # Settings default. Otherwise one of: "captions" | "whisper" | "auto-captions".
+    youtube_transcript_pref: str = ""
 
 
 class Watchlist(BaseModel):
@@ -53,6 +60,10 @@ class Settings(BaseModel):
     # Paragraphos begins work immediately; turn off if you prefer the
     # queue to sit idle until you click Start.
     auto_start_queue: bool = True
+    # Seconds to wait after launch before the auto-start fires. Lets the
+    # main window finish painting + the tray icon appear before the queue
+    # grabs CPU. Settings UI exposes this next to auto_start_queue.
+    auto_start_delay_seconds: int = 5
     notify_on_success: bool = True
     # Flipped True the first time the user completes the first-run setup
     # dialog. Legacy users with customised paths get auto-backfilled on load
@@ -87,6 +98,40 @@ class Settings(BaseModel):
     # Output formats — Markdown is always written; SRT is opt-in. Default
     # True so upgraders see no behaviour change on first launch.
     save_srt: bool = True
+    # Source filter — at least one must be True. Validated in
+    # core.sources.validate_sources(). Default both on for backward
+    # compat (existing users keep podcast behaviour).
+    sources_podcasts: bool = True
+    sources_youtube: bool = True
+    # ISO8601 UTC timestamp of last successful `yt-dlp -U` run.
+    # Empty string means never run; helper triggers an update if older
+    # than 7 days. See ui.main_window.maybe_self_update_ytdlp.
+    ytdlp_last_self_update_at: str = ""
+    # Default YouTube transcript source for shows that don't override
+    # via Show.youtube_transcript_pref. One of:
+    # "captions" | "whisper" | "auto-captions".
+    youtube_default_transcript_source: str = "captions"
+    # Default expected caption language (whisper.cpp + yt-dlp lang code)
+    # for newly-added YouTube channels. The Add-YouTube dialog seeds the
+    # per-show language from this. Default "de" matches the user's
+    # German-podcast default; pick "en" if you mostly track English
+    # YouTube channels.
+    youtube_default_language: str = "de"
+    # Whether the bottom log dock is visible across all pages. Off by
+    # default — power-user diagnostic, surfaced by the Logs sidebar
+    # entry and the Ctrl+L shortcut for everyone else.
+    show_log_dock: bool = False
+    # Background connectivity probe (core.connectivity.ConnectivityMonitor).
+    # When True, a daemon thread TCP-probes 1.1.1.1/8.8.8.8/youtube.com on a
+    # 30 s/5 s cadence; when the network drops, the queue is paused with a
+    # banner; when it returns, network-failed episodes from the last
+    # ``auto_resume_failed_window_hours`` hours are re-queued automatically.
+    # Off-switch for users behind captive portals where the probes are noisy.
+    connectivity_monitor_enabled: bool = True
+    # How far back (hours) to look for network-failed episodes when
+    # auto-resuming after the connection comes back. 24 h covers the
+    # overnight / laptop-sleep case without re-running ancient retries.
+    auto_resume_failed_window_hours: int = 24
 
     @field_validator("daily_check_time")
     @classmethod

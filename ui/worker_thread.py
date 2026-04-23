@@ -27,7 +27,7 @@ import threading
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 
@@ -37,6 +37,7 @@ from core.pipeline import (
     PipelineContext,
     PipelineResult,
     download_phase,
+    process_episode,
     transcribe_phase,
 )
 from core.rss import build_manifest_with_url
@@ -77,7 +78,10 @@ class _DownloadPool(QThread):
     def __init__(
         self,
         *,
-        pending,
+        ctx,
+        show_by_slug: dict,
+        ep_num_map: dict,
+        scope_slugs: list,
         pctx_for,
         out_q,
         host_counter,
@@ -87,7 +91,10 @@ class _DownloadPool(QThread):
         workers: int,
     ):
         super().__init__()
-        self._pending = pending  # list[(show, ep_num, ep)]
+        self._ctx = ctx
+        self._show_by_slug = show_by_slug  # slug -> Show
+        self._ep_num_map = ep_num_map  # guid -> "0042" / "0000"
+        self._scope_slugs = list(scope_slugs)  # which shows this pass touches
         self._pctx_for = pctx_for  # callable(show) -> PipelineContext
         self._out_q = out_q
         self._host_counter = host_counter
@@ -97,11 +104,71 @@ class _DownloadPool(QThread):
         self._n_workers = max(int(workers or 1), 1)
 
         # Shared dispatcher state.
-        self._in_q: _queue.Queue = _queue.Queue()
         self._announced: set[str] = set()
         self._announced_lock = threading.Lock()
         self._remaining_lock = threading.Lock()
         self._remaining = self._n_workers
+        # Single SQLite writer-claim lock — UPDATE…RETURNING is atomic at
+        # the SQL level but we serialise the Python-side claim too so we
+        # never burn cycles racing on the writer lock.
+        self._claim_lock = threading.Lock()
+
+    def _claim_next_processable(self) -> tuple[dict, str] | None:
+        """Atomically claim the highest-priority processable episode.
+
+        Returns ``(row, prior_status)`` or None when nothing is left.
+
+        Two states are claimable:
+
+        * ``pending`` — never started. Marked ``downloading`` on claim;
+          the worker runs download_phase + transcribe.
+        * ``downloaded`` — file on disk but transcribe never ran. This
+          is the orphan-state left by app crashes / forced quits between
+          download_phase and the in-memory _out_q drain by the
+          TranscribeWorker. With the old code these rows sat forever
+          because nothing claimed them. Marked ``transcribing`` on
+          claim; the worker skips download_phase and pushes a synthetic
+          DownloadOutcome so transcribe_phase runs against the existing
+          mp3 on disk. Restores 'Run next/now' semantics for episodes
+          that completed download but were stranded.
+
+        Pending wins over downloaded at the same priority because
+        downloading can run in parallel with transcribing — keeps both
+        stages busy. Within each, ordered by priority DESC then
+        pub_date ASC.
+        """
+        if not self._scope_slugs:
+            return None
+        placeholders = ",".join("?" for _ in self._scope_slugs)
+        # Two-step claim: try pending first (cheapest path forward),
+        # fall back to downloaded (orphan recovery). Each step is a
+        # single atomic UPDATE…RETURNING.
+        with self._claim_lock, self._ctx.state._conn() as c:
+            row = c.execute(
+                "UPDATE episodes SET status='downloading' "
+                "WHERE guid = ("
+                "  SELECT guid FROM episodes "
+                f"  WHERE status='pending' AND show_slug IN ({placeholders}) "
+                "  ORDER BY priority DESC, pub_date ASC LIMIT 1"
+                ") "
+                "RETURNING *",
+                tuple(self._scope_slugs),
+            ).fetchone()
+            if row is not None:
+                return dict(row), "pending"
+            row = c.execute(
+                "UPDATE episodes SET status='transcribing' "
+                "WHERE guid = ("
+                "  SELECT guid FROM episodes "
+                f"  WHERE status='downloaded' AND show_slug IN ({placeholders}) "
+                "  ORDER BY priority DESC, pub_date ASC LIMIT 1"
+                ") "
+                "RETURNING *",
+                tuple(self._scope_slugs),
+            ).fetchone()
+            if row is not None:
+                return dict(row), "downloaded"
+        return None
 
     def _acquire_host_slot(self, host: str) -> bool:
         """Wait (sleeping briefly) until the host has a free slot.
@@ -138,19 +205,115 @@ class _DownloadPool(QThread):
                 if self._stop.is_set():
                     self.progress.emit("stopped between episodes")
                     return
-                try:
-                    item = self._in_q.get_nowait()
-                except _queue.Empty:
+                # Claim the highest-priority processable episode. New
+                # priority bumps take effect on the very next claim.
+                claimed = self._claim_next_processable()
+                if claimed is None:
                     return
-                show, ep_num, ep = item
+                ep, prior_status = claimed
+                show = self._show_by_slug.get(ep["show_slug"])
+                if show is None:
+                    # Show no longer in scope (deleted mid-pass). Reset
+                    # status so we don't leave it stuck in 'downloading'.
+                    self._ctx.state.set_status(ep["guid"], EpisodeStatus.PENDING)
+                    continue
+                ep_num = self._ep_num_map.get(ep["guid"], "0000")
 
                 self._announce_show(show.slug)
 
+                pctx = self._pctx_for(show)
+
+                # ── Orphan-recovery path ─────────────────────────────
+                # Episode was already downloaded by an earlier pass that
+                # crashed before transcribe ran. Skip download_phase and
+                # synthesise a DownloadOutcome from the on-disk file so
+                # the transcribe worker picks it up. If the file is
+                # missing (cleaned up, retention pruned), fall back to
+                # the normal pending path by resetting status.
+                if prior_status == "downloaded":
+                    from core.pipeline import build_slug
+
+                    show_dir = pctx.output_root / show.slug
+                    # Prefer the persisted mp3_path (set by download_phase
+                    # 2026-04-23+); fall back to slug-rebuild for legacy
+                    # rows downloaded before the column was wired. If
+                    # neither exists, glob the audio dir as a last-resort
+                    # — covers the case where the original ep_num is
+                    # unknown to this run.
+                    persisted = (ep.get("mp3_path") or "").strip()
+                    mp3_path = Path(persisted) if persisted else None
+                    if mp3_path is None or not mp3_path.exists():
+                        guess_slug = build_slug(ep["pub_date"], ep["title"], ep_num)
+                        cand = show_dir / "audio" / f"{guess_slug}.mp3"
+                        if cand.exists():
+                            mp3_path = cand
+                        else:
+                            # Glob: same date prefix + same title suffix,
+                            # any episode_number in between. Catches the
+                            # downloaded-with-real-ep-num / orphan-recovery-
+                            # rebuilds-with-0000 mismatch.
+                            from core.sanitize import slugify as _slugify
+
+                            date_prefix = (ep["pub_date"] or "")[:10]
+                            title_part = _slugify(ep["title"] or "")[:60]
+                            audio_dir = show_dir / "audio"
+                            if audio_dir.is_dir():
+                                hits = sorted(audio_dir.glob(f"{date_prefix}_*.mp3"))
+                                # Prefer matches that also contain the title's
+                                # leading slug fragment so two episodes from
+                                # the same date don't get crossed.
+                                titled = [
+                                    p for p in hits if title_part and title_part[:20] in p.name
+                                ]
+                                hit = (titled or hits)[0] if (titled or hits) else None
+                                if hit is not None:
+                                    mp3_path = hit
+                                    # Backfill the persisted path so the next
+                                    # orphan-recovery doesn't have to glob.
+                                    self._ctx.state.set_mp3_path(ep["guid"], str(mp3_path))
+                    if mp3_path is None or not mp3_path.exists():
+                        self._ctx.state.set_status(ep["guid"], EpisodeStatus.PENDING)
+                        continue
+                    # Slug derived from the actual filename so transcribe
+                    # writes <slug>.md / .srt next to a consistent name.
+                    slug = mp3_path.stem
+                    self.progress.emit(f"  ↻ {ep['title'][:80]} (orphan → transcribe)")
+                    self._out_q.put(
+                        (
+                            show,
+                            ep,
+                            DownloadOutcome(
+                                guid=ep["guid"],
+                                mp3_path=mp3_path,
+                                show_dir=show_dir,
+                                slug=slug,
+                                ep=ep,
+                            ),
+                        )
+                    )
+                    continue
+
+                # YouTube source-dispatch: the standard download path
+                # would fetch the watch URL as if it were an MP3 enclosure
+                # → text/html → "refusing non-audio Content-Type". Route
+                # YouTube items through the captions-first / whisper-
+                # fallback pipeline instead and synthesise a
+                # DownloadOutcome carrying the terminal result so the
+                # downstream transcribe worker just records it.
+                if getattr(pctx, "source", "podcast") == "youtube":
+                    self.progress.emit(f"  ⮕ {ep['title'][:80]} (youtube)")
+                    try:
+                        result = process_episode(ep["guid"], pctx, episode_number=ep_num)
+                    except Exception as e:  # noqa: BLE001
+                        result = PipelineResult("failed", ep["guid"], str(e))
+                    self._out_q.put((show, ep, DownloadOutcome(guid=ep["guid"], result=result)))
+                    continue
+
+                # Podcast path — same as before, with per-host throttling.
                 host = urlparse(ep["mp3_url"]).netloc or "?"
                 if not self._acquire_host_slot(host):
                     return
                 try:
-                    pctx = self._pctx_for(show)
                     self.progress.emit(f"  ↓ {ep['title'][:80]}")
                     outcome: DownloadOutcome = download_phase(
                         ep["guid"], pctx, episode_number=ep_num
@@ -162,19 +325,22 @@ class _DownloadPool(QThread):
                 # for progress reporting (episode_done payload).
                 self._out_q.put((show, ep, outcome))
         finally:
-            # Only the last worker standing pushes the end-of-stream
-            # sentinel so the transcribe worker sees exactly one.
+            # Only the last download-worker standing pushes end-of-stream
+            # sentinels — one per transcribe consumer (set externally as
+            # `consumer_count`, default 1 for backward compat). Multiple
+            # transcribe workers each block on `in_q.get()`; each needs
+            # its own sentinel to exit cleanly.
             with self._remaining_lock:
                 self._remaining -= 1
                 last = self._remaining == 0
             if last:
-                self._out_q.put(_SHUTDOWN)
+                for _ in range(getattr(self, "consumer_count", 1)):
+                    self._out_q.put(_SHUTDOWN)
 
     def run(self) -> None:
-        # Prime the input queue once; workers drain it concurrently.
-        for item in self._pending:
-            self._in_q.put(item)
-
+        # No pre-priming: workers claim from DB on each iteration so a
+        # mid-pass priority bump (Run next / Run now) takes effect
+        # immediately on the next claim.
         threads: list[threading.Thread] = []
         for i in range(self._n_workers):
             t = threading.Thread(
@@ -200,15 +366,30 @@ class _TranscribeWorker(QThread):
     # slug, guid, action, done_idx, total_pending, show_title, ep_title
     episode_done = pyqtSignal(str, str, str, int, int, str, str)
 
-    def __init__(self, *, in_q, pctx_for, total: int, stop_flag: threading.Event):
+    def __init__(
+        self,
+        *,
+        in_q,
+        pctx_for,
+        total: int,
+        stop_flag: threading.Event,
+        done_counter: list | None = None,
+        done_lock: threading.Lock | None = None,
+    ):
         super().__init__()
         self._in_q = in_q
         self._pctx_for = pctx_for
         self._total = total
         self._stop = stop_flag
+        # Shared atomic counter so N parallel workers report a coherent
+        # done_idx to the UI. List wrapper because ints are immutable;
+        # lock guards the increment so no two workers ever emit the
+        # same index. Default to a private counter for backwards-compat
+        # with single-worker callers.
+        self._done_counter = done_counter if done_counter is not None else [0]
+        self._done_lock = done_lock if done_lock is not None else threading.Lock()
 
     def run(self) -> None:
-        done_idx = 0
         while True:
             # A timeout-based get so we periodically notice stop_flag even
             # when the download side is stuck.
@@ -235,7 +416,9 @@ class _TranscribeWorker(QThread):
                     # should turn errors into PipelineResult, but guard.
                     r = PipelineResult("failed", outcome.guid, str(e))
 
-            done_idx += 1
+            with self._done_lock:
+                self._done_counter[0] += 1
+                done_idx = self._done_counter[0]
             if r.action == "failed":
                 self.progress.emit(f"    [{r.action}]")
                 for line in r.detail.splitlines():
@@ -300,7 +483,7 @@ class CheckAllThread(QThread):
 
     def _pctx_for(self, show) -> PipelineContext:
         """Build a PipelineContext customised for a specific show."""
-        return PipelineContext(
+        kwargs = dict(
             state=self.ctx.state,
             library=self.ctx.library,
             output_root=Path(self.settings.output_root).expanduser(),
@@ -313,6 +496,25 @@ class CheckAllThread(QThread):
             processors=self.settings.whisper_multiproc,
             save_srt=self.settings.save_srt,
         )
+        if getattr(show, "source", "podcast") == "youtube":
+            # Pull the channel id straight off the canonical channel-RSS URL
+            # (`…?channel_id=UC…`). The Watchlist always stores YouTube shows
+            # with this exact RSS shape, but defend against malformed input
+            # by falling back to "" — the pipeline's youtube branch will then
+            # raise rather than silently mis-route to the podcast path.
+            channel_id = ""
+            try:
+                qs = parse_qs(urlparse(show.rss).query)
+                channel_id = (qs.get("channel_id") or [""])[0]
+            except Exception:
+                pass
+            kwargs["source"] = "youtube"
+            kwargs["youtube_channel_id"] = channel_id
+            kwargs["youtube_transcript_pref"] = getattr(show, "youtube_transcript_pref", "") or ""
+            kwargs["youtube_default_transcript_source"] = getattr(
+                self.settings, "youtube_default_transcript_source", "captions"
+            )
+        return PipelineContext(**kwargs)
 
     def run(self) -> None:
         wl: Watchlist = self.ctx.watchlist
@@ -367,7 +569,7 @@ class CheckAllThread(QThread):
                     try:
                         canonical, manifest, new_etag, new_modified = f.result()
                     except Exception as e:
-                        fails = backoff.on_failure(self.ctx.state, show.slug)
+                        fails = backoff.on_failure(self.ctx.state, show.slug, exc=e)
                         self.progress.emit(f"feed error {show.slug} (fail #{fails}): {e}")
                         continue
                     backoff.on_success(self.ctx.state, show.slug)
@@ -420,9 +622,43 @@ class CheckAllThread(QThread):
             for ep in pending:
                 all_pending.append((show, ep_num_map.get(ep["guid"], "0000"), ep))
 
-        total = len(all_pending)
+        # Cross-show priority sort: a 'Run next' / 'Run now' bump on an
+        # episode in show X must actually run next, even if show X comes
+        # later in the per-show iteration order. Sort by:
+        #   priority DESC (10 = run-now > 5 = run-next > 0 = normal)
+        #   pub_date ASC (oldest first within same priority — matches the
+        #                 per-show fetch order so behaviour stays
+        #                 consistent for non-bumped queues).
+        all_pending.sort(
+            key=lambda triple: (
+                -int(triple[2].get("priority") or 0),
+                triple[2].get("pub_date") or "",
+            )
+        )
+
+        # Count orphaned `downloaded` rows too — these are episodes whose
+        # download completed in a prior pass but whose transcribe was lost
+        # (app crash / SIGKILL between out_q.put and TranscribeWorker
+        # drain). They need to be processed this pass via the worker's
+        # orphan-recovery path. Without counting them here, total=0 +
+        # we'd skip the pipeline entirely for the recovery case.
+        scope_target_slugs = [s.slug for s in fetch_targets]
+        orphan_count = 0
+        if scope_target_slugs:
+            placeholders = ",".join("?" for _ in scope_target_slugs)
+            with self.ctx.state._conn() as c:
+                row = c.execute(
+                    f"SELECT COUNT(*) AS n FROM episodes "
+                    f"WHERE status='downloaded' AND show_slug IN ({placeholders})",
+                    tuple(scope_target_slugs),
+                ).fetchone()
+                orphan_count = int(row["n"] or 0) if row else 0
+
+        total = len(all_pending) + orphan_count
         self.queue_sized.emit(total)
-        self.progress.emit(f"queue sized: {total} episode(s) pending")
+        self.progress.emit(
+            f"queue sized: {len(all_pending)} pending + {orphan_count} orphan-downloaded"
+        )
 
         if total == 0 or self._stop:
             self.finished_all.emit()
@@ -442,8 +678,20 @@ class CheckAllThread(QThread):
         host_lock = threading.Lock()
         q: _queue.Queue = _queue.Queue(maxsize=dl_conc)
 
+        # Build slug→Show + guid→ep_num maps so the DB-claim loop can
+        # rehydrate the per-show context without re-querying the watchlist.
+        # Use ALL fetch_targets (not just shows with pending) so the
+        # orphan-downloaded recovery path can claim from any in-scope
+        # show that has stranded `downloaded` rows.
+        show_by_slug = {s.slug: s for s in fetch_targets}
+        ep_num_map = {triple[2]["guid"]: triple[1] for triple in all_pending}
+        scope_slugs = list(show_by_slug.keys())
+
         dl = _DownloadPool(
-            pending=all_pending,
+            ctx=self.ctx,
+            show_by_slug=show_by_slug,
+            ep_num_map=ep_num_map,
+            scope_slugs=scope_slugs,
             pctx_for=self._pctx_for,
             out_q=q,
             host_counter=host_counter,
@@ -452,12 +700,33 @@ class CheckAllThread(QThread):
             stop_flag=self._stop_event,
             workers=dl_conc,
         )
-        tr = _TranscribeWorker(
-            in_q=q,
-            pctx_for=self._pctx_for,
-            total=total,
-            stop_flag=self._stop_event,
-        )
+        # Spawn `parallel_transcribe` transcribe workers (default 1).
+        # Pre-2026-04-23 only one was created regardless of the setting,
+        # so users with parallel_transcribe=2+ saw a single transcribing
+        # row at a time despite paying the configuration cost. All
+        # workers share the same in_q (queue.Queue is thread-safe) and
+        # the same stop_event; shutdown sends N _SHUTDOWN sentinels via
+        # the download pool's existing terminator (one per consumer).
+        n_tr = max(int(self.settings.parallel_transcribe or 1), 1)
+        # Shared atomic counter so the UI sees a coherent done_idx
+        # across all parallel workers (workers race to increment).
+        shared_done_counter = [0]
+        shared_done_lock = threading.Lock()
+        trs = [
+            _TranscribeWorker(
+                in_q=q,
+                pctx_for=self._pctx_for,
+                total=total,
+                stop_flag=self._stop_event,
+                done_counter=shared_done_counter,
+                done_lock=shared_done_lock,
+            )
+            for _ in range(n_tr)
+        ]
+        # Tell the download pool how many sentinels to enqueue at end-of-
+        # work so every consumer gets one and exits cleanly. Set as an
+        # attribute the pool will read in its terminator (added below).
+        dl.consumer_count = n_tr
         # Re-emit child signals on this thread so existing wiring stays
         # valid. CRITICAL: DirectConnection. The default AutoConnection
         # would be Queued (child workers and CheckAllThread run on
@@ -466,8 +735,9 @@ class CheckAllThread(QThread):
         # the re-emits would be silently dropped. `.emit()` is thread-
         # safe regardless of which thread invokes it.
         dl.progress.connect(self.progress.emit, type=Qt.ConnectionType.DirectConnection)
-        tr.progress.connect(self.progress.emit, type=Qt.ConnectionType.DirectConnection)
-        tr.episode_done.connect(self.episode_done.emit, type=Qt.ConnectionType.DirectConnection)
+        for tr in trs:
+            tr.progress.connect(self.progress.emit, type=Qt.ConnectionType.DirectConnection)
+            tr.episode_done.connect(self.episode_done.emit, type=Qt.ConnectionType.DirectConnection)
 
         # Poll the persisted pause flag from a short helper thread — when
         # set we trip the shared stop event, draining both workers.
@@ -485,9 +755,11 @@ class CheckAllThread(QThread):
         pw.start()
 
         dl.start()
-        tr.start()
+        for tr in trs:
+            tr.start()
         dl.wait()
-        tr.wait()
+        for tr in trs:
+            tr.wait()
         pause_watch_stop.set()
 
         self.finished_all.emit()

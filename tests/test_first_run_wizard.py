@@ -148,6 +148,19 @@ def test_run_brew_pins_runner_and_shows_elapsed(monkeypatch):
             started["start_called"] = True
 
     monkeypatch.setattr(install_runner, "BrewRunner", StubRunner)
+    # Neutralise the deps-check inside _refresh so the on_finished closure's
+    # trailing _refresh() call doesn't re-trigger the auto-chain (brew=True
+    # + whisper missing + _whisper_started=False would re-fire _install_whisper
+    # and flip the pill back to "installing…"). CI runners have brew on PATH
+    # but no whisper-cli; the author's Mac has both, which is why this only
+    # trips in CI.
+    from core import deps
+
+    monkeypatch.setattr(
+        deps,
+        "check",
+        lambda: deps.DepStatus(brew=False, whisper_cli=False, ffmpeg=False, model=True),
+    )
 
     w = wiz.FirstRunWizard()
     w._run_brew(w.whisper_row, ["brew", "install", "whisper-cpp"], label="whisper-cpp")

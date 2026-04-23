@@ -10,6 +10,7 @@ Run:
 
 from __future__ import annotations
 
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -83,6 +84,185 @@ class ParagraphosApp(QObject):
         super().__init__()
         self.ctx = AppContext.load(DATA_DIR)
         setup_logging(DATA_DIR, retention_days=self.ctx.settings.log_retention_days)
+        # One-line system fingerprint at startup — useful when users send
+        # logs for debugging. Carefully NO PII: no username, no hostname,
+        # no IP, no file paths, no watchlist content. macOS version,
+        # arch, CPU/RAM, Python + Paragraphos version, key tuning + tool
+        # presence.
+        import logging
+        import platform
+
+        from core.version import VERSION as _PARAGRAPHOS_VERSION
+
+        log = logging.getLogger(__name__)
+        try:
+            ram_gb = "?"
+            try:
+                import subprocess
+
+                proc = subprocess.run(
+                    ["sysctl", "-n", "hw.memsize"], capture_output=True, text=True, timeout=2
+                )
+                if proc.returncode == 0 and proc.stdout.strip().isdigit():
+                    ram_gb = f"{int(proc.stdout) // (1024**3)} GB"
+            except Exception:
+                pass
+            try:
+                from core.hw import detect
+
+                _hw = detect()
+                cpu_cores = _hw[1] if isinstance(_hw, tuple) else None
+            except Exception:
+                cpu_cores = None
+            from core import ytdlp as _ytdlp_mod
+
+            ytdlp_present = _ytdlp_mod.is_installed()
+            # yt-dlp is a PyInstaller-bundled binary — its first
+            # `--version` call costs ~11 s on cold cache (measured
+            # 2026-04-23). Blocking the GUI startup that long is
+            # unacceptable. Cache the value in meta after the first
+            # successful probe; on subsequent launches read from cache.
+            # If absent, log "—" and kick off an out-of-band probe in a
+            # daemon thread that updates the meta — next launch picks
+            # it up. Yt-dlp self-updates weekly so the cached value
+            # never drifts more than 7 days.
+            ytdlp_version = self.ctx.state.get_meta("ytdlp_version_cached") or "—"
+            if ytdlp_present and ytdlp_version == "—":
+                import threading
+
+                def _probe_ytdlp():
+                    try:
+                        p = subprocess.run(
+                            [str(_ytdlp_mod.ytdlp_path()), "--version"],
+                            capture_output=True,
+                            text=True,
+                            timeout=20,
+                        )
+                        if p.returncode == 0:
+                            v = p.stdout.strip().splitlines()[0]
+                            if v:
+                                self.ctx.state.set_meta("ytdlp_version_cached", v)
+                    except Exception:
+                        pass
+
+                threading.Thread(
+                    target=_probe_ytdlp, name="ytdlp-version-probe", daemon=True
+                ).start()
+            # Use the locator the transcriber's PATH-augmenter uses (NOT
+            # bare shutil.which), so the fingerprint matches what
+            # whisper-cli is actually invoked as. On a .app launched
+            # from /Applications the inherited PATH is /usr/bin:/bin
+            # only — shutil.which("whisper-cli") returns None even
+            # though the binary lives at /opt/homebrew/bin and
+            # transcription works fine via WHISPER_BIN's resolved path.
+            from core.transcriber import WHISPER_BIN as _WBIN
+            from core.transcriber import _locate_ffmpeg_dir as _ff_dir
+
+            def _homebrew_version(bin_path: Path) -> str:
+                """Extract a Homebrew formula's version from the symlink
+                target, e.g. /opt/homebrew/Cellar/whisper-cpp/1.8.4/bin/...
+                → '1.8.4'. Avoids spawning the binary (whisper-cli's
+                first-launch GGML init costs seconds + dumps an unhelpful
+                BLAS-backend banner that's not a version)."""
+                try:
+                    real = Path(bin_path).resolve()
+                    parts = real.parts
+                    if "Cellar" in parts:
+                        i = parts.index("Cellar")
+                        # parts[i+1] = formula name, parts[i+2] = version
+                        if i + 2 < len(parts):
+                            return parts[i + 2]
+                except Exception:
+                    pass
+                return "—"
+
+            whisper_bin_path = Path(_WBIN)
+            whisper_present = whisper_bin_path.exists()
+            whisper_version = _homebrew_version(whisper_bin_path) if whisper_present else "—"
+            ffmpeg_dir_path = _ff_dir()
+            ffmpeg_present = ffmpeg_dir_path is not None
+            ffmpeg_version = (
+                _homebrew_version(Path(ffmpeg_dir_path) / "ffmpeg") if ffmpeg_present else "—"
+            )
+
+            # Hardware-aware recommendations vs. current settings — log any
+            # mismatch so support tickets show 'is the user on the optimal
+            # tuning?' at a glance.
+            try:
+                from core.hw import recommended_multiproc_split, recommended_parallel_workers
+
+                rec_par = recommended_parallel_workers()
+                rec_mp = recommended_multiproc_split()
+            except Exception:
+                rec_par = None
+                rec_mp = None
+
+            s = self.ctx.settings
+            # Pre-format the full message once so we can both (a) send it
+            # to the file handler now and (b) replay it into the in-app
+            # LogDock later (after MainWindow wires one). Logging it to
+            # the file early matters for post-crash debugging; surfacing
+            # it in the dock matters so a user who opens Logs without
+            # tailing the log file still sees what they're running.
+            _fingerprint_msg = (
+                "paragraphos startup | "
+                "version=%s | macOS=%s (%s) | python=%s | "
+                "cpu_cores=%s | ram=%s | "
+                "tooling: whisper-cli=%s (%s) yt-dlp=%s (%s) ffmpeg=%s (%s) | "
+                "settings: model=%s parallel=%s%s multiproc=%s%s fast_mode=%s "
+                "auto_start=%s auto_start_delay=%ss save_srt=%s "
+                "mp3_retention_days=%s "
+                "sources_podcasts=%s sources_youtube=%s "
+                "youtube_default_language=%s youtube_default_transcript_source=%s "
+                "rss_concurrency=%s download_concurrency=%s use_etag_cache=%s "
+                "library_scan_cache=%s notify_mode=%s "
+                "connectivity_monitor=%s auto_resume_window_h=%s "
+                "show_log_dock=%s"
+            ) % (
+                _PARAGRAPHOS_VERSION,
+                platform.mac_ver()[0] or "unknown",
+                platform.machine(),
+                platform.python_version(),
+                cpu_cores or "?",
+                ram_gb,
+                "yes" if whisper_present else "no",
+                whisper_version,
+                "yes" if ytdlp_present else "no",
+                ytdlp_version,
+                "yes" if ffmpeg_present else "no",
+                ffmpeg_version,
+                s.whisper_model,
+                s.parallel_transcribe,
+                f" (rec={rec_par})"
+                if rec_par is not None and rec_par != s.parallel_transcribe
+                else "",
+                s.whisper_multiproc,
+                f" (rec={rec_mp})" if rec_mp is not None and rec_mp != s.whisper_multiproc else "",
+                s.whisper_fast_mode,
+                s.auto_start_queue,
+                getattr(s, "auto_start_delay_seconds", 5),
+                s.save_srt,
+                s.mp3_retention_days,
+                s.sources_podcasts,
+                s.sources_youtube,
+                getattr(s, "youtube_default_language", "de"),
+                s.youtube_default_transcript_source,
+                s.rss_concurrency,
+                s.download_concurrency,
+                s.use_etag_cache,
+                s.library_scan_cache,
+                s.notify_mode,
+                getattr(s, "connectivity_monitor_enabled", True),
+                getattr(s, "auto_resume_failed_window_hours", 24),
+                getattr(s, "show_log_dock", False),
+            )
+            log.info(_fingerprint_msg)
+            # Stash for replay into the LogDock once open_window wires
+            # one — see _replay_fingerprint_into_dock below.
+            self._startup_fingerprint_msg = _fingerprint_msg
+        except Exception as _exc:  # noqa: BLE001
+            log.warning("paragraphos startup fingerprint failed: %s", _exc)
+            self._startup_fingerprint_msg = None
         self._thread: CheckAllThread | None = None
         self._run_tally: dict[str, object] = {}
 
@@ -160,20 +340,25 @@ class ParagraphosApp(QObject):
         )
         self._sched.start()
 
+        # Delay before either the catch-up or the regular auto-start fires.
+        # Settings → 'Auto-start delay' (default 5 s). Gives the window time
+        # to paint and the tray icon to appear before the queue grabs CPU.
+        _delay_ms = max(0, int(getattr(self.ctx.settings, "auto_start_delay_seconds", 5))) * 1000
+
         if self.ctx.settings.catch_up_missed and should_catch_up(
             self.ctx.state.get_meta("last_successful_check"),
             self.ctx.settings.daily_check_time,
         ):
-            # Fire AFTER the window opens (300ms) so ShowsTab owns the thread.
+            # Fire AFTER the window opens so ShowsTab owns the thread.
             self.ctx.state.set_meta("queue_paused", "0")
-            QTimer.singleShot(2500, self._run_check)
+            QTimer.singleShot(_delay_ms, self._run_check)
         elif getattr(self.ctx.settings, "auto_start_queue", True):
             # Auto-start the queue on launch (checkbox in Settings, on by
             # default). If a previous session left the queue paused, the
             # user's explicit setting here overrides — a launch-time
             # auto-start means "resume and go", not "sit and wait".
             self.ctx.state.set_meta("queue_paused", "0")
-            QTimer.singleShot(2500, lambda: self._run_check(force=False))
+            QTimer.singleShot(_delay_ms, lambda: self._run_check(force=False))
 
     def _rebuild_tray_menu(
         self,
@@ -234,6 +419,7 @@ class ParagraphosApp(QObject):
             self.open_window()
 
     def open_window(self) -> None:
+        first_open = self._window is None
         if self._window is None:
             self._window = MainWindow()
             # If a background check was already running before the window
@@ -246,9 +432,30 @@ class ParagraphosApp(QObject):
                 self._window.show_update_banner(
                     self.ctx.update_available_tag, self.ctx.update_available_url
                 )
+        if first_open:
+            # Replay the startup fingerprint into the dock + logs pane so
+            # a user who opens Logs can see exactly which tool versions
+            # and settings this process is running with. The fingerprint
+            # is logged to the file handler during __init__ (before the
+            # dock exists), but the in-app dock only receives messages
+            # passed to its .append() API.
+            self._replay_fingerprint_into_dock()
         self._window.show()
         self._window.raise_()
         self._window.activateWindow()
+
+    def _replay_fingerprint_into_dock(self) -> None:
+        msg = getattr(self, "_startup_fingerprint_msg", None)
+        if not msg or self._window is None:
+            return
+        try:
+            self._window.log_dock.append(msg)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            self._window.logs_pane.append(msg)
+        except Exception:  # noqa: BLE001
+            pass
 
     def _run_check_on_gui_thread(self) -> None:
         # Scheduled fire (APScheduler cron) — keep force=False so parked
@@ -573,9 +780,103 @@ def _is_descendant(widget, ancestor) -> bool:
     return False
 
 
+def _acquire_single_instance_lock():
+    """Acquire an exclusive flock on a per-user lock file. Returns the
+    open fd on success (caller must keep it alive for the app's lifetime),
+    or None if another instance already holds the lock.
+
+    Without this, accidental double-launches (Dock click while already
+    running, kill + immediate relaunch races, etc.) leave multiple
+    paragraphos processes hammering the same SQLite DB and the user
+    sees stale UI from a zombie instance.
+    """
+    import fcntl
+
+    from core.paths import user_data_dir
+
+    lock_path = user_data_dir() / "paragraphos.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = open(lock_path, "w")
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fd.write(str(os.getpid()))
+        fd.flush()
+        return fd
+    except BlockingIOError:
+        fd.close()
+        return None
+
+
+def _install_slot_exception_handler() -> None:
+    """Replace ``sys.excepthook`` so a Python exception raised inside a
+    PyQt6 slot logs + (best-effort) shows a non-fatal dialog instead of
+    aborting the whole app via ``qFatal``.
+
+    PyQt6 changed PyQt5's behaviour: an uncaught exception in a slot
+    now reaches ``pyqt6_err_print()`` which calls ``qFatal`` → SIGABRT.
+    For an interactive desktop app that's user-hostile — one Python
+    bug in a button handler kills the entire window with no chance to
+    save state. Routing through ``sys.excepthook`` neutralises the
+    qFatal path; the exception is logged and (when a QApplication is
+    alive) surfaced via QMessageBox.
+    """
+    import logging
+    import traceback
+
+    log = logging.getLogger("paragraphos")
+    original = sys.excepthook
+
+    def _hook(exc_type, exc, tb):
+        # Log the full traceback first — never lose the diagnostic.
+        text = "".join(traceback.format_exception(exc_type, exc, tb))
+        log.error("uncaught exception:\n%s", text)
+        # Best-effort UI surface; tolerate any failure inside the dialog
+        # (e.g. no QApplication, headless mode, exception during
+        # construction of the QMessageBox itself).
+        try:
+            from PyQt6.QtWidgets import QApplication, QMessageBox
+
+            if QApplication.instance() is not None:
+                QMessageBox.critical(
+                    None,
+                    "Paragraphos — internal error",
+                    f"{exc_type.__name__}: {exc}\n\n"
+                    "The app stayed running. Check the log for the "
+                    "full traceback.",
+                )
+        except Exception:  # noqa: BLE001
+            pass
+        # Chain to the previous excepthook so anything else hooked in
+        # (debugger, IDE) still sees the exception.
+        try:
+            original(exc_type, exc, tb)
+        except Exception:  # noqa: BLE001
+            pass
+
+    sys.excepthook = _hook
+
+
 def main() -> int:
+    # Single-instance gate. If another paragraphos is already running,
+    # exit silently — the running instance keeps serving the user.
+    _lock_fd = _acquire_single_instance_lock()
+    if _lock_fd is None:
+        print(
+            "Paragraphos is already running — bring the running window to the front.",
+            file=sys.stderr,
+        )
+        return 0
+    # Keep the lock fd alive for the app's lifetime by stashing it on a
+    # module-level holder; the OS releases the flock when the process exits.
+    globals()["_PARAGRAPHOS_LOCK_FD"] = _lock_fd
+
     qapp = ParagraphosQApplication(sys.argv)
     qapp.setQuitOnLastWindowClosed(False)
+
+    # Install AFTER QApplication so the QMessageBox in the hook can
+    # find an instance, but BEFORE any widget is constructed so the
+    # very first slot exception is caught.
+    _install_slot_exception_handler()
 
     # App / dock / window icon — bundled AppIcon.icns.
     _icon_path = Path(__file__).resolve().parent / "assets" / "AppIcon.icns"
@@ -594,6 +895,18 @@ def main() -> int:
         print("First-run wizard cancelled — exiting.", flush=True)
         return 0
     app = ParagraphosApp()
+    # Background connectivity monitor — pauses the queue + shows a banner
+    # when the network drops, auto-resumes + re-queues network-failed items
+    # when it returns. Off-switch via Settings.connectivity_monitor_enabled
+    # for users behind captive portals where the probes would be noisy.
+    from core.connectivity import ConnectivityMonitor
+
+    if app.ctx.settings.connectivity_monitor_enabled:
+        app._conn_monitor = ConnectivityMonitor()
+        app._conn_monitor.online_changed.connect(
+            lambda online: app._window.on_online_changed(online) if app._window else None
+        )
+        app._conn_monitor.start()
     # New-install migration: flip ``setup_completed`` for legacy users
     # whose customised folder paths imply they've already done the work
     # the setup dialog asks about. Fresh installs see the dialog once;

@@ -7,7 +7,6 @@ from datetime import datetime, timedelta
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QHBoxLayout,
-    QHeaderView,
     QLabel,
     QMenu,
     QPushButton,
@@ -46,13 +45,42 @@ class QueueTab(QWidget):
 
         v = QVBoxLayout(self)
 
-        # Big-visible hero dashboard shown only while a run is active.
-        self.hero = QueueHero(
-            ctx,
-            on_pause=self._pause,
-            on_stop=self._stop,
-            parent=self,
-        )
+        # Single toolbar at the top — Start / Pause / Stop / Refresh /
+        # Remove all. Pre-2026-04-23 these lived at the bottom of the
+        # page AND duplicated Pause+Stop on the hero card; consolidated
+        # here so the hero only renders state, never actions.
+        # Margins explicitly zeroed so the first button's x-position
+        # exactly matches the same toolbar in Shows + Failed (Qt's
+        # implicit defaults aren't always identical across QHBoxLayout
+        # instances built in different files / construction orders).
+        h = QHBoxLayout()
+        h.setContentsMargins(0, 0, 0, 0)
+        self.start_btn = QPushButton("Start")
+        self.start_btn.clicked.connect(self._start)
+        self.pause_btn = QPushButton("Pause")
+        self.pause_btn.clicked.connect(self._pause)
+        self.stop_btn = QPushButton("Stop")
+        self.stop_btn.clicked.connect(self._stop)
+        refresh = QPushButton("Refresh")
+        refresh.clicked.connect(self.refresh)
+        # Empties the queue — marks every pending/in-flight episode as
+        # done so the worker stops picking them up. Confirm dialog
+        # because there's no undo.
+        self.clear_btn = QPushButton("Remove all items from queue")
+        self.clear_btn.clicked.connect(self._clear_queue)
+        # Two-stage Stop bookkeeping. First click → graceful (current
+        # transcription finishes, worker exits between episodes). Second
+        # click → force-stop, kills running whisper-cli + yt-dlp + the
+        # worker QThread.
+        self._stop_pressed_once = False
+        for b in (self.start_btn, self.pause_btn, self.stop_btn, refresh, self.clear_btn):
+            h.addWidget(b)
+        h.addStretch()
+        v.addLayout(h)
+
+        # Big-visible hero dashboard — always-visible state card (idle =
+        # grey ring + dashes; active = colored ring + live stats).
+        self.hero = QueueHero(ctx, parent=self)
         v.addWidget(self.hero)
 
         # Header — status summary
@@ -90,32 +118,37 @@ class QueueTab(QWidget):
                 "Finish ≈",
             ]
         )
-        _hdr = self.table.horizontalHeader()
-        _hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        # Auto-fit everything except Status — Status has a fixed width
-        # so the live "transcribing · XXX%" update doesn't resize the
-        # column (and cascade a layout twitch) every second.
-        for _col in (0, 1, 2, 5, 6, 7):
-            _hdr.setSectionResizeMode(_col, QHeaderView.ResizeMode.ResizeToContents)
-        _hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
-        self.table.setColumnWidth(4, 150)
+        from ui.widgets.resizable_header import make_resizable
+
+        # Columns: 0 Show, 1 Pub Date, 2 Ep#, 3 Title (stretch),
+        # 4 Status (fixed — live "transcribing · NN%" would jitter
+        # under any content-fit policy), 5 Audio, 6 Whisper, 7 Finish ≈.
+        make_resizable(
+            self.table,
+            settings_key="queue/columns",
+            stretch_col=3,
+            fixed_cols={4: 150},
+            defaults={0: 120, 1: 100, 2: 50, 5: 70, 6: 80, 7: 90},
+        )
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._on_context_menu)
+        # Click-to-sort on column headers. The Queue's natural order is
+        # priority+date so users get the worker order by default; turning
+        # sorting on lets them re-sort by Show / Status / etc. ad-hoc.
+        self.table.setSortingEnabled(True)
+        self.table.horizontalHeader().setSortIndicatorShown(True)
+        # Status column (col 4) gets a custom 3-way cycle on click:
+        #   priority (default) → ascending → descending → priority …
+        # Qt's natural toggle would only flip asc↔desc; users asked for
+        # the third state to restore the pipeline-stage default order
+        # (transcribing → downloading → downloaded → pending) without
+        # having to click another column to "unsort" Status.
+        self._status_sort_mode = "priority"
+        self.table.horizontalHeader().sectionClicked.connect(self._on_header_clicked)
         v.addWidget(self.table)
 
-        h = QHBoxLayout()
-        self.start_btn = QPushButton("Start")
-        self.start_btn.clicked.connect(self._start)
-        self.pause_btn = QPushButton("Pause")
-        self.pause_btn.clicked.connect(self._pause)
-        self.stop_btn = QPushButton("Stop")
-        self.stop_btn.clicked.connect(self._stop)
-        refresh = QPushButton("Refresh")
-        refresh.clicked.connect(self.refresh)
-        for b in (self.start_btn, self.pause_btn, self.stop_btn, refresh):
-            h.addWidget(b)
-        h.addStretch()
-        v.addLayout(h)
+        # (Buttons already created above as the top toolbar — _update_btns
+        # syncs their enabled/text state from the queue's current run-state.)
         self._update_btns()
 
         self._tick_timer = QTimer(self)
@@ -130,16 +163,26 @@ class QueueTab(QWidget):
         self.refresh()
 
     def _tick(self):
+        # Header + buttons are cheap (no SQL). Tuning hint is throttled
+        # to 60 s. Table refresh moved to a slower 3 s tick to stop the
+        # 1 Hz full-rebuild-of-400+-rows from dominating the event loop.
         self._tick_header()
         self._update_btns()
-        self._refresh_tuning_hint()
-        # Rebuild the table too — the refresh() call is throttled to
-        # 3 s internally, so firing every second just keeps the
-        # coalesce-window warm. Without this, the table only updated
-        # on on_queue_sized / on_episode_done / on_finished_all signals,
-        # which meant status transitions mid-queue (downloaded →
-        # transcribing) stayed invisible for minutes.
-        self.refresh()
+        # Throttle tuning-hint to once a minute — it calls into core.hw
+        # which probes sysctl on every call. Pointless to do it 60×/min.
+        import time as _t
+
+        now = _t.monotonic()
+        if now - getattr(self, "_tuning_hint_at", 0.0) > 60:
+            self._refresh_tuning_hint()
+            self._tuning_hint_at = now
+        # Table refresh: only if 3 s have passed since the last one. The
+        # previous code fired refresh() every second and relied on the
+        # internal coalesce; that still queried + rebuilt 400+ rows
+        # whenever it landed. Skipping the call entirely when within the
+        # window is the actual win.
+        if now - getattr(self, "_last_table_refresh", 0.0) > 3.0:
+            self.refresh()
 
     def _refresh_tuning_hint(self) -> None:
         """Show a muted 'nicht-empfohlen'-hinweis when parallel_transcribe
@@ -172,7 +215,7 @@ class QueueTab(QWidget):
             self._tuning_hint.hide()
             return
         self._tuning_hint.setText(
-            "ⓘ Tipp: " + " · ".join(mismatches) + " — anpassen in Settings für beste Laufzeit."
+            "ⓘ Tip: " + " · ".join(mismatches) + " — adjust in Settings for best performance."
         )
         self._tuning_hint.show()
 
@@ -227,8 +270,69 @@ class QueueTab(QWidget):
         self._update_btns()
 
     def _stop(self):
-        self._shows_tab()._stop()
+        # Dual-stage: graceful first, force on the second click.
+        if not self._stop_pressed_once:
+            self._stop_pressed_once = True
+            self._shows_tab()._stop()
+            self.stop_btn.setText("Stop now (force)")
+            self.stop_btn.setEnabled(True)  # keep clickable for the force step
+            return
+        # Force-stop: kill any running whisper-cli + yt-dlp subprocesses
+        # so the in-flight transcription / download dies immediately.
+        # Then terminate the worker QThread as a last resort.
+        self._stop_pressed_once = False
+        self.stop_btn.setText("Stop")
+        try:
+            import subprocess
+
+            subprocess.run(["pkill", "-9", "-f", "whisper-cli"], capture_output=True, check=False)
+            subprocess.run(["pkill", "-9", "-f", "yt-dlp"], capture_output=True, check=False)
+        except Exception:
+            pass
+        try:
+            t = self._shows_tab()._thread
+            if t is not None and t.isRunning():
+                t.terminate()
+                t.wait(2000)
+        except Exception:
+            pass
+        # Reset stranded in-flight rows so the user can re-trigger cleanly.
+        try:
+            self.ctx.state.recover_in_flight()
+        except Exception:
+            pass
+        self.ctx.queue.running = False
         self._update_btns()
+        self.refresh()
+
+    def _clear_queue(self):
+        from PyQt6.QtWidgets import QMessageBox
+
+        # SQL counts up the rows that will be touched so the dialog is honest.
+        with self.ctx.state._conn() as c:
+            row = c.execute(
+                "SELECT COUNT(*) AS n FROM episodes "
+                "WHERE status IN ('pending','downloading','downloaded','transcribing')"
+            ).fetchone()
+        n = int(row["n"] or 0) if row else 0
+        if n == 0:
+            QMessageBox.information(self, "Queue is already empty", "Nothing to remove.")
+            return
+        reply = QMessageBox.question(
+            self,
+            "Remove all items from queue",
+            f"Mark all {n} pending / in-flight episode(s) as done? "
+            "They won't be picked up again. Existing transcripts are kept.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        moved = self.ctx.state.clear_pending()
+        self._last_table_refresh = 0.0
+        self.refresh()
+        QMessageBox.information(
+            self, "Queue cleared", f"{moved} episode(s) removed from the queue."
+        )
 
     def _update_btns(self):
         running = self.ctx.queue.running
@@ -236,7 +340,12 @@ class QueueTab(QWidget):
         self.start_btn.setEnabled(not running)
         self.start_btn.setText("Resume" if paused else "Start")
         self.pause_btn.setEnabled(running and not paused)
+        # Stop button enabled only while running. Reset its dual-stage
+        # state when the run actually ends (not just on graceful click).
         self.stop_btn.setEnabled(running)
+        if not running and self._stop_pressed_once:
+            self._stop_pressed_once = False
+            self.stop_btn.setText("Stop")
 
     # ── rendering ─────────────────────────────────────────────
 
@@ -333,20 +442,30 @@ class QueueTab(QWidget):
                 "SELECT show_slug, pub_date, title, status, guid, duration_sec "
                 "FROM episodes "
                 "WHERE status IN ('pending','downloading','downloaded','transcribing') "
-                # Active stages first (transcribing → downloaded →
-                # downloading), then pending by priority + date. Without
-                # this CASE, a large 'pending' backlog would push in-flight
-                # rows past the LIMIT 500 cutoff and hide parallel workers
-                # from the UI.
+                # Default sort = pipeline-stage order so the user sees
+                # whatever's actively burning CPU at the top:
+                #   transcribing → downloading → downloaded → pending.
+                # Within pending, follow the worker's DB-claim order
+                # (priority DESC, pub_date ASC) so the table reflects
+                # exactly what runs next. The user can override this by
+                # clicking the Status column header (cycles
+                # priority→asc→desc); when they do, _on_status_header_clicked
+                # delegates to Qt's QTableWidget.sortItems and we keep
+                # this SQL order as the "priority" reset.
                 "ORDER BY "
                 "  CASE status "
                 "    WHEN 'transcribing' THEN 0 "
-                "    WHEN 'downloaded'   THEN 1 "
-                "    WHEN 'downloading'  THEN 2 "
+                "    WHEN 'downloading'  THEN 1 "
+                "    WHEN 'downloaded'   THEN 2 "
                 "    ELSE 3 "
                 "  END, "
-                "  priority DESC, pub_date DESC"
+                "  priority DESC, pub_date ASC"
             ).fetchall()
+        # Sorting must be off during repopulation — Qt re-sorts on every
+        # setItem when enabled, scrambling row indices and leaving cells
+        # past column 0 empty. Restore at the end.
+        was_sorting = self.table.isSortingEnabled()
+        self.table.setSortingEnabled(False)
         self.table.setRowCount(0)
         for r in rows:
             row = self.table.rowCount()
@@ -386,6 +505,40 @@ class QueueTab(QWidget):
                 self.table.setItem(row, 7, QTableWidgetItem(_fmt_finish(finish_at)))
             else:
                 self.table.setItem(row, 7, QTableWidgetItem("—"))
+        # Restore click-to-sort after the bulk insertion completes.
+        self.table.setSortingEnabled(was_sorting)
+
+    # ── status column 3-way sort ──────────────────────────────
+
+    _STATUS_COL = 4
+
+    def _on_header_clicked(self, col: int) -> None:
+        """Status column cycles priority → asc → desc → priority. Other
+        columns fall through to Qt's built-in sort (already triggered by
+        the click since ``setSortingEnabled(True)``)."""
+        if col != self._STATUS_COL:
+            # User clicked a different column — that's a regular Qt
+            # sort. Reset our Status state so the next Status click
+            # starts fresh from the priority ordering.
+            self._status_sort_mode = "priority"
+            return
+        # Cycle: Qt has already produced asc on the 1st click and desc
+        # on the 2nd click via its natural toggle. The 3rd click is
+        # where we override — undo Qt's sort by repopulating from SQL
+        # and clear the indicator.
+        from PyQt6.QtCore import Qt as _Qt
+
+        if self._status_sort_mode == "priority":
+            self._status_sort_mode = "asc"
+            # Qt already did the asc sort.
+        elif self._status_sort_mode == "asc":
+            self._status_sort_mode = "desc"
+            # Qt already did the desc sort.
+        else:
+            self._status_sort_mode = "priority"
+            self.refresh()
+            # -1 hides the sort indicator, signalling "natural order".
+            self.table.horizontalHeader().setSortIndicator(-1, _Qt.SortOrder.AscendingOrder)
 
     # ── context menu ──────────────────────────────────────────
 
@@ -420,10 +573,24 @@ class QueueTab(QWidget):
 
     def _retranscribe(self, guid: str) -> None:
         retranscribe_episode(self.ctx, guid)
+        # Kick the worker so the bumped re-transcribe runs next instead
+        # of waiting for the next scheduled pass.
+        try:
+            self._shows_tab().start_check(force=True)
+        except Exception:
+            pass
+        self._last_table_refresh = 0.0
         self.refresh()
 
     def _bump(self, guid: str, priority: int) -> None:
         bump_priority(self.ctx, guid, priority)
+        # Kick the worker so the bump takes effect immediately. Without
+        # this, the priority is set in SQL but the worker only re-queries
+        # on its next scheduled pass.
+        try:
+            self._shows_tab().start_check(force=True)
+        except Exception:
+            pass
         # Force a full rebuild so the new sort order is reflected immediately,
         # bypassing the 3-second refresh coalescing.
         import time

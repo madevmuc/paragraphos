@@ -1,6 +1,6 @@
-"""Smoke tests for the Obsidian group-box reshuffle in SettingsPane.
+"""Smoke tests for the Obsidian section in SettingsPane.
 
-These tests only cover that the dedicated 'Obsidian' QGroupBox exists and
+These tests only cover that the Obsidian section's widgets are present and
 that the preview line tracks changes to the output root — they do not try
 to cover the whole settings pane (that's the pickers test's turf).
 """
@@ -13,7 +13,7 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from PyQt6.QtWidgets import QApplication, QGroupBox
+from PyQt6.QtWidgets import QApplication, QLabel
 
 
 class _FakeState:
@@ -57,10 +57,14 @@ def _make_pane(tmp_path):
     return pane
 
 
-def test_obsidian_group_box_exists(tmp_path):
+def test_obsidian_section_present(tmp_path):
     pane = _make_pane(tmp_path)
-    titles = {gb.title() for gb in pane.findChildren(QGroupBox)}
-    assert "Obsidian" in titles
+    # Section uses the flat _section() header style (matching Library &
+    # output etc.), so we look for the preview label by objectName.
+    names = {lbl.objectName() for lbl in pane.findChildren(QLabel)}
+    assert "obsidian_preview" in names
+    assert hasattr(pane, "obsidian_path")
+    assert hasattr(pane, "obsidian_name")
 
 
 def test_obsidian_preview_reflects_output_root(tmp_path):

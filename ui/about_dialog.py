@@ -64,6 +64,7 @@ DEPENDENCIES = [
     ("ffmpeg", "6+", "LGPL-2.1 / GPL", "https://ffmpeg.org/"),
     ("Homebrew", "4+", "BSD-2-Clause", "https://brew.sh/"),
     ("defusedxml", "0.7+", "PSF-2.0", "https://github.com/tiran/defusedxml"),
+    ("yt-dlp", "latest", "Unlicense (public domain)", "https://github.com/yt-dlp/yt-dlp"),
 ]
 
 
@@ -84,7 +85,8 @@ def _about_tab(parent: QWidget) -> QWidget:
     v.addWidget(
         QLabel(
             "<br><b>Technology</b>: Python 3.12, PyQt6, whisper.cpp "
-            "(large-v3-turbo), APScheduler, watchdog, feedparser."
+            "(large-v3-turbo), APScheduler, watchdog, feedparser, "
+            "yt-dlp (for YouTube ingestion)."
         )
     )
     v.addWidget(

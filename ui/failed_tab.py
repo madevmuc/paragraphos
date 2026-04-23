@@ -6,7 +6,6 @@ from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QHBoxLayout,
-    QHeaderView,
     QMenu,
     QMessageBox,
     QPushButton,
@@ -43,7 +42,10 @@ class FailedTab(QWidget):
         v = QVBoxLayout(self)
 
         # Toolbar above the table — preserves the existing bulk actions.
+        # Zero contentsMargins so the first button's x-position lines
+        # up with the equivalent toolbar in Queue + Shows.
         h = QHBoxLayout()
+        h.setContentsMargins(0, 0, 0, 0)
         retry_all = QPushButton("Retry all")
         retry_all.clicked.connect(self._retry_all)
         add_q = QPushButton("Add failed to queue")
@@ -69,11 +71,24 @@ class FailedTab(QWidget):
             ["Show", "Episode", "Reason", "Tries", "Last attempt", ""]
         )
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        header = self.table.horizontalHeader()
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
-        self.table.setColumnWidth(5, 40)
+
+        from ui.widgets.resizable_header import make_resizable
+
+        # Columns: 0 Show, 1 Episode (stretch — varies most), 2 Reason
+        # (was a second Stretch — only one column can effectively absorb
+        # spare space, so this drops to Interactive with a generous
+        # default), 3 Tries, 4 Last attempt, 5 ⋯ menu button (fixed).
+        make_resizable(
+            self.table,
+            settings_key="failed/columns",
+            stretch_col=1,
+            fixed_cols={5: 40},
+            defaults={0: 140, 2: 280, 3: 60, 4: 150},
+        )
+        # Click-to-sort on column headers. Disabled during refresh()
+        # population (Qt re-sorts on every setItem) and re-enabled after.
+        self.table.setSortingEnabled(True)
+        self.table.horizontalHeader().setSortIndicatorShown(True)
         v.addWidget(self.table)
 
         # guid → raw error text, for Copy-error / Show-log handlers.
@@ -87,6 +102,11 @@ class FailedTab(QWidget):
                 "SELECT show_slug, guid, title, attempted_at, error_text "
                 "FROM episodes WHERE status='failed' ORDER BY attempted_at DESC"
             ).fetchall()
+        # Sorting must be off during repopulation — Qt re-sorts on every
+        # setItem when enabled, scrambling row indices and leaving cells
+        # past column 0 empty. Restore at the end.
+        was_sorting = self.table.isSortingEnabled()
+        self.table.setSortingEnabled(False)
         self.table.setRowCount(0)
         self._errors.clear()
         for r in rows:
@@ -121,6 +141,8 @@ class FailedTab(QWidget):
             a_skip.triggered.connect(lambda _=False, g=guid: self._skip_forever(g))
             btn.setMenu(menu)
             self.table.setCellWidget(row, 5, btn)
+        # Restore click-to-sort after the bulk insertion completes.
+        self.table.setSortingEnabled(was_sorting)
 
     # --- Per-row handlers -------------------------------------------------
 

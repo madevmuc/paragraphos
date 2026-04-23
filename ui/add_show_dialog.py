@@ -6,13 +6,15 @@ seeding logic (backlog strategy, manifest upsert).
 
 from __future__ import annotations
 
+import time
 from typing import Optional
 from urllib.parse import urlparse
 
-from PyQt6.QtCore import QObject, QRunnable, Qt, QThread, QThreadPool, pyqtSignal
+from PyQt6.QtCore import QObject, QRunnable, Qt, QThread, QThreadPool, QTimer, pyqtSignal
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
     QButtonGroup,
+    QComboBox,
     QDialog,
     QFormLayout,
     QFrame,
@@ -20,6 +22,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QRadioButton,
     QStackedWidget,
@@ -28,15 +31,24 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core import youtube_meta as _youtube_meta
+from core import ytdlp as _ytdlp
 from core.discovery import find_rss_from_url, search_itunes
 from core.models import Show
 from core.prompt_gen import suggest_whisper_prompt
 from core.rss import FeedHealth, build_manifest_with_url, feed_metadata
 from core.sanitize import slugify
+from core.sources import youtube_enabled
+from core.youtube import (
+    YoutubeUrlError,
+    parse_youtube_url,
+    rss_url_for_channel_id,
+)
 from ui.feed_probe import FeedProbeWorker
 from ui.themes import current_tokens
 from ui.widgets.pill import Pill
 from ui.widgets.show_results_table import ShowResultsTable
+from ui.ytdlp_install_dialog import YtdlpInstallDialog
 
 # --------------------------------------------------------------------------- #
 # Background fetchers                                                         #
@@ -89,6 +101,37 @@ class _AppleResolveThread(QThread):
                 out["error"] = "No RSS link found on that page."
             else:
                 out.update({"ok": True, "rss": rss})
+        except Exception as e:  # noqa: BLE001
+            out["error"] = str(e)
+        self.done.emit(out)
+
+
+class _YoutubeResolveThread(QThread):
+    """Resolve a YouTube handle/channel URL → channel preview off-thread.
+
+    yt-dlp HTTP calls take 5–30 s. Running them on the GUI thread freezes
+    the app; macOS then SIGTERMs the unresponsive process.
+    """
+
+    done = pyqtSignal(dict)  # {ok, preview, error}
+    step = pyqtSignal(int, int, str)  # (current_step, total_steps, label)
+
+    def __init__(self, parsed_kind: str, parsed_value: str, parent=None):
+        super().__init__(parent)
+        self.parsed_kind = parsed_kind
+        self.parsed_value = parsed_value
+
+    def run(self) -> None:
+        out: dict = {"ok": False}
+        try:
+            self.step.emit(1, 2, "Resolving channel ID…")
+            if self.parsed_kind == "handle":
+                cid = _youtube_meta.resolve_handle_to_channel_id(self.parsed_value)
+            else:  # "channel_id"
+                cid = self.parsed_value
+            self.step.emit(2, 2, "Fetching channel info…")
+            preview = _youtube_meta.fetch_channel_preview(cid)
+            out.update({"ok": True, "preview": preview})
         except Exception as e:  # noqa: BLE001
             out["error"] = str(e)
         self.done.emit(out)
@@ -167,11 +210,17 @@ class AddShowDialog(QDialog):
         mode_row = QHBoxLayout()
         self._mode_buttons = QButtonGroup(self)
         self._mode_buttons.setExclusive(True)
-        for key, label in (
+        modes = [
             ("name", "By name"),
             ("url", "By URL"),
             ("apple", "Paste Apple link"),
-        ):
+        ]
+        # Append the 4th mode only when YouTube ingestion is enabled in
+        # settings — keeps the dialog identical for podcast-only users.
+        self._yt_enabled = youtube_enabled(ctx.settings)
+        if self._yt_enabled:
+            modes.append(("youtube", "YouTube URL"))
+        for key, label in modes:
             b = QRadioButton(label)
             b.setProperty("mode", key)
             mode_row.addWidget(b)
@@ -186,7 +235,11 @@ class AddShowDialog(QDialog):
         self._page_name = self._build_name_page()
         self._page_url = self._build_url_page()
         self._page_apple = self._build_apple_page()
-        for p in (self._page_name, self._page_url, self._page_apple):
+        pages = [self._page_name, self._page_url, self._page_apple]
+        if self._yt_enabled:
+            self._page_youtube = self._build_youtube_page()
+            pages.append(self._page_youtube)
+        for p in pages:
             self._pages.addWidget(p)
         root.addWidget(self._pages, 1)
 
@@ -198,8 +251,15 @@ class AddShowDialog(QDialog):
         if not checked:
             return
         key = button.property("mode")
-        idx = {"name": 0, "url": 1, "apple": 2}.get(key, 0)
+        idx = {"name": 0, "url": 1, "apple": 2, "youtube": 3}.get(key, 0)
         self._pages.setCurrentIndex(idx)
+        if key == "youtube":
+            self._refresh_youtube_install_gate()
+            if not _ytdlp.is_installed() and not getattr(self, "_yt_install_attempted", False):
+                self._yt_install_attempted = True
+                # Defer so the YouTube page is visible before the install
+                # dialog appears centred over it.
+                QTimer.singleShot(0, self._open_ytdlp_installer)
 
     # ------------------------------------------------------------------ #
     # Mode A — By name (iTunes search, preserved behavior)               #
@@ -715,22 +775,79 @@ class AddShowDialog(QDialog):
     # Common: backlog toggle, button row, save funnel                    #
     # ------------------------------------------------------------------ #
 
-    def _backlog_row(self, key: str, default: str = "Last 5") -> QHBoxLayout:
-        row = QHBoxLayout()
-        row.addWidget(QLabel("Backlog:"))
+    def _backlog_row(self, key: str, default: str = "Last 5") -> QVBoxLayout:
+        """Two-row backlog selector: count radios + time-window dropdown.
+
+        Returns a QVBoxLayout containing both rows. Mutually exclusive:
+        picking a time window deselects radios; picking a radio resets the
+        time dropdown to '— none —'.
+        """
+        wrapper = QVBoxLayout()
+        wrapper.setContentsMargins(0, 0, 0, 0)
+
+        radios_row = QHBoxLayout()
+        radios_row.addWidget(QLabel("Backlog:"))
         grp = QButtonGroup(self)
         grp.setExclusive(True)
-        for label in ("Last 5", "Last 10", "All"):
+        for label in ("Most recent", "Last 5", "Last 10", "Last 20", "Last 50", "All"):
             b = QRadioButton(label)
             if label == default:
                 b.setChecked(True)
             grp.addButton(b)
-            row.addWidget(b)
-        row.addStretch(1)
+            radios_row.addWidget(b)
+        radios_row.addStretch(1)
+        wrapper.addLayout(radios_row)
+
+        time_row = QHBoxLayout()
+        time_row.addWidget(QLabel("Or by time:"))
+        combo = QComboBox()
+        combo.addItem("— none —", userData=None)
+        for label, days in (
+            ("Last 7 days", 7),
+            ("Last 30 days", 30),
+            ("Last 6 months", 183),
+            ("Last 12 months", 365),
+        ):
+            combo.addItem(label, userData=days)
+        time_row.addWidget(combo)
+        time_row.addStretch(1)
+        wrapper.addLayout(time_row)
+
+        # Mutual exclusion wiring.
+        def _on_time_changed(_idx: int) -> None:
+            if combo.currentData() is None:
+                return
+            grp.setExclusive(False)
+            for btn in grp.buttons():
+                btn.setChecked(False)
+            grp.setExclusive(True)
+
+        def _on_radio_toggled(checked: bool) -> None:
+            if not checked:
+                return
+            if combo.currentIndex() != 0:
+                combo.blockSignals(True)
+                combo.setCurrentIndex(0)
+                combo.blockSignals(False)
+
+        combo.currentIndexChanged.connect(_on_time_changed)
+        for b in grp.buttons():
+            b.toggled.connect(_on_radio_toggled)
+
         setattr(self, f"_backlog_grp_{key}", grp)
-        return row
+        setattr(self, f"_backlog_time_{key}", combo)
+        return wrapper
 
     def _backlog_choice(self, key: str) -> str:
+        """Return one of:
+        - 'All'
+        - 'Most recent'
+        - 'Last N' (5/10/20/50)
+        - 'Time:N' where N is the time-window in days (7/30/183/365)
+        """
+        combo: QComboBox = getattr(self, f"_backlog_time_{key}", None)
+        if combo is not None and combo.currentData() is not None:
+            return f"Time:{int(combo.currentData())}"
         grp: QButtonGroup = getattr(self, f"_backlog_grp_{key}")
         btn = grp.checkedButton()
         return btn.text() if btn else "Last 5"
@@ -753,6 +870,396 @@ class AddShowDialog(QDialog):
         return row
 
     # ------------------------------------------------------------------ #
+    # Mode D — YouTube URL                                               #
+    # ------------------------------------------------------------------ #
+
+    def _build_youtube_page(self) -> QWidget:
+        page = QWidget()
+        v = QVBoxLayout(page)
+        v.setContentsMargins(0, 0, 0, 0)
+
+        self._loaded_yt_preview: dict = {}
+
+        # Install gate — shown when yt-dlp is missing.
+        self._yt_install_btn = QPushButton("Install yt-dlp")
+        self._yt_install_btn.clicked.connect(self._open_ytdlp_installer)
+        self._yt_install_btn.setVisible(False)
+        v.addWidget(self._yt_install_btn, 0, Qt.AlignmentFlag.AlignLeft)
+
+        v.addWidget(QLabel("Paste a YouTube channel URL or video URL:"))
+        row = QHBoxLayout()
+        self.youtube_url_input = QLineEdit()
+        self.youtube_url_input.setPlaceholderText("Paste YouTube channel URL or video URL")
+        self.youtube_url_input.editingFinished.connect(self._on_youtube_url_resolve)
+        row.addWidget(self.youtube_url_input, 1)
+        self._yt_resolve_btn = QPushButton("Resolve")
+        self._yt_resolve_btn.clicked.connect(self._on_youtube_url_resolve)
+        row.addWidget(self._yt_resolve_btn)
+        v.addLayout(row)
+
+        self.yt_status = Pill("", kind="idle")
+        self.yt_status.setVisible(False)
+        v.addWidget(self.yt_status, 0, Qt.AlignmentFlag.AlignLeft)
+
+        # Indeterminate marquee — visible only while a resolve is in flight,
+        # so the user can see the app isn't frozen during the yt-dlp wait.
+        self.yt_progress = QProgressBar()
+        self.yt_progress.setRange(0, 0)
+        self.yt_progress.setTextVisible(False)
+        self.yt_progress.setVisible(False)
+        v.addWidget(self.yt_progress)
+
+        # Live-tick state for the resolve progress UI.
+        self._yt_resolve_timer: Optional[QTimer] = None
+        self._yt_resolve_started_at: float = 0.0
+        self._yt_resolve_step_label: str = ""
+        self._yt_resolve_step_idx: tuple = (0, 2)
+
+        # Preview card.
+        self.yt_card = QFrame()
+        self.yt_card.setObjectName("YoutubePreviewCard")
+        self.yt_card.setFrameShape(QFrame.Shape.StyledPanel)
+        self.yt_card.setVisible(False)
+        card_v = QVBoxLayout(self.yt_card)
+        self.yt_card_title = QLabel("")
+        f = self.yt_card_title.font()
+        f.setPointSize(f.pointSize() + 4)
+        f.setBold(True)
+        self.yt_card_title.setFont(f)
+        self.yt_card_title.setWordWrap(True)
+        card_v.addWidget(self.yt_card_title)
+        self.yt_card_meta = QLabel("")
+        self.yt_card_meta.setStyleSheet(f"color: {current_tokens()['ink_3']};")
+        card_v.addWidget(self.yt_card_meta)
+        v.addWidget(self.yt_card)
+
+        # Per-show transcript language. Pre-filled from the YouTube
+        # default in Settings → YouTube. Used as the lang code passed to
+        # both yt-dlp's caption fetch (with a fallback chain inside
+        # core.youtube_captions) and whisper-cli (when audio fallback
+        # fires).
+        lang_row = QHBoxLayout()
+        lang_row.addWidget(QLabel("Transcript language:"))
+        self._yt_lang_combo = QComboBox()
+        self._yt_lang_combo.addItem("German (de)", userData="de")
+        self._yt_lang_combo.addItem("English (en)", userData="en")
+        _seed_lang = getattr(self.ctx.settings, "youtube_default_language", "de") or "de"
+        for i in range(self._yt_lang_combo.count()):
+            if self._yt_lang_combo.itemData(i) == _seed_lang:
+                self._yt_lang_combo.setCurrentIndex(i)
+                break
+        lang_row.addWidget(self._yt_lang_combo)
+        lang_row.addStretch(1)
+        v.addLayout(lang_row)
+
+        # Backfill choice (default: Only new).
+        # Two rows: count-based radios + a time-range dropdown. Picking a
+        # time range clears the radios; picking a radio clears the time
+        # range — mutually exclusive on the user's intent.
+        bf_row = QHBoxLayout()
+        bf_row.addWidget(QLabel("Backfill:"))
+        self._yt_backfill_grp = QButtonGroup(self)
+        self._yt_backfill_grp.setExclusive(True)
+        for label in ("All", "Only new", "Most recent", "Last 20", "Last 50"):
+            b = QRadioButton(label)
+            if label == "Only new":
+                b.setChecked(True)
+            self._yt_backfill_grp.addButton(b)
+            bf_row.addWidget(b)
+        bf_row.addStretch(1)
+        v.addLayout(bf_row)
+
+        time_row = QHBoxLayout()
+        time_row.addWidget(QLabel("Or by time:"))
+        self._yt_time_combo = QComboBox()
+        self._yt_time_combo.addItem("— none —", userData=None)
+        for label, days in (
+            ("Last 7 days", 7),
+            ("Last 30 days", 30),
+            ("Last 6 months", 183),
+            ("Last 12 months", 365),
+        ):
+            self._yt_time_combo.addItem(label, userData=days)
+        # Mutual exclusion: picking a time range deselects radios; picking
+        # a radio resets the dropdown to "— none —".
+        self._yt_time_combo.currentIndexChanged.connect(self._on_yt_time_changed)
+        for b in self._yt_backfill_grp.buttons():
+            b.toggled.connect(self._on_yt_radio_toggled)
+        time_row.addWidget(self._yt_time_combo)
+        time_row.addStretch(1)
+        v.addLayout(time_row)
+
+        v.addStretch(1)
+
+        # Add / Cancel.
+        btn_row = QHBoxLayout()
+        btn_row.addStretch(1)
+        cancel = QPushButton("Cancel")
+        cancel.clicked.connect(self.reject)
+        btn_row.addWidget(cancel)
+        self._yt_add_btn = QPushButton("Add")
+        self._yt_add_btn.setDefault(True)
+        self._yt_add_btn.setEnabled(False)
+        self._yt_add_btn.clicked.connect(self._add_from_youtube)
+        btn_row.addWidget(self._yt_add_btn)
+        v.addLayout(btn_row)
+
+        return page
+
+    def _activate_youtube_mode(self) -> None:
+        """Programmatic switch into the YouTube tab (used by tests)."""
+        for b in self._mode_buttons.buttons():
+            if b.property("mode") == "youtube":
+                b.setChecked(True)
+                break
+
+    def _refresh_youtube_install_gate(self) -> None:
+        installed = _ytdlp.is_installed()
+        self._yt_install_btn.setVisible(not installed)
+        self.youtube_url_input.setEnabled(installed)
+        self._yt_resolve_btn.setEnabled(installed)
+
+    def _open_ytdlp_installer(self) -> None:
+        dlg = YtdlpInstallDialog(mode="install", parent=self)
+        dlg.finished_install.connect(self._on_ytdlp_install_finished)
+        # showEvent triggers start() automatically — no manual start() needed.
+        dlg.exec()
+
+    def _on_ytdlp_install_finished(self, ok: bool) -> None:
+        if ok:
+            self._refresh_youtube_install_gate()
+            # Retry the URL parse / preview if the user already pasted one.
+            if self.youtube_url_input.text().strip():
+                self._on_youtube_url_resolve()
+
+    def _on_youtube_url_resolve(self) -> None:
+        url = self.youtube_url_input.text().strip()
+        if not url:
+            return
+        if not _ytdlp.is_installed():
+            self._refresh_youtube_install_gate()
+            return
+        try:
+            parsed = parse_youtube_url(url)
+        except YoutubeUrlError as e:
+            self.yt_status.setText(f"Not a YouTube URL: {e}")
+            self.yt_status.set_kind("fail")
+            self.yt_status.setVisible(True)
+            self.yt_card.setVisible(False)
+            self._yt_add_btn.setEnabled(False)
+            return
+
+        if parsed.kind == "video":
+            # v1.2: video flow not yet supported in the Add dialog.
+            self.yt_status.setText(
+                "Adding single videos comes in a follow-up — please paste a channel URL for now."
+            )
+            self.yt_status.set_kind("fail")
+            self._yt_add_btn.setEnabled(False)
+            return
+
+        # Initial status — the step signal will overwrite this almost
+        # immediately, but seed it so the user sees motion before the
+        # first emit reaches the GUI thread.
+        self._yt_resolve_started_at = time.monotonic()
+        self._yt_resolve_step_label = "Resolving channel ID…"
+        self._yt_resolve_step_idx = (1, 2)
+        self._refresh_yt_resolve_status()
+        self.yt_status.set_kind("running")
+        self.yt_status.setVisible(True)
+        self.yt_progress.setVisible(True)
+        self._yt_add_btn.setEnabled(False)
+        self._yt_resolve_btn.setEnabled(False)
+        self.youtube_url_input.setEnabled(False)
+
+        # Off-thread: yt-dlp HTTP calls would otherwise block the GUI thread
+        # and macOS would SIGTERM the unresponsive process.
+        self._yt_resolve_thread = _YoutubeResolveThread(parsed.kind, parsed.value, self)
+        self._yt_resolve_thread.step.connect(self._on_youtube_resolve_step)
+        self._yt_resolve_thread.done.connect(self._on_youtube_resolve_done)
+        self._yt_resolve_thread.start()
+
+        # 1 Hz live-elapsed counter so the user sees the seconds tick by.
+        self._yt_resolve_timer = QTimer(self)
+        self._yt_resolve_timer.timeout.connect(self._refresh_yt_resolve_status)
+        self._yt_resolve_timer.start(1000)
+
+    def _on_youtube_resolve_step(self, current: int, total: int, label: str) -> None:
+        self._yt_resolve_step_idx = (current, total)
+        self._yt_resolve_step_label = label
+        self._refresh_yt_resolve_status()
+
+    def _refresh_yt_resolve_status(self) -> None:
+        elapsed = int(time.monotonic() - self._yt_resolve_started_at)
+        cur, total = self._yt_resolve_step_idx
+        self.yt_status.setText(f"Step {cur}/{total}: {self._yt_resolve_step_label} ({elapsed}s)")
+
+    def _on_youtube_resolve_done(self, out: dict) -> None:
+        # Stop the elapsed-second ticker + hide the marquee.
+        if getattr(self, "_yt_resolve_timer", None) is not None:
+            self._yt_resolve_timer.stop()
+            self._yt_resolve_timer = None
+        self.yt_progress.setVisible(False)
+        # Re-enable input/resolve regardless of outcome.
+        self._yt_resolve_btn.setEnabled(True)
+        self.youtube_url_input.setEnabled(True)
+        if not out.get("ok"):
+            self.yt_status.setText(f"Error: {out.get('error', 'unknown')}")
+            self.yt_status.set_kind("fail")
+            self._yt_add_btn.setEnabled(False)
+            return
+        preview = out["preview"]
+        self._loaded_yt_preview = preview
+        self.yt_card_title.setText(preview.get("title") or "(untitled)")
+        vc = preview.get("video_count") or 0
+        suffix = "+ recent" if preview.get("video_count_is_lower_bound") else ""
+        self.yt_card_meta.setText(
+            f"{vc}{suffix} video(s) · channel id: {preview.get('channel_id', '')}"
+        )
+        self.yt_card.setVisible(True)
+        self.yt_status.setText("Ready")
+        self.yt_status.set_kind("ok")
+        self._yt_add_btn.setEnabled(True)
+
+    def _yt_backfill_choice(self) -> str:
+        btn = self._yt_backfill_grp.checkedButton()
+        return btn.text() if btn else "Only new"
+
+    def _yt_time_window_days(self) -> int | None:
+        """Return the selected time-window in days, or None if 'none'."""
+        return self._yt_time_combo.currentData()
+
+    def _on_yt_time_changed(self, _idx: int) -> None:
+        """Picking a time window deselects the count radios."""
+        if self._yt_time_combo.currentData() is None:
+            return
+        # Uncheck all radios so _yt_backfill_choice falls back to "Only new"
+        # (its default sentinel) which we ignore when a time window is set.
+        self._yt_backfill_grp.setExclusive(False)
+        for b in self._yt_backfill_grp.buttons():
+            b.setChecked(False)
+        self._yt_backfill_grp.setExclusive(True)
+
+    def _on_yt_radio_toggled(self, checked: bool) -> None:
+        """Picking a count radio resets the time dropdown to 'none'."""
+        if not checked:
+            return
+        if self._yt_time_combo.currentIndex() != 0:
+            self._yt_time_combo.blockSignals(True)
+            self._yt_time_combo.setCurrentIndex(0)
+            self._yt_time_combo.blockSignals(False)
+
+    def _add_from_youtube(self) -> None:
+        preview = self._loaded_yt_preview
+        if not preview:
+            QMessageBox.warning(self, "Missing", "Resolve a channel URL first.")
+            return
+        title = preview.get("title") or "channel"
+        cid = preview.get("channel_id") or ""
+        if not cid:
+            QMessageBox.warning(self, "Missing", "Could not determine channel id.")
+            return
+        slug = slugify(title)
+
+        # Decide enumeration limit. Time-window selection takes precedence
+        # over the count radios (the two are mutually exclusive in the UI).
+        time_window_days = self._yt_time_window_days()
+        choice = self._yt_backfill_choice()
+
+        if time_window_days is not None:
+            # Fetch a generous slice (videos come newest-first; we filter
+            # client-side and stop once we hit the cutoff). 500 covers the
+            # vast majority of channels for a 12-month window.
+            limit = 500
+        elif choice == "All":
+            limit = None
+        elif choice == "Last 20":
+            limit = 20
+        elif choice == "Last 50":
+            limit = 50
+        elif choice == "Most recent":
+            limit = 1  # actually transcribe this one (vs "Only new" which marks-as-done)
+        else:  # "Only new"
+            limit = 1  # seed the most recent video so future runs see a baseline
+
+        try:
+            videos = _youtube_meta.enumerate_channel_videos(cid, limit=limit)
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.warning(self, "Error", f"Failed to enumerate videos: {e}")
+            return
+
+        # Apply time-window filter after enumeration.
+        if time_window_days is not None:
+            import time as _time
+
+            cutoff = _time.time() - time_window_days * 86400
+            videos = [v for v in videos if (v.get("timestamp") or 0) >= cutoff]
+
+        # Build a manifest the existing _do_save funnel understands.
+        # Date sourcing: yt-dlp --flat-playlist returns `timestamp`
+        # (Unix epoch seconds), not `upload_date`. Convert to ISO so
+        # build_slug doesn't fall back to 1970-01-01 in the filename.
+        import time as _time
+
+        manifest = []
+        for v in videos:
+            vid = v.get("id") or v.get("url") or ""
+            if not vid:
+                continue
+            ts = v.get("timestamp") or 0
+            pub = ""
+            if ts:
+                pub = _time.strftime("%Y-%m-%d", _time.gmtime(int(ts)))
+            elif v.get("upload_date"):
+                # Some yt-dlp paths emit YYYYMMDD instead — normalise.
+                ud = str(v["upload_date"])
+                if len(ud) == 8 and ud.isdigit():
+                    pub = f"{ud[:4]}-{ud[4:6]}-{ud[6:8]}"
+                else:
+                    pub = ud
+            manifest.append(
+                {
+                    "guid": vid,
+                    "title": v.get("title") or vid,
+                    "pubDate": pub,
+                    # YouTube videos have no MP3 enclosure — leave blank;
+                    # the YouTube pipeline branch resolves the source itself.
+                    "mp3_url": f"https://www.youtube.com/watch?v={vid}",
+                }
+            )
+
+        # Backlog mode controls whether seeded items get marked done as a
+        # baseline ("Only new") or stay pending ("All", "Most recent",
+        # "Last N", time windows). "Only new" is the only one that should
+        # mark anything as done — the rest are explicit user picks for
+        # what should actually transcribe. Time windows already filtered
+        # the manifest above, so everything left should transcribe.
+        if time_window_days is not None:
+            backlog_mode = "All"
+        elif choice == "All":
+            backlog_mode = "All"
+        elif choice == "Only new":
+            backlog_mode = "Last 5"  # seed + mark-as-done
+        else:  # "Most recent" / "Last 20" / "Last 50"
+            backlog_mode = "All"
+
+        show_dict = {
+            "slug": slug,
+            "title": title,
+            "rss": rss_url_for_channel_id(cid),
+            "whisper_prompt": "",
+            "manifest": manifest,
+            "backlog": backlog_mode,
+            "artwork_url": preview.get("artwork_url", "") or "",
+            "source": "youtube",
+            # User-picked from the dropdown above (seeded from the
+            # YouTube default language in Settings). Used as lang code
+            # for caption fetch + whisper-cli fallback.
+            "language": self._yt_lang_combo.currentData() or "de",
+        }
+        self._do_save(show_dict)
+
+    # ------------------------------------------------------------------ #
     # Save funnel — logic preserved from the pre-rewrite dialog          #
     # ------------------------------------------------------------------ #
 
@@ -769,13 +1276,21 @@ class AddShowDialog(QDialog):
             QMessageBox.warning(self, "Missing", "RSS URL required.")
             return
 
-        model = Show(
+        # Honour show["language"] if the caller passed one (the YouTube
+        # path forces "en"); fall back to the model default ("de") for
+        # podcast modes, which is what existing users expect.
+        _lang = (show.get("language") or "").strip()
+        model_kwargs = dict(
             slug=slug,
             title=(show.get("title") or "").strip() or slug,
             rss=rss,
             whisper_prompt=(show.get("whisper_prompt") or "").strip(),
             artwork_url=(show.get("artwork_url") or "").strip(),
+            source=(show.get("source") or "podcast"),
         )
+        if _lang:
+            model_kwargs["language"] = _lang
+        model = Show(**model_kwargs)
         self.updated_watchlist.shows.append(model)
         self.updated_watchlist.save(self.ctx.data_dir / "watchlist.yaml")
 
@@ -793,6 +1308,18 @@ class AddShowDialog(QDialog):
         mode = show.get("backlog") or "Last 5"
         if mode == "All":
             pass  # leave everything pending
+        elif mode == "Most recent":
+            # Keep only the latest 1 pending; mark older as done.
+            with self.ctx.state._conn() as c:
+                c.execute(
+                    """
+                    UPDATE episodes SET status='done'
+                    WHERE show_slug=? AND guid NOT IN (
+                        SELECT guid FROM episodes WHERE show_slug=?
+                        ORDER BY pub_date DESC LIMIT 1
+                    )""",
+                    (slug, slug),
+                )
         elif mode.startswith("Last "):
             n = int(mode.split()[1])
             with self.ctx.state._conn() as c:
@@ -805,5 +1332,46 @@ class AddShowDialog(QDialog):
                     )""",
                     (slug, slug, n),
                 )
+        elif mode.startswith("Time:"):
+            # Mark every episode older than the cutoff as done. Pub-date
+            # format varies across feeds (RFC 2822, ISO 8601, YouTube
+            # YYYYMMDD); parse defensively in Python and update by guid.
+            from datetime import datetime, timedelta, timezone
+            from email.utils import parsedate_to_datetime
+
+            days = int(mode.split(":", 1)[1])
+            cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+            def _parse(pd: str) -> datetime | None:
+                if not pd:
+                    return None
+                try:
+                    dt = parsedate_to_datetime(pd)
+                    if dt is not None:
+                        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+                except (TypeError, ValueError):
+                    pass
+                try:
+                    return datetime.fromisoformat(pd.replace("Z", "+00:00"))
+                except ValueError:
+                    pass
+                if len(pd) == 8 and pd.isdigit():  # YouTube YYYYMMDD
+                    try:
+                        return datetime.strptime(pd, "%Y%m%d").replace(tzinfo=timezone.utc)
+                    except ValueError:
+                        pass
+                return None
+
+            stale_guids = [
+                ep["guid"] for ep in manifest if (_parse(ep.get("pubDate", "")) or cutoff) < cutoff
+            ]
+            if stale_guids:
+                with self.ctx.state._conn() as c:
+                    placeholders = ",".join("?" for _ in stale_guids)
+                    c.execute(
+                        f"UPDATE episodes SET status='done' "
+                        f"WHERE show_slug=? AND guid IN ({placeholders})",
+                        (slug, *stale_guids),
+                    )
 
         self.accept()

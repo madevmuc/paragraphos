@@ -50,6 +50,31 @@ def test_finish_obsidian_sets_vault_and_name(tmp_path):
     assert s.output_root == str(vault / "raw" / "transcripts")
 
 
+def test_setup_dialog_prefills_obsidian_when_vault_detected(tmp_path, monkeypatch):
+    """If best_guess_vault returns a path, the Obsidian page defaults to
+    YES + pre-populates the path field."""
+    fake_vault = tmp_path / "MyVault"
+    fake_vault.mkdir()
+    (fake_vault / ".obsidian").mkdir()
+    monkeypatch.setattr("core.obsidian.best_guess_vault", lambda: fake_vault)
+    s = Settings()
+    s.setup_completed = False
+    dlg = _make(s)
+    assert dlg._yes_obsidian_btn.isChecked() is True
+    assert dlg._no_obsidian_btn.isChecked() is False
+    assert dlg._vault_edit.text() == str(fake_vault)
+
+
+def test_setup_dialog_defaults_no_when_no_vault(monkeypatch):
+    monkeypatch.setattr("core.obsidian.best_guess_vault", lambda: None)
+    s = Settings()
+    s.setup_completed = False
+    dlg = _make(s)
+    assert dlg._no_obsidian_btn.isChecked() is True
+    assert dlg._yes_obsidian_btn.isChecked() is False
+    assert dlg._vault_edit.text() == ""
+
+
 def test_finish_obsidian_without_colocate_keeps_explicit_output(tmp_path):
     s = Settings()
     vault = tmp_path / "OtherVault"

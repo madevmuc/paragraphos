@@ -6,7 +6,6 @@ from PyQt6.QtCore import QSettings, Qt
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (
     QHBoxLayout,
-    QHeaderView,
     QLabel,
     QMenu,
     QMessageBox,
@@ -32,16 +31,59 @@ class ShowsTab(QWidget):
         self.queue_listener = None  # set by MainWindow — receives queue signals
 
         layout = QVBoxLayout(self)
-        self.global_stats_label = QLabel()
-        self.global_stats_label.setStyleSheet(
-            "padding:8px 12px; background:palette(alternate-base); border-radius:4px;"
+
+        # All toolbars at the top so the action layout matches Queue +
+        # Failed (consolidated 2026-04-23). Two rows: always-on actions
+        # first, bulk-on-selection second (disabled until rows picked).
+        # Zero contentsMargins so the first button's x-position lines
+        # up with the equivalent toolbar in Queue + Failed.
+        action_row = QHBoxLayout()
+        action_row.setContentsMargins(0, 0, 0, 0)
+        self.add_btn = QPushButton("Add Podcast / Show…")
+        self.add_btn.clicked.connect(self._add)
+        self.curated_btn = QPushButton("Add Episodes…")
+        self.curated_btn.clicked.connect(self._curated)
+        self.check_btn = QPushButton("Start / Check Now")
+        self.check_btn.clicked.connect(self._check)
+        self.pause_btn = QPushButton("Pause")
+        self.pause_btn.clicked.connect(self._pause)
+        self.stop_btn = QPushButton("Stop")
+        self.stop_btn.setEnabled(False)
+        self.stop_btn.clicked.connect(self._stop)
+        self.refresh_btn = QPushButton("Refresh")
+        self.refresh_btn.clicked.connect(self.refresh)
+        self.health_btn = QPushButton("Check feeds")
+        self.health_btn.clicked.connect(self._check_feed_health)
+        self.retry_failed_feeds_btn = QPushButton("Retry failed feeds")
+        self.retry_failed_feeds_btn.setToolTip(
+            "Clear backoff and immediately re-fetch every feed currently "
+            "marked fail. Useful after fixing a connectivity issue."
         )
-        self.global_stats_label.setTextFormat(Qt.TextFormat.RichText)
-        layout.addWidget(self.global_stats_label)
+        self.retry_failed_feeds_btn.clicked.connect(self._retry_failed_feeds)
+        self.rescan_btn = QPushButton("Rescan library")
+        self.rescan_btn.clicked.connect(self._rescan_library)
+        self.rescan_btn.setToolTip(
+            "Count words + durations for all existing transcripts (one-time)"
+        )
+        for b in (
+            self.add_btn,
+            self.curated_btn,
+            self.check_btn,
+            self.pause_btn,
+            self.stop_btn,
+            self.refresh_btn,
+            self.health_btn,
+            self.retry_failed_feeds_btn,
+            self.rescan_btn,
+        ):
+            action_row.addWidget(b)
+        action_row.addStretch()
+        layout.addLayout(action_row)
 
         # Bulk-action toolbar — operates on all currently selected rows.
         # Buttons are disabled until the table has a selection.
         bulk_row = QHBoxLayout()
+        bulk_row.setContentsMargins(0, 0, 0, 0)
         self._bulk_disable = QPushButton("Disable selected")
         self._bulk_enable = QPushButton("Enable selected")
         self._bulk_stale = QPushButton("Mark stale selected")
@@ -58,6 +100,13 @@ class ShowsTab(QWidget):
             bulk_row.addWidget(b)
         bulk_row.addStretch()
         layout.addLayout(bulk_row)
+
+        self.global_stats_label = QLabel()
+        self.global_stats_label.setStyleSheet(
+            "padding:8px 12px; background:palette(alternate-base); border-radius:4px;"
+        )
+        self.global_stats_label.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(self.global_stats_label)
 
         # Filter toolbar — summary label on the left, filter button + count
         # pill on the right. The legacy standalone QLineEdit search was
@@ -94,7 +143,16 @@ class ShowsTab(QWidget):
         self.table.setHorizontalHeaderLabels(
             ["Slug", "Title", "On", "Total", "Done", "Pending", "Feed"]
         )
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        from ui.widgets.resizable_header import make_resizable
+
+        # Columns: 0 Slug, 1 Title (stretch), 2 On, 3 Total, 4 Done,
+        # 5 Pending, 6 Feed.
+        make_resizable(
+            self.table,
+            settings_key="shows/columns",
+            stretch_col=1,
+            defaults={0: 140, 2: 40, 3: 60, 4: 60, 5: 70, 6: 70},
+        )
         self.table.horizontalHeader().setSortIndicatorShown(True)
         self.table.setSortingEnabled(True)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -102,41 +160,10 @@ class ShowsTab(QWidget):
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
         layout.addWidget(self.table)
 
-        btns = QHBoxLayout()
-        self.add_btn = QPushButton("Add Podcast…")
-        self.add_btn.clicked.connect(self._add)
-        self.curated_btn = QPushButton("Add Episodes…")
-        self.curated_btn.clicked.connect(self._curated)
-        self.check_btn = QPushButton("Start / Check Now")
-        self.check_btn.clicked.connect(self._check)
-        self.pause_btn = QPushButton("Pause")
-        self.pause_btn.clicked.connect(self._pause)
-        self.stop_btn = QPushButton("Stop")
-        self.stop_btn.setEnabled(False)
-        self.stop_btn.clicked.connect(self._stop)
-        self.refresh_btn = QPushButton("Refresh")
-        self.refresh_btn.clicked.connect(self.refresh)
-        self.health_btn = QPushButton("Check feeds")
-        self.health_btn.clicked.connect(self._check_feed_health)
-        self.rescan_btn = QPushButton("Rescan library")
-        self.rescan_btn.clicked.connect(self._rescan_library)
-        self.rescan_btn.setToolTip(
-            "Count words + durations for all existing transcripts (one-time)"
-        )
-        for b in (
-            self.add_btn,
-            self.curated_btn,
-            self.check_btn,
-            self.pause_btn,
-            self.stop_btn,
-            self.refresh_btn,
-            self.health_btn,
-            self.rescan_btn,
-        ):
-            btns.addWidget(b)
-        btns.addStretch()
-        layout.addLayout(btns)
-
+        # (Action + bulk button rows live at the top of the tab — see
+        # the consolidation block above. The bottom button row that
+        # used to live here was removed 2026-04-23 so Shows / Queue /
+        # Failed all keep their toolbars in the same screen position.)
         self.refresh()
 
     def _open_details(self, index) -> None:
@@ -236,10 +263,39 @@ class ShowsTab(QWidget):
             stored = self.ctx.state.get_meta(f"feed_health:{show.slug}") or ""
             if stored == "ok":
                 pill = Pill("ok", kind="ok")
+                pill.setToolTip("Last feed fetch succeeded.")
             elif stored == "fail":
-                pill = Pill("fail", kind="fail")
+                # Categorised failure detail (written by core.backoff.on_failure
+                # via the worker, or by cli.py's manual retry helpers). Falls
+                # back to plain "fail" if the failure happened before the
+                # categorisation feature shipped.
+                from core.feed_errors import label as _label
+                from core.feed_errors import recommendation as _rec
+
+                cat = self.ctx.state.get_meta(f"feed_fail_category:{show.slug}") or ""
+                msg = self.ctx.state.get_meta(f"feed_fail_message:{show.slug}") or ""
+                at = self.ctx.state.get_meta(f"feed_fail_at:{show.slug}") or ""
+                until = self.ctx.state.get_meta(f"feed_backoff_until:{show.slug}") or ""
+                text = f"fail · {_label(cat)}" if cat else "fail"
+                pill = Pill(text, kind="fail")
+                tip_lines = []
+                if cat:
+                    tip_lines.append(f"Category: {_label(cat)}")
+                if at:
+                    tip_lines.append(f"When: {at}")
+                if msg:
+                    tip_lines.append(f"Message: {msg[:300]}")
+                if until:
+                    tip_lines.append(f"Backoff: parked until {until}")
+                if cat:
+                    tip_lines.append("")
+                    tip_lines.append(_rec(cat))
+                tip_lines.append("")
+                tip_lines.append("Open Show details → Feed health to retry now.")
+                pill.setToolTip("\n".join(tip_lines))
             else:
                 pill = Pill("?", kind="idle")
+                pill.setToolTip("No feed check has run yet for this show.")
             h.addWidget(pill)
             self.table.setCellWidget(row, FEED_COL, pill_container)
             self._feed_pills[show.slug] = pill
@@ -318,7 +374,7 @@ class ShowsTab(QWidget):
             return
         slug = self.table.item(row, 0).text()
         menu = QMenu(self)
-        details = QAction("Details / Informationen…", self)
+        details = QAction("Details…", self)
         details.triggered.connect(lambda: self._open_details_by_slug(slug))
         check_only = QAction(f"Check '{slug}' now", self)
         check_only.triggered.connect(lambda: self._check(only_slug=slug))
@@ -330,14 +386,44 @@ class ShowsTab(QWidget):
         pause_label = f"Resume '{slug}'" if paused else f"Pause '{slug}'"
         pause_act = QAction(pause_label, self)
         pause_act.triggered.connect(lambda: self._toggle_show_pause(slug))
+        # Show-level priority bumps — same semantics as the per-episode
+        # menu in Show Details, but apply to every pending episode of
+        # the show in one go.
+        run_next_all = QAction(f"Run all pending of '{slug}' next", self)
+        run_next_all.triggered.connect(lambda: self._bump_all_pending(slug, 5))
+        run_now_all = QAction(f"Run all pending of '{slug}' now", self)
+        run_now_all.triggered.connect(lambda: self._bump_all_pending(slug, 10))
+
         menu.addAction(details)
         menu.addSeparator()
         menu.addAction(check_only)
+        menu.addAction(run_next_all)
+        menu.addAction(run_now_all)
         menu.addAction(stale_all)
         menu.addAction(toggle)
         menu.addSeparator()
         menu.addAction(pause_act)
         menu.exec(self.table.viewport().mapToGlobal(pos))
+
+    def _bump_all_pending(self, slug: str, priority: int) -> None:
+        """Set priority on every pending/downloading episode of `slug`,
+        then kick the worker so the bumps take effect immediately."""
+        with self.ctx.state._conn() as c:
+            rows = c.execute(
+                "UPDATE episodes SET priority=? "
+                "WHERE show_slug=? AND status IN ('pending','downloading') "
+                "RETURNING guid",
+                (priority, slug),
+            ).fetchall()
+        n = len(rows)
+        self._log(f"bumped {n} pending episode(s) of {slug} to priority {priority}")
+        # Kick the worker so the new sort order takes effect on the next
+        # claim. With the DB-claim worker (no pre-priming) the bump shows
+        # up immediately if a pass is already running.
+        try:
+            self.start_check(force=True)
+        except Exception:
+            pass
 
     def _open_details_by_slug(self, slug: str) -> None:
         from ui.show_details_dialog import ShowDetailsDialog
@@ -528,6 +614,52 @@ class ShowsTab(QWidget):
                 continue
             pill.set_kind("ok" if health.ok else "fail")
             pill.setText("✅" if health.ok else f"⚠ {health.reason}")
+
+    def _retry_failed_feeds(self) -> None:
+        """Clear backoff + immediately re-fetch every feed marked fail.
+        Synchronous — blocks for ~1 s per failed feed. Replaces the
+        sqlite-poke an LLM agent would otherwise have to script."""
+        from datetime import datetime as _dt
+        from datetime import timezone as _tz
+
+        from core.feed_errors import categorize
+        from core.rss import build_manifest
+
+        state = self.ctx.state
+        failed = [
+            s
+            for s in self.ctx.watchlist.shows
+            if (state.get_meta(f"feed_health:{s.slug}") or "") == "fail"
+        ]
+        if not failed:
+            self._log("no failed feeds to retry")
+            return
+        self._log(f"retrying {len(failed)} failed feed(s)…")
+        ok = 0
+        for show in failed:
+            # Clear backoff state per slug.
+            for k in (
+                "feed_fail_count",
+                "feed_backoff_until",
+                "feed_fail_category",
+                "feed_fail_message",
+                "feed_fail_at",
+            ):
+                state.set_meta(f"{k}:{show.slug}", "0" if k.endswith("count") else "")
+            try:
+                build_manifest(show.rss, timeout=30)
+            except Exception as e:  # noqa: BLE001
+                state.set_meta(f"feed_health:{show.slug}", "fail")
+                state.set_meta(f"feed_fail_category:{show.slug}", categorize(e))
+                state.set_meta(f"feed_fail_message:{show.slug}", str(e)[:500])
+                state.set_meta(f"feed_fail_at:{show.slug}", _dt.now(_tz.utc).isoformat())
+                self._log(f"  ✗ {show.slug}: {e}")
+                continue
+            state.set_meta(f"feed_health:{show.slug}", "ok")
+            self._log(f"  ✓ {show.slug}")
+            ok += 1
+        self._log(f"retry complete — {ok}/{len(failed)} ok")
+        self.refresh()
 
     def _toggle(self, slug: str) -> None:
         for show in self.ctx.watchlist.shows:

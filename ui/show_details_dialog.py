@@ -178,6 +178,7 @@ class ShowDetailsDialog(QDialog):
 
         root.addLayout(self._build_header())
         root.addLayout(self._build_form())
+        root.addWidget(self._build_feed_health_panel())
         root.addWidget(self._build_advanced_group())
         root.addWidget(self._build_episodes_table(), 1)
         root.addLayout(self._build_footer())
@@ -493,6 +494,134 @@ class ShowDetailsDialog(QDialog):
         except Exception:
             return "—"
 
+    # ── feed health ──────────────────────────────────────────
+
+    def _build_feed_health_panel(self) -> QWidget:
+        """Compact 'Feed health' panel: pill + categorised last error +
+        backoff state + per-category recommendation + Retry-now button.
+        Hidden when feed_health is 'ok' or 'unknown' so a healthy show
+        doesn't carry a permanent 'all is well' badge."""
+        from core.feed_errors import label as _label
+        from core.feed_errors import recommendation as _rec
+
+        state = self.ctx.state
+        slug = self.slug
+        health = state.get_meta(f"feed_health:{slug}") or "unknown"
+        cat = state.get_meta(f"feed_fail_category:{slug}") or ""
+        msg = state.get_meta(f"feed_fail_message:{slug}") or ""
+        at = state.get_meta(f"feed_fail_at:{slug}") or ""
+        backoff_until = state.get_meta(f"feed_backoff_until:{slug}") or ""
+        fail_count = int(state.get_meta(f"feed_fail_count:{slug}") or 0)
+
+        container = QWidget()
+        self._feed_health_container = container
+        if health != "fail":
+            container.setVisible(False)
+            return container
+
+        _t = current_tokens()
+        container.setStyleSheet(
+            f"QWidget#feedHealthPanel {{ background: {_t['surface_alt']}; "
+            f"border: 1px solid {_t['line']}; border-radius: 6px; }}"
+        )
+        container.setObjectName("feedHealthPanel")
+
+        v = QVBoxLayout(container)
+        v.setContentsMargins(12, 10, 12, 10)
+        v.setSpacing(6)
+
+        title_row = QHBoxLayout()
+        title_lbl = QLabel("Feed health")
+        f = QFont()
+        f.setBold(True)
+        title_lbl.setFont(f)
+        title_row.addWidget(title_lbl)
+        pill_text = f"fail · {_label(cat)}" if cat else "fail"
+        pill = Pill(pill_text, kind="fail")
+        title_row.addWidget(pill)
+        title_row.addStretch()
+        retry_btn = QPushButton("Retry now")
+        retry_btn.setToolTip("Clear backoff state and immediately re-fetch this feed.")
+        retry_btn.clicked.connect(self._retry_feed_now)
+        title_row.addWidget(retry_btn)
+        v.addLayout(title_row)
+
+        # Detail lines
+        if at:
+            lbl = QLabel(f"<b>When:</b> {at}")
+            lbl.setStyleSheet("font-size: 12px;")
+            v.addWidget(lbl)
+        if msg:
+            lbl = QLabel(f"<b>Message:</b> {msg[:300]}")
+            lbl.setStyleSheet("font-size: 12px;")
+            lbl.setWordWrap(True)
+            v.addWidget(lbl)
+        if fail_count and backoff_until:
+            lbl = QLabel(
+                f"<b>Backoff:</b> {fail_count} consecutive fails — parked until {backoff_until}"
+            )
+            lbl.setStyleSheet("font-size: 12px;")
+            v.addWidget(lbl)
+        if cat:
+            tip = QLabel(f"<b>Suggested fix:</b> {_rec(cat)}")
+            tip.setStyleSheet(f"color: {_t['ink_3']}; font-size: 12px;")
+            tip.setWordWrap(True)
+            v.addWidget(tip)
+        return container
+
+    def _retry_feed_now(self) -> None:
+        """Clear backoff for this show + re-fetch synchronously. Updates
+        the panel in place (rebuilds via show_dialog refresh would be
+        overkill)."""
+        from datetime import datetime as _dt
+        from datetime import timezone as _tz
+
+        from core.feed_errors import categorize
+        from core.rss import build_manifest
+
+        state = self.ctx.state
+        for k in (
+            "feed_fail_count",
+            "feed_backoff_until",
+            "feed_fail_category",
+            "feed_fail_message",
+            "feed_fail_at",
+        ):
+            state.set_meta(f"{k}:{self.slug}", "0" if k.endswith("count") else "")
+        try:
+            build_manifest(self.show_.rss, timeout=30)
+        except Exception as e:  # noqa: BLE001
+            state.set_meta(f"feed_health:{self.slug}", "fail")
+            state.set_meta(f"feed_fail_category:{self.slug}", categorize(e))
+            state.set_meta(f"feed_fail_message:{self.slug}", str(e)[:500])
+            state.set_meta(f"feed_fail_at:{self.slug}", _dt.now(_tz.utc).isoformat())
+            QMessageBox.warning(
+                self,
+                "Retry failed",
+                f"Feed fetch failed:\n\n{e}",
+            )
+            return
+        state.set_meta(f"feed_health:{self.slug}", "ok")
+        QMessageBox.information(self, "Retry succeeded", "Feed fetch succeeded — backoff cleared.")
+        # Rebuild the panel so the user sees the cleared state immediately.
+        # ORDER MATTERS: capture the old container BEFORE calling
+        # _build_feed_health_panel, because that builder reassigns
+        # self._feed_health_container to a freshly-created widget. If we
+        # captured `old` after the build, `old` would alias the new
+        # un-parented widget; old.parentWidget() would be None and
+        # .layout() would raise AttributeError → PyQt6 qFatal → SIGABRT
+        # (the 2026-04-23 crash).
+        old = self._feed_health_container
+        parent = old.parentWidget() if old is not None else None
+        if parent is None:
+            return  # nothing to swap into; defensive, shouldn't happen
+        parent_layout = parent.layout()
+        new_panel = self._build_feed_health_panel()
+        idx = parent_layout.indexOf(old)
+        parent_layout.removeWidget(old)
+        old.deleteLater()
+        parent_layout.insertWidget(idx, new_panel)
+
     # ── advanced (collapsed by default) ──────────────────────
 
     def _build_advanced_group(self) -> QWidget:
@@ -564,6 +693,30 @@ class ShowDetailsDialog(QDialog):
         hint.setWordWrap(True)
         inner.addWidget(hint, r, 1)
         r += 1
+
+        # YouTube-only: transcript-source preference (per-channel override of
+        # the Settings default). Tuple form lets us decouple display labels
+        # from the persisted internal value.
+        self.transcript_pref_combo: QComboBox | None = None
+        if getattr(self.show_, "source", "podcast") == "youtube":
+            inner.addWidget(self._label("Transcript source"), r, 0)
+            combo = QComboBox()
+            combo.setObjectName("transcript_pref_combo")
+            options = [
+                ("Captions first, whisper fallback", "captions"),
+                ("Always whisper", "whisper"),
+                ("Use auto-captions if no manual", "auto-captions"),
+            ]
+            for label, value in options:
+                combo.addItem(label, value)
+            initial = getattr(self.show_, "youtube_transcript_pref", "") or "captions"
+            for i, (_, v) in enumerate(options):
+                if v == initial:
+                    combo.setCurrentIndex(i)
+                    break
+            inner.addWidget(combo, r, 1)
+            self.transcript_pref_combo = combo
+            r += 1
 
         # Toggle: switch controls body visibility + grows/shrinks the
         # dialog so the expanded body doesn't overflow into the
@@ -694,16 +847,53 @@ class ShowDetailsDialog(QDialog):
 
     def _retranscribe(self, guid: str) -> None:
         retranscribe_episode(self.ctx, guid)
+        # Kick the worker + force-refresh the Queue so the re-transcribed
+        # episode immediately jumps to the top of the visible queue. Same
+        # nudge pattern as _bump.
+        shows_tab = self.parent()
+        if shows_tab is not None and hasattr(shows_tab, "start_check"):
+            try:
+                shows_tab.start_check(only_slug=self.slug, force=True)
+            except Exception:
+                pass
+            try:
+                main_win = shows_tab.window()
+                queue_tab = getattr(main_win, "queue_tab", None)
+                if queue_tab is not None and hasattr(queue_tab, "refresh"):
+                    queue_tab._last_table_refresh = 0.0
+                    queue_tab.refresh()
+            except Exception:
+                pass
         # Refresh backlog label so the user sees the bump take effect.
         self.backlog_lbl.setText(self._fmt_backlog())
 
     def _bump(self, guid: str, priority: int) -> None:
         bump_priority(self.ctx, guid, priority)
+        # Kick the worker so the bump takes effect immediately. Without
+        # this, set_priority just updates SQL and the episode sits idle
+        # until the next scheduled check (could be hours away).
+        shows_tab = self.parent()
+        if shows_tab is not None and hasattr(shows_tab, "start_check"):
+            try:
+                shows_tab.start_check(only_slug=self.slug, force=True)
+            except Exception:
+                pass
+            # Force-refresh the Queue tab table NOW (instead of waiting
+            # for its 3 s tick) so the user sees the bumped row jump to
+            # the top immediately. Reach the queue tab via the main
+            # window — shows_tab.parent() is the main window, which has
+            # `queue_tab`.
+            try:
+                main_win = shows_tab.window()
+                queue_tab = getattr(main_win, "queue_tab", None)
+                if queue_tab is not None and hasattr(queue_tab, "refresh"):
+                    queue_tab._last_table_refresh = 0.0
+                    queue_tab.refresh()
+            except Exception:
+                pass
         # The recent-episodes table is ordered by pub_date so a priority
         # bump doesn't visually reorder rows here — but the backlog label
-        # (pending/failed counts) is what the user watches on this dialog,
-        # and the Queue tab (if visible elsewhere) will reorder on its
-        # next refresh.
+        # (pending/failed counts) is what the user watches on this dialog.
         self.backlog_lbl.setText(self._fmt_backlog())
 
     # ── footer ───────────────────────────────────────────────
@@ -750,6 +940,8 @@ class ShowDetailsDialog(QDialog):
             self.show_.title = new_title
         self.show_.language = self._language_combo.currentData() or "de"
         self.show_.whisper_prompt = self._whisper_prompt_edit.toPlainText().strip()
+        if self.transcript_pref_combo is not None:
+            self.show_.youtube_transcript_pref = self.transcript_pref_combo.currentData() or ""
         self.ctx.watchlist.save(self.ctx.data_dir / "watchlist.yaml")
         self.accept()
 

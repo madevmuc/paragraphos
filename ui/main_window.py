@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from PyQt6.QtCore import QDateTime, QLocale, QSettings, Qt, QTimer, QUrl
@@ -17,10 +18,13 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core import ytdlp
 from core.paths import user_data_dir  # noqa: E402
+from core.sources import youtube_enabled
 from ui.about_dialog import AboutPane
 from ui.app_context import AppContext
 from ui.failed_tab import FailedTab
+from ui.library_tab import LibraryTab
 from ui.log_dock import LogDock, LogsPane
 from ui.menu_bar import build_menu_bar
 from ui.queue_tab import QueueTab
@@ -56,6 +60,32 @@ def _fmt_dt_locale(dt) -> str:
     return loc.toString(qdt, f"ddd, {date_fmt} HH:mm")
 
 
+def maybe_self_update_ytdlp(settings, save) -> None:
+    """Run `yt-dlp -U` once on launch if YouTube is enabled, yt-dlp is
+    installed, and the last update was more than 7 days ago. Failures
+    are silent — they will resurface the next time a YouTube action is
+    attempted, where the user gets actionable UI feedback.
+    """
+    if not youtube_enabled(settings):
+        return
+    if not ytdlp.is_installed():
+        return
+    last = settings.ytdlp_last_self_update_at
+    if last:
+        try:
+            last_dt = datetime.fromisoformat(last)
+            if datetime.now(timezone.utc) - last_dt < timedelta(days=7):
+                return
+        except ValueError:
+            pass
+    try:
+        ytdlp.self_update()
+        settings.ytdlp_last_self_update_at = datetime.now(timezone.utc).isoformat()
+        save()
+    except Exception:
+        pass
+
+
 def _last_compiled_path(ctx) -> Path:
     """Path to the knowledge-hub's compile marker, driven by settings so the
     banner works after Paragraphos is extracted into its own repo."""
@@ -74,11 +104,12 @@ class MainWindow(QMainWindow):
         outer.setContentsMargins(0, 0, 0, 0)
         # Banner is a QWidget (not a bare QLabel) so it can host an action
         # button (Download) and a dismiss button alongside the message.
-        # Two logical states:
+        # Three logical states:
         #   "compile" — transcripts newer than last wiki compile
         #   "update"  — new Paragraphos release available
+        #   "offline" — network is down, queue paused, will auto-resume
         self.banner = QWidget()
-        self._banner_state: str = ""  # "", "compile", or "update"
+        self._banner_state: str = ""  # "", "compile", "update", or "offline"
         self._update_tag: str = ""
         self._update_url: str = ""
         bl = QHBoxLayout(self.banner)
@@ -124,9 +155,13 @@ class MainWindow(QMainWindow):
 
         # Sidebar
         self.sidebar = Sidebar()
-        self.sidebar.add_group("Library")
+        self.sidebar.add_group("Workspace")
         for key, label in (("shows", "Shows"), ("queue", "Queue"), ("failed", "Failed")):
             self.sidebar.add_item(key, label)
+        # Standalone leaf — sits between Workspace and System without
+        # its own group header. Sidebar.add_item is group-agnostic so
+        # this just appends another row at the same indent level.
+        self.sidebar.add_item("library", "Library")
         self.sidebar.add_group("System")
         for key, label in (("settings", "Settings"), ("logs", "Logs"), ("about", "About")):
             self.sidebar.add_item(key, label)
@@ -145,6 +180,7 @@ class MainWindow(QMainWindow):
         self.shows_tab = ShowsTab(self.ctx)
         self.queue_tab = QueueTab(self.ctx)
         self.failed_tab = FailedTab(self.ctx)
+        self.library_tab = LibraryTab(self.ctx)
         self.settings_pane = SettingsPane(self.ctx)
         self.logs_pane = LogsPane(self)
         self.about_pane = AboutPane(self)
@@ -154,6 +190,7 @@ class MainWindow(QMainWindow):
             self.shows_tab,
             self.queue_tab,
             self.failed_tab,
+            self.library_tab,
             self.settings_pane,
             self.logs_pane,
             self.about_pane,
@@ -163,9 +200,10 @@ class MainWindow(QMainWindow):
             "shows": 0,
             "queue": 1,
             "failed": 2,
-            "settings": 3,
-            "logs": 4,
-            "about": 5,
+            "library": 3,
+            "settings": 4,
+            "logs": 5,
+            "about": 6,
         }
         # Honour the landing-tab choice — sidebar highlight was set
         # earlier; now point the stack at the matching page.
@@ -177,6 +215,9 @@ class MainWindow(QMainWindow):
 
         self.log_dock = LogDock(self)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.log_dock)
+        # Off by default — Settings → Show log dock toggle controls this,
+        # Ctrl+L flips on demand.
+        self.log_dock.setVisible(bool(getattr(self.ctx.settings, "show_log_dock", False)))
 
         # Fan every log message into both the dock (bottom) and the
         # sidebar Logs pane so they stay in sync.
@@ -225,6 +266,17 @@ class MainWindow(QMainWindow):
         self._counts_timer = QTimer(self)
         self._counts_timer.timeout.connect(self._update_sidebar_counts)
         self._counts_timer.start(2000)
+
+        # Weekly yt-dlp self-update — fire once shortly after launch so the
+        # window is responsive first. Helper no-ops when YouTube is off,
+        # yt-dlp isn't installed, or the last update is <7 days old.
+        QTimer.singleShot(
+            2000,
+            lambda: maybe_self_update_ytdlp(
+                self.ctx.settings,
+                lambda: self.ctx.settings.save(self.ctx.data_dir / "settings.yaml"),
+            ),
+        )
 
     def _restore_geometry(self) -> None:
         """Re-open at last-session size/position, clamped to the current
@@ -326,7 +378,10 @@ class MainWindow(QMainWindow):
             btn_bg = t["accent"]
             btn_fg = "#ffffff"
         else:
-            # compile / default — warn family (amber).
+            # compile / offline / default — warn family (amber). Offline
+            # piggy-backs on the same palette: it's a transient pause-state,
+            # not an error, so the warn hue (rather than danger red) reads
+            # right.
             warn = t["warn"]
             if dark:
                 # Translucent warn wash — matches the pill_fail_bg pattern
@@ -461,6 +516,11 @@ class MainWindow(QMainWindow):
         self.status_label.setText(" · ".join(parts))
 
     def _refresh_banner(self) -> None:
+        # Offline takes top priority — when the network is down, the
+        # queue-paused notice is the only thing the user can act on; the
+        # compile reminder + update banner are noise until reconnect.
+        if self._banner_state == "offline":
+            return
         # Update-available takes priority over the wiki-compile reminder —
         # a new release is a one-click action the user cares about more.
         tag = getattr(self.ctx, "update_available_tag", "") or self._update_tag
@@ -554,3 +614,72 @@ class MainWindow(QMainWindow):
     def _is_update_dismissed(self, tag: str) -> bool:
         s = QSettings("madevmuc", "Paragraphos")
         return s.value("updater/dismissed_tag", "", type=str) == tag
+
+    # ---------- offline banner / auto-resume ----------
+
+    def on_online_changed(self, online: bool) -> None:
+        """Slot wired from ``core.connectivity.ConnectivityMonitor``.
+
+        When the network drops we DON'T pause the queue — already-
+        downloaded episodes still transcribe locally (whisper.cpp needs
+        no network). Feed-fetch and new downloads will fail naturally
+        and pile up under ``status='failed'`` with network-class error
+        text; on reconnect we re-queue those.
+
+        Just surface a banner explaining the partial impact. The worker
+        keeps draining its `downloaded` orphan-recovery path, so the
+        queue keeps moving on items that don't need bytes from the
+        network.
+        """
+        from core.connectivity import is_network_error
+
+        state = self.ctx.state
+        if not online:
+            self._banner_state = "offline"
+            self.banner_label.setText(
+                "Offline — feeds + new downloads pause; transcription continues "
+                "on already-downloaded episodes. Will auto-resume on reconnect."
+            )
+            self.banner_action_btn.setVisible(False)
+            self._apply_banner_style()
+            self.banner.setVisible(True)
+            return
+
+        # Re-queue network-failed episodes from the configurable window.
+        # SELECT-then-UPDATE per row: the Python-side classifier filter is
+        # cheaper + more accurate than chaining LIKE clauses for every hint.
+        from datetime import datetime, timedelta, timezone
+
+        window_h = int(getattr(self.ctx.settings, "auto_resume_failed_window_hours", 24))
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=window_h)).isoformat()
+        try:
+            with state._conn() as c:
+                rows = c.execute(
+                    "SELECT guid, error_text FROM episodes "
+                    "WHERE status='failed' AND attempted_at > ?",
+                    (cutoff,),
+                ).fetchall()
+                resumed = [r["guid"] for r in rows if is_network_error(r["error_text"])]
+                if resumed:
+                    c.executemany(
+                        "UPDATE episodes SET status='pending', error_text=NULL WHERE guid=?",
+                        [(g,) for g in resumed],
+                    )
+        except Exception:
+            # DB hiccup — don't crash the UI; the next manual check will
+            # still re-attempt failed items via the existing retry path.
+            resumed = []
+
+        # Hide the offline banner before kicking off the next check so the
+        # user sees the queue start moving without stale chrome on screen.
+        if self._banner_state == "offline":
+            self._banner_state = ""
+            self.banner.setVisible(False)
+            self._refresh_banner()
+
+        # Drain immediately — force=True so the check runs even if the
+        # scheduler thinks it ran recently.
+        try:
+            self.shows_tab.start_check(force=True)
+        except Exception:
+            pass

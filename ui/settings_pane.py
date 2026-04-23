@@ -4,14 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QTime, QTimer
+from PyQt6.QtCore import QEvent, QObject, Qt, QTime, QTimer
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFileDialog,
     QFormLayout,
     QFrame,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -24,6 +23,17 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+
+class _NoScrollFilter(QObject):
+    """Eat ``QEvent.Wheel`` on the watched widget. Installed on every
+    QSpinBox / QComboBox / QSlider in the settings pane so a stray
+    scroll over a focused field doesn't silently change the value."""
+
+    def eventFilter(self, _obj, event):  # noqa: N802 — Qt API
+        if event.type() == QEvent.Type.Wheel:
+            return True  # consumed; don't step the value
+        return False
 
 
 class _FieldContainer(QWidget):
@@ -133,6 +143,30 @@ class SettingsPane(QWidget):
         scroll.setWidget(inner)
         root = QVBoxLayout(inner)
 
+        # ── Sources ────────────────────────────────────────────
+        # Which feed types Paragraphos pulls from. At least one must stay
+        # on — unchecking both snaps Podcasts back so the app always has
+        # something to do on a check pass.
+        root.addWidget(_section("Sources"))
+        self.podcasts_checkbox = QCheckBox("Podcasts (RSS)")
+        self.podcasts_checkbox.setObjectName("sources_podcasts_checkbox")
+        self.podcasts_checkbox.setChecked(bool(self.ctx.settings.sources_podcasts))
+        self.podcasts_checkbox.toggled.connect(self._on_sources_changed)
+        root.addWidget(self.podcasts_checkbox)
+        self.youtube_checkbox = QCheckBox("YouTube channels")
+        self.youtube_checkbox.setObjectName("sources_youtube_checkbox")
+        self.youtube_checkbox.setChecked(bool(self.ctx.settings.sources_youtube))
+        self.youtube_checkbox.toggled.connect(self._on_sources_changed)
+        root.addWidget(self.youtube_checkbox)
+        sources_hint = QLabel(
+            "<span style='color: palette(placeholder-text); font-size: 11px;'>"
+            "At least one source must stay enabled. Disable a source to skip "
+            "its feeds during the next check pass without removing the shows."
+            "</span>"
+        )
+        sources_hint.setWordWrap(True)
+        root.addWidget(sources_hint)
+
         # ── Library & output ───────────────────────────────────
         root.addWidget(_section("Library & output"))
         f1 = QFormLayout()
@@ -160,9 +194,6 @@ class SettingsPane(QWidget):
         exp_row.addWidget(exp_pick)
         self._add_field(f1, "Export ZIP target", self._row_widget(exp_row))
 
-        # Obsidian fields live in their own group box so the vault path,
-        # vault name, picker, and a live write-target preview are visually
-        # grouped rather than mixed into the generic folder list.
         self.obsidian_path = QLineEdit(self.ctx.settings.obsidian_vault_path)
         self.obsidian_path.textChanged.connect(self._schedule_save)
         self.obsidian_path.textChanged.connect(self._refresh_obsidian_preview)
@@ -170,23 +201,6 @@ class SettingsPane(QWidget):
         self.obsidian_name.textChanged.connect(self._schedule_save)
         self.obsidian_name.textChanged.connect(self._refresh_obsidian_preview)
         self.output.textChanged.connect(self._refresh_obsidian_preview)
-
-        obsidian_box = QGroupBox("Obsidian")
-        obsidian_layout = QFormLayout(obsidian_box)
-        obs_row = QHBoxLayout()
-        obs_row.addWidget(self.obsidian_path)
-        _pick = QPushButton("Pick…")
-        _pick.clicked.connect(self._pick_obsidian)
-        obs_row.addWidget(_pick)
-        obs_row_w = QWidget()
-        obs_row.setContentsMargins(0, 0, 0, 0)
-        obs_row_w.setLayout(obs_row)
-        obsidian_layout.addRow("Vault path", obs_row_w)
-        obsidian_layout.addRow("Vault name", self.obsidian_name)
-        self.obsidian_preview = QLabel("")
-        self.obsidian_preview.setStyleSheet("color: palette(placeholder-text); font-size: 11px;")
-        self.obsidian_preview.setWordWrap(True)
-        obsidian_layout.addRow("", self.obsidian_preview)
 
         self.kb_root = QLineEdit(self.ctx.settings.knowledge_hub_root)
         self.kb_root.textChanged.connect(self._schedule_save)
@@ -204,7 +218,26 @@ class SettingsPane(QWidget):
             hint_kind=kb_kind,
         )
         root.addLayout(f1)
-        root.addWidget(obsidian_box)
+
+        # ── Obsidian ───────────────────────────────────────────
+        # Vault path, vault name, picker, and a live write-target preview
+        # — uses _add_field like the surrounding sections so labels align
+        # right and field columns line up across the entire pane.
+        root.addWidget(_section("Obsidian"))
+        obsidian_form = QFormLayout()
+        obs_row = QHBoxLayout()
+        obs_row.addWidget(self.obsidian_path)
+        _pick = QPushButton("Pick…")
+        _pick.clicked.connect(self._pick_obsidian)
+        obs_row.addWidget(_pick)
+        self._add_field(obsidian_form, "Vault path", self._row_widget(obs_row))
+        self._add_field(obsidian_form, "Vault name", self.obsidian_name)
+        self.obsidian_preview = QLabel("")
+        self.obsidian_preview.setObjectName("obsidian_preview")
+        self.obsidian_preview.setStyleSheet("color: palette(placeholder-text); font-size: 11px;")
+        self.obsidian_preview.setWordWrap(True)
+        self._add_field(obsidian_form, "", self.obsidian_preview)
+        root.addLayout(obsidian_form)
 
         # Populate the preview line once, now that all three source
         # widgets (output / obsidian_path / obsidian_name) exist.
@@ -214,18 +247,19 @@ class SettingsPane(QWidget):
         # Markdown is always saved. SRT is opt-in — it carries per-segment
         # timestamps so you can cite "at 12:34" in your notes. Keeping both
         # default-on preserves behaviour for upgraders.
-        formats_box = QGroupBox("Output formats")
-        formats_layout = QVBoxLayout(formats_box)
+        root.addWidget(_section("Output formats"))
 
         md_cb = QCheckBox("Markdown (.md) — always saved")
+        md_cb.setObjectName("output_markdown_checkbox")
         md_cb.setChecked(True)
         md_cb.setEnabled(False)
-        formats_layout.addWidget(md_cb)
+        root.addWidget(md_cb)
 
         self.save_srt_cb = QCheckBox("SRT subtitles (.srt)")
+        self.save_srt_cb.setObjectName("output_srt_checkbox")
         self.save_srt_cb.setChecked(bool(self.ctx.settings.save_srt))
         self.save_srt_cb.toggled.connect(self._schedule_save)
-        formats_layout.addWidget(self.save_srt_cb)
+        root.addWidget(self.save_srt_cb)
 
         formats_hint = QLabel(
             "<span style='color: palette(placeholder-text); font-size: 11px;'>"
@@ -234,8 +268,65 @@ class SettingsPane(QWidget):
             "Transcripts (.md) are always saved.</span>"
         )
         formats_hint.setWordWrap(True)
-        formats_layout.addWidget(formats_hint)
-        root.addWidget(formats_box)
+        root.addWidget(formats_hint)
+
+        # ── YouTube ────────────────────────────────────────────
+        # Visible only when Sources → YouTube channels is checked. The
+        # whole group hides/shows live as the Sources toggle flips.
+        self._yt_section = _section("YouTube")
+        self._yt_widgets: list[QWidget] = []
+        root.addWidget(self._yt_section)
+        self._yt_widgets.append(self._yt_section)
+
+        yt_form = QFormLayout()
+        self.yt_default_lang_combo = QComboBox()
+        self.yt_default_lang_combo.setObjectName("youtube_default_language_combo")
+        self.yt_default_lang_combo.addItem("German (de)", userData="de")
+        self.yt_default_lang_combo.addItem("English (en)", userData="en")
+        _cur_yt_lang = getattr(self.ctx.settings, "youtube_default_language", "de") or "de"
+        for i in range(self.yt_default_lang_combo.count()):
+            if self.yt_default_lang_combo.itemData(i) == _cur_yt_lang:
+                self.yt_default_lang_combo.setCurrentIndex(i)
+                break
+        self.yt_default_lang_combo.currentIndexChanged.connect(self._schedule_save)
+        self._add_field(
+            yt_form,
+            "Default transcript language",
+            self.yt_default_lang_combo,
+            hint=(
+                "Used when adding a new YouTube channel — pre-fills the show's "
+                "language. Caption fetch tries this language first, then English, "
+                "then any other manual sub the video has."
+            ),
+            hint_kind="info",
+        )
+        # Keep references so the YouTube-source toggle can hide the
+        # widgets together. _add_field returns None, so we wrap the form
+        # in a container we can show/hide.
+        yt_form_holder = QWidget()
+        yt_form_holder.setLayout(yt_form)
+        root.addWidget(yt_form_holder)
+        self._yt_widgets.append(yt_form_holder)
+        self._refresh_yt_section_visibility()
+
+        # ── Interface ──────────────────────────────────────────
+        # Power-user toggle for the bottom log dock that appears across
+        # all pages. The Logs sidebar entry + Ctrl+L shortcut stay
+        # available regardless — this is purely about the persistent
+        # bottom panel.
+        root.addWidget(_section("Interface"))
+        self.show_log_dock_cb = QCheckBox("Show log panel at the bottom of every page")
+        self.show_log_dock_cb.setObjectName("show_log_dock_checkbox")
+        self.show_log_dock_cb.setChecked(bool(getattr(self.ctx.settings, "show_log_dock", False)))
+        self.show_log_dock_cb.toggled.connect(self._on_show_log_dock_toggled)
+        root.addWidget(self.show_log_dock_cb)
+        log_dock_hint = QLabel(
+            "<span style='color: palette(placeholder-text); font-size: 11px;'>"
+            "Off by default. The Logs entry in the sidebar still works regardless."
+            "</span>"
+        )
+        log_dock_hint.setWordWrap(True)
+        root.addWidget(log_dock_hint)
 
         # ── Schedule & monitoring ──────────────────────────────
         root.addWidget(_section("Schedule & monitoring"))
@@ -275,6 +366,20 @@ class SettingsPane(QWidget):
             self.auto_start,
             hint="start checking + transcribing automatically when you open Paragraphos",
             hint_kind="good",
+        )
+        self.auto_start_delay = QSpinBox()
+        self.auto_start_delay.setRange(0, 60)
+        self.auto_start_delay.setSuffix(" s")
+        self.auto_start_delay.setValue(
+            int(getattr(self.ctx.settings, "auto_start_delay_seconds", 5))
+        )
+        self.auto_start_delay.valueChanged.connect(self._schedule_save)
+        self._add_field(
+            f2,
+            "Auto-start delay",
+            self.auto_start_delay,
+            hint="wait this long after launch before the queue starts (lets the window paint first)",
+            hint_kind="info",
         )
         root.addLayout(f2)
 
@@ -487,7 +592,51 @@ class SettingsPane(QWidget):
         copy_btn.clicked.connect(lambda: self._copy_agent_prompt_with_feedback(copy_btn))
         root.addWidget(copy_btn)
 
+        # ── Setup guide ────────────────────────────────────────
+        # Mirrors the Help → Re-run setup guide… menu entry. Two entry
+        # points because users go looking in Settings for "change my
+        # transcripts folder / Obsidian wiring" before they think of the
+        # menu bar.
+        root.addWidget(_section("Setup guide"))
+        setup_hint = QLabel(
+            "Re-open the guided setup to change the transcripts folder or Obsidian wiring."
+        )
+        setup_hint.setObjectName("setup_guide_hint")
+        setup_hint.setStyleSheet("color: palette(placeholder-text); font-size: 11px;")
+        setup_hint.setWordWrap(True)
+        root.addWidget(setup_hint)
+        self.rerun_setup_btn = QPushButton("Re-run setup guide…")
+        self.rerun_setup_btn.setObjectName("rerun_setup_btn")
+        self.rerun_setup_btn.clicked.connect(self._on_rerun_setup_clicked)
+        root.addWidget(self.rerun_setup_btn, alignment=Qt.AlignmentFlag.AlignLeft)
+
         root.addStretch()
+
+        # Disable scroll-wheel value edits on every numeric / dropdown
+        # widget. The default Qt behaviour is to step the value when the
+        # mouse-wheel rolls over a focused QSpinBox / QComboBox / QSlider —
+        # users mistakenly bumped settings while scrolling the pane. The
+        # widgets stay fully editable (type, click arrows, focus + arrow
+        # keys); only wheel-stepping is suppressed.
+        from PyQt6.QtWidgets import QAbstractSpinBox as _ASpin
+        from PyQt6.QtWidgets import QSlider as _Slider
+
+        self._noscroll_filter = _NoScrollFilter(self)
+        for cls in (_ASpin, QComboBox, _Slider):
+            for w in self.findChildren(cls):
+                w.installEventFilter(self._noscroll_filter)
+                # Click-to-focus only — without StrongFocus the wheel
+                # event handler in some styles still re-arms after the
+                # filter consumes the event. ClickFocus disables the
+                # auto-focus-on-hover that was the original trigger.
+                w.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+    def _on_rerun_setup_clicked(self) -> None:
+        """Re-open the guided setup dialog. Delegates to the same helper
+        as the Help menu entry so the two entry points stay in sync."""
+        from ui.menu_bar import rerun_setup
+
+        rerun_setup(self.window())
 
     # ── actions ───────────────────────────────────────────────
 
@@ -757,6 +906,37 @@ class SettingsPane(QWidget):
 
         download_model_async(name, on_done)
 
+    def _on_sources_changed(self) -> None:
+        """Enforce ≥1 enabled source. If both got unchecked, snap Podcasts
+        back on (signals blocked so we don't recurse) before saving.
+        Also flips visibility of the YouTube settings section."""
+        p = self.podcasts_checkbox.isChecked()
+        y = self.youtube_checkbox.isChecked()
+        if not (p or y):
+            self.podcasts_checkbox.blockSignals(True)
+            self.podcasts_checkbox.setChecked(True)
+            self.podcasts_checkbox.blockSignals(False)
+        self._refresh_yt_section_visibility()
+        self._schedule_save()
+
+    def _refresh_yt_section_visibility(self) -> None:
+        """Show / hide the YouTube settings section in lockstep with the
+        Sources → YouTube channels checkbox."""
+        visible = bool(
+            getattr(self, "youtube_checkbox", None) and self.youtube_checkbox.isChecked()
+        )
+        for w in getattr(self, "_yt_widgets", []):
+            w.setVisible(visible)
+
+    def _on_show_log_dock_toggled(self, checked: bool) -> None:
+        """Apply the log-dock visibility immediately to the running window
+        in addition to persisting the setting on the next debounce tick."""
+        win = self.window()
+        dock = getattr(win, "log_dock", None)
+        if dock is not None:
+            dock.setVisible(checked)
+        self._schedule_save()
+
     def _schedule_save(self):
         self._saved_label.setText("…")
         self._save_timer.start(250)
@@ -767,6 +947,7 @@ class SettingsPane(QWidget):
         s.daily_check_time = self.time.time().toString("HH:mm")
         s.catch_up_missed = self.catchup.isChecked()
         s.auto_start_queue = self.auto_start.isChecked()
+        s.auto_start_delay_seconds = int(self.auto_start_delay.value())
         s.notify_on_success = self.notify.isChecked()
         s.mp3_retention_days = self.retention.value()
         s.delete_mp3_after_transcribe = self.del_mp3.isChecked()
@@ -782,6 +963,10 @@ class SettingsPane(QWidget):
         s.notify_mode = self.notify_mode.currentData() or "per_episode"
         s.log_retention_days = self.log_retention.value()
         s.save_srt = self.save_srt_cb.isChecked()
+        s.sources_podcasts = self.podcasts_checkbox.isChecked()
+        s.sources_youtube = self.youtube_checkbox.isChecked()
+        s.show_log_dock = self.show_log_dock_cb.isChecked()
+        s.youtube_default_language = self.yt_default_lang_combo.currentData() or "de"
         s.save(self.ctx.data_dir / "settings.yaml")
         from datetime import datetime
 
@@ -895,42 +1080,195 @@ class SettingsPane(QWidget):
 
     def _terminal_help_html(self) -> str:
         return (
-            "<b>Terminal commands</b> (headless — same codebase):<br>"
-            "&nbsp;• <b>add &lt;name-or-url&gt;</b> — adds a show, seeds episodes as pending<br>"
-            "&nbsp;• <b>list</b> — prints the watchlist<br>"
-            "&nbsp;• <b>check [--show &lt;slug&gt;] [--limit N]</b> — full pipeline<br>"
-            "&nbsp;• <b>import-feeds</b> — bulk-imports the 16 real-estate feeds<br><br>"
-            "Run from <code>scripts/paragraphos/</code>:<br>"
-            "<code>PYTHONPATH=. ../../.venv/bin/python cli.py &lt;cmd&gt;</code>"
+            "<b>Terminal commands</b> (headless — full GUI parity for LLM agent "
+            "control). Run from <code>~/dev/paragraphos/</code>:<br>"
+            "<code>PYTHONPATH=. .venv/bin/python cli.py &lt;cmd&gt;</code><br><br>"
+            "Most inspection commands accept <code>--json</code> for machine-"
+            "readable output. The CLI shares state with the GUI via "
+            "<code>state.sqlite</code> (WAL); SQLite-backed mutations (priority, "
+            "status, queue toggles) are picked up live by the running GUI. "
+            "Watchlist edits land on disk immediately but the GUI re-reads them "
+            "on next refresh.<br><br>"
+            "<b>Inspection</b> (read-only, --json supported):<br>"
+            "&nbsp;• <b>status</b> — queue depth, in-flight, by-status counts, "
+            "queue_paused flag<br>"
+            "&nbsp;• <b>shows</b> — full watchlist with per-show counts + feed "
+            "health (alias <code>list</code>)<br>"
+            "&nbsp;• <b>show &lt;slug&gt;</b> — full detail for one show<br>"
+            "&nbsp;• <b>episodes &lt;slug&gt; [--status X] [--limit N]</b><br>"
+            "&nbsp;• <b>failed [--show &lt;slug&gt;] [--limit N]</b> — failed eps + "
+            "their error_text<br>"
+            "&nbsp;• <b>settings</b> — all settings, with <code>(rec=N)</code> when "
+            "current value ≠ hardware recommendation<br>"
+            "&nbsp;• <b>feed-health [--show &lt;slug&gt;]</b> — per-show feed health + "
+            "backoff state<br><br>"
+            "<b>Queue control</b>:<br>"
+            "&nbsp;• <b>pause</b> / <b>resume</b> / <b>stop</b> (force-kill whisper-cli "
+            "+ yt-dlp + recover in-flight)<br>"
+            "&nbsp;• <b>clear-queue</b> — mark every pending episode done<br>"
+            "&nbsp;• <b>priority &lt;guid&gt; &lt;N&gt;</b> — set explicit priority<br>"
+            "&nbsp;• <b>run-next &lt;guid&gt;</b> — bump to priority=100<br>"
+            "&nbsp;• <b>retranscribe &lt;guid&gt;</b> — status=pending + priority=100<br>"
+            "&nbsp;• <b>retry-failed [--show X] [--all-time] [--window-hours N]</b> — "
+            "re-queue failed eps<br><br>"
+            "<b>Show management</b>:<br>"
+            "&nbsp;• <b>add &lt;name-or-rss-or-youtube-url&gt;</b> — interactive add "
+            "(podcast/YouTube)<br>"
+            "&nbsp;• <b>enable &lt;slug&gt;</b> / <b>disable &lt;slug&gt;</b><br>"
+            "&nbsp;• <b>remove &lt;slug&gt; [-y] [--purge-state]</b> — drop from "
+            "watchlist + mark eps done<br>"
+            "&nbsp;• <b>set &lt;slug&gt; key=value</b> — per-show field setter "
+            "(language, whisper_prompt, output_override, "
+            "youtube_transcript_pref, enabled, source, title, rss, artwork_url)<br>"
+            "&nbsp;• <b>import-feeds</b> — bulk-import the curated podcast list<br><br>"
+            "<b>Feed retry</b>:<br>"
+            "&nbsp;• <b>retry-feed &lt;slug&gt;</b> — clear backoff + immediate fetch<br>"
+            "&nbsp;• <b>retry-all-feeds</b> — same for every feed marked fail<br><br>"
+            "<b>Settings</b>:<br>"
+            "&nbsp;• <b>set-setting &lt;key&gt; &lt;value&gt;</b> — type-coerced from the "
+            "Settings model<br>"
+            "&nbsp;• <b>check [--show &lt;slug&gt;] [--limit N]</b> — refresh feeds + "
+            "drain queue. YouTube tries captions first (requested lang → en → "
+            "any) then falls back to whisper. Works offline: feeds + new "
+            "downloads fail fast, but already-downloaded MP3s keep "
+            "transcribing.<br><br>"
+            "<b>Logs:</b> every launch writes a one-line fingerprint to "
+            "<code>~/Library/Application Support/Paragraphos/logs/paragraphos.log</code> "
+            "covering version, OS, RAM/cores, whisper-cli + yt-dlp + ffmpeg "
+            "versions, and every user-tunable setting (with <code>(rec=N)</code> "
+            "hints). Grep that line first for support."
         )
 
     def _agent_prompt_plain(self) -> str:
         return (
             "You have shell access to the Paragraphos codebase at\n"
-            "  /Users/.../knowledge-hub/scripts/paragraphos/\n"
+            "  ~/dev/paragraphos/\n"
             "\n"
-            "Paragraphos is a local podcast → whisper.cpp transcription pipeline.\n"
-            "State (shows, queue, completed episodes) lives in\n"
+            "Paragraphos is a local audio → whisper.cpp transcription pipeline\n"
+            "for podcasts (RSS) AND YouTube channels. Both sources run side-by-\n"
+            "side; YouTube tries uploader captions first (requested language →\n"
+            "en → any available) and falls back to whisper-cli when none are\n"
+            "usable. yt-dlp is lazy-installed to\n"
+            "  ~/Library/Application Support/Paragraphos/bin/yt-dlp\n"
+            "on first YouTube use, and self-updates weekly.\n"
+            "\n"
+            "State (CLI and GUI share the same files; SQLite uses WAL so reads\n"
+            "and writes from both work concurrently):\n"
             "  ~/Library/Application Support/Paragraphos/state.sqlite\n"
             "  ~/Library/Application Support/Paragraphos/watchlist.yaml\n"
+            "  ~/Library/Application Support/Paragraphos/settings.yaml\n"
+            "  ~/Library/Application Support/Paragraphos/logs/paragraphos.log\n"
             "\n"
-            "Use these headless CLI commands via\n"
-            "  cd scripts/paragraphos && \\\n"
-            "  PYTHONPATH=. ../../.venv/bin/python cli.py <cmd>\n"
+            "Headless CLI (run from ~/dev/paragraphos):\n"
+            "  cd ~/dev/paragraphos && \\\n"
+            "    PYTHONPATH=. .venv/bin/python cli.py <command> [args]\n"
             "\n"
-            "Commands:\n"
-            "  add <name-or-url>         — add a new show by iTunes name or RSS URL\n"
-            "  list                      — print the current watchlist\n"
-            "  check [--show <slug>] [--limit N]\n"
-            "                            — refresh feeds + process pending episodes\n"
-            "  import-feeds              — bulk-import the 16 curated real-estate feeds\n"
+            "Most inspection commands accept --json. Always pass --json when\n"
+            "you want to parse output. The CLI has full GUI parity — never edit\n"
+            "watchlist.yaml or run raw sqlite for things that have a command.\n"
             "\n"
-            "Also query state directly with sqlite:\n"
-            "  sqlite3 ~/Library/Application\\ Support/Paragraphos/state.sqlite \\\n"
-            '          "SELECT status, COUNT(*) FROM episodes GROUP BY status;"\n'
+            "Inspection (start here):\n"
+            "  status [--json]                      Snapshot: queue depth, in-\n"
+            "                                       flight, by-status counts,\n"
+            "                                       queue_paused flag\n"
+            "  shows [--json]                       Watchlist + per-show counts\n"
+            "                                       + feed health\n"
+            "  show <slug> [--json]                 Full detail for one show\n"
+            "  episodes <slug> [--status X]         List episodes; status one of\n"
+            "    [--limit N] [--json]               pending/downloading/...\n"
+            "                                       /done/failed/stale\n"
+            "  failed [--show X] [--limit N]        Failed eps + error_text\n"
+            "    [--json]\n"
+            "  settings [--json]                    All settings; (rec=N) shows\n"
+            "                                       hardware-aware mismatch\n"
+            "  feed-health [--show X] [--json]      Per-show feed health +\n"
+            "                                       backoff state\n"
             "\n"
-            "Task: <describe what you want the agent to do, e.g. 'add the podcast X,\n"
-            "transcribe the last 5 episodes, then summarize their titles'>.\n"
+            "Queue control (live; running GUI picks up changes immediately):\n"
+            "  pause                                Pause queue (worker stops\n"
+            "                                       claiming new work)\n"
+            "  resume                               Unpause\n"
+            "  stop                                 Force-stop: pkill -9\n"
+            "                                       whisper-cli + yt-dlp,\n"
+            "                                       recover in-flight → pending\n"
+            "  clear-queue                          Mark every pending/in-flight\n"
+            "                                       episode as done\n"
+            "  priority <guid> <N>                  Set priority (DB-claim sorts\n"
+            "                                       priority DESC, pub_date ASC)\n"
+            "  run-next <guid>                      Shortcut: priority=100\n"
+            "  retranscribe <guid>                  status=pending + priority=100\n"
+            "  retry-failed [--show X]              Re-queue failed eps from\n"
+            "    [--all-time] [--window-hours N]    last N hours (default 24)\n"
+            "\n"
+            "Show management:\n"
+            "  add <name-or-url>                    Interactive add (podcast\n"
+            "                                       name / RSS / YouTube URL)\n"
+            "  enable <slug> / disable <slug>       Toggle a show\n"
+            "  remove <slug> [-y] [--purge-state]   Drop show; mark eps done\n"
+            "                                       (or delete eps with --purge-state)\n"
+            "  set <slug> key=value                 Per-show field setter.\n"
+            "                                       Allowed keys: enabled,\n"
+            "                                       language, whisper_prompt,\n"
+            "                                       output_override,\n"
+            "                                       youtube_transcript_pref,\n"
+            "                                       source, title, rss,\n"
+            "                                       artwork_url\n"
+            "  import-feeds                         Bulk-import the curated\n"
+            "                                       podcast list\n"
+            "\n"
+            "Feed retry (after fixing connectivity, DNS, or a moved feed URL):\n"
+            "  retry-feed <slug>                    Clear backoff + immediate\n"
+            "                                       fetch for one show\n"
+            "  retry-all-feeds                      Same for every feed marked\n"
+            "                                       fail\n"
+            "\n"
+            "Top-level settings:\n"
+            "  set-setting <key> <value>            Type-coerced from the\n"
+            "                                       Settings model. Examples:\n"
+            "                                         set-setting parallel_transcribe 4\n"
+            "                                         set-setting save_srt false\n"
+            "                                         set-setting youtube_default_transcript_source whisper\n"
+            "\n"
+            "Pipeline trigger (long-running; foregrounded):\n"
+            "  check [--show <slug>] [--limit N]    Refresh feeds + drain queue.\n"
+            "                                       YouTube tries captions first.\n"
+            "                                       Works offline: downloaded\n"
+            "                                       MP3s keep transcribing.\n"
+            "\n"
+            "Settings of interest (settings.yaml — read with `settings --json`):\n"
+            "  sources_podcasts / sources_youtube              source toggles\n"
+            "  youtube_default_transcript_source               captions | whisper | auto-captions\n"
+            "  youtube_default_language                        de | en | …\n"
+            "  parallel_transcribe / whisper_multiproc         tuning (HW-recommended)\n"
+            "  whisper_fast_mode                               beam=1/best=1, ~2-3× faster\n"
+            "  save_srt / mp3_retention_days                   output / cleanup\n"
+            "  auto_start_queue / auto_start_delay_seconds     launch behaviour\n"
+            "  connectivity_monitor_enabled                    offline banner +\n"
+            "                                                  auto-resume\n"
+            "  auto_resume_failed_window_hours                 default 24\n"
+            "\n"
+            "Per-show overrides (read with `show <slug> --json`, write with\n"
+            "`set <slug> key=value`):\n"
+            "  enabled                  bool — skip in checks when false\n"
+            "  language                 whisper lang code; 'auto' = detect\n"
+            "  youtube_transcript_pref  '' | captions | whisper | auto-captions\n"
+            "  whisper_prompt           bias domain vocabulary\n"
+            "  output_override          custom transcript dir\n"
+            "\n"
+            "Example agent tasks (chain CLI calls):\n"
+            "  · 'Run `status --json` and tell me if the queue is healthy.'\n"
+            "  · 'Find every show with feed_health=fail, then run\n"
+            "     retry-all-feeds, then run status again.'\n"
+            "  · 'List failed episodes from the last 24 h with --json, group\n"
+            "     them by error class, and propose a retry strategy.'\n"
+            "  · 'Add the YouTube channel <URL>, set language=en, then\n"
+            "     run-next on the latest 3 episodes.'\n"
+            "  · 'For show <slug>, switch to always-whisper mode, then\n"
+            "     retranscribe the 5 newest episodes.'\n"
+            "  · 'Check whether parallel_transcribe matches the hardware\n"
+            "     recommendation; if not, run set-setting to apply it.'\n"
+            "\n"
+            "Task: <describe what you want the agent to do>\n"
         )
 
     def _agent_prompt_html(self) -> str:

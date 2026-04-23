@@ -29,14 +29,83 @@ def _locate_whisper_bin() -> str:
     return "/opt/homebrew/bin/whisper-cli"
 
 
+def _locate_ffmpeg_dir() -> str | None:
+    """Return the directory containing ``ffmpeg``, or None.
+
+    Whisper-cli shells out to ffmpeg internally for non-WAV inputs
+    (mp3, m4a, mp4 podcasts). When Paragraphos.app is launched from
+    /Applications its PATH is ``/usr/bin:/bin`` only — Homebrew binaries
+    are invisible. With ffmpeg missing, whisper-cli silently exits 0
+    with no transcript output for any non-WAV file, manifesting as a
+    "expected outputs missing" TranscriptionError ~700 ms after launch.
+    Surfacing the discovered directory via the subprocess env's PATH
+    fixes that without forcing the user to re-shim their shell.
+    """
+    found = shutil.which("ffmpeg")
+    if found:
+        return str(Path(found).parent)
+    for p in ("/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"):
+        if Path(p).exists():
+            return str(Path(p).parent)
+    return None
+
+
 WHISPER_BIN = _locate_whisper_bin()
+_FFMPEG_DIR = _locate_ffmpeg_dir()
+
+
+def _whisper_subprocess_env() -> dict[str, str] | None:
+    """Build the ``env=`` dict for whisper-cli subprocess calls.
+
+    Returns ``None`` (= inherit os.environ) when no augmentation is
+    needed — keeps the existing test suite stable, since most tests
+    mock subprocess.run and don't care about env. Returns a dict with
+    the ffmpeg directory prepended to PATH whenever we know where
+    ffmpeg lives but it isn't already on the inherited PATH.
+    """
+    import os
+
+    if _FFMPEG_DIR is None:
+        return None
+    inherited_path = os.environ.get("PATH", "")
+    if _FFMPEG_DIR in inherited_path.split(":"):
+        return None
+    env = os.environ.copy()
+    env["PATH"] = f"{_FFMPEG_DIR}:{inherited_path}" if inherited_path else _FFMPEG_DIR
+    return env
+
+
 MODEL_PATH = Path.home() / ".config" / "open-wispr" / "models" / "ggml-large-v3-turbo.bin"
 LANGUAGE = "de"
 THREADS = "6"
-# Generous timeout: a 60-min podcast at ~1.5× realtime finishes in <6 min
-# on an M2 Pro. 10 min covers 2-hour episodes; anything beyond means
-# whisper-cli hung on corrupt audio and we want to fail fast.
-WHISPER_TIMEOUT_SEC = 600
+# Hard floor for the dynamic timeout — guarantees at least 30 min for any
+# MP3 even when the file-size heuristic would yield less (small files
+# never need it; this is just defensive).
+WHISPER_TIMEOUT_FLOOR_SEC = 1800
+
+
+def _whisper_timeout(mp3_path: Path) -> int:
+    """Compute a per-episode whisper-cli timeout from the MP3 file size.
+
+    History: a hardcoded 600 s timed out hour-long podcasts on slow
+    macs (Intel + multiproc=1 + beam=5/best=5 default). For ~64 kbps
+    podcast MP3s 1 MB ≈ 2 min audio; allow 90 s wall-time per MB plus
+    120 s base. So:
+
+      40 MB (≈80 min audio)  → ~62 min timeout
+      80 MB (≈160 min audio) → ~122 min timeout
+      150 MB (≈300 min audio)→ ~227 min timeout
+
+    Floored at 30 min so tiny MP3s still have headroom on slow CPUs.
+    Falls back to the floor when the file isn't yet on disk (test code
+    paths, mostly).
+    """
+    try:
+        mb = mp3_path.stat().st_size / (1024 * 1024)
+    except OSError:
+        return WHISPER_TIMEOUT_FLOOR_SEC
+    return max(WHISPER_TIMEOUT_FLOOR_SEC, int(mb * 90) + 120)
+
 
 # Natural German podcast speech runs ~140-180 wpm. Below 30 → silence or hallucination.
 MIN_WPM_GUARD = 30
@@ -56,6 +125,34 @@ def _model_name_from_path(model_path: Path) -> str:
 
 class TranscriptionError(RuntimeError):
     pass
+
+
+def _explain_exit(rc: int) -> str:
+    """Map a subprocess exit code to a one-line human explanation. Used
+    in TranscriptionError messages so a user reading the log can tell
+    "you clicked Stop" from "the kernel killed it for OOM" from "whisper
+    crashed". Negative codes follow Python's subprocess convention
+    (the process died from signal -rc); positive codes are the binary's
+    own exit status."""
+    if rc == -9 or rc == 137:
+        return "killed (SIGKILL — usually the Stop button's force-kill, or macOS OOM)"
+    if rc == -15 or rc == 143:
+        return "terminated (SIGTERM — graceful stop request)"
+    if rc == -2 or rc == 130:
+        return "interrupted (SIGINT — Ctrl-C)"
+    if rc == -6 or rc == 134:
+        return "aborted (SIGABRT — whisper-cli internal assertion)"
+    if rc == -11 or rc == 139:
+        return "segfault (SIGSEGV — whisper-cli crash; report with stderr)"
+    if rc == 124:
+        return "timeout (per-MP3 deadline exceeded)"
+    if rc == 127:
+        return "command not found (whisper-cli or its loader missing)"
+    if rc == 0:
+        return "ok"
+    if rc < 0:
+        return f"killed by signal {-rc}"
+    return f"exited with non-zero status {rc}"
 
 
 @dataclass(frozen=True)
@@ -159,6 +256,10 @@ def transcribe_episode(
             cmd += ["-p", str(processors)]
         if whisper_prompt:
             cmd += ["--prompt", whisper_prompt]
+        # Per-episode timeout scaled to MP3 size — see _whisper_timeout
+        # docstring. Keeps slow Intel macs from hard-failing on hour-long
+        # podcasts while still detecting genuine hangs.
+        timeout_sec = _whisper_timeout(mp3_path)
         if progress_cb is None:
             # Classic blocking path — keeps `subprocess.run` so existing
             # tests that mock it stay valid. Used by the CLI, tests,
@@ -168,11 +269,12 @@ def transcribe_episode(
                     cmd,
                     capture_output=True,
                     text=True,
-                    timeout=WHISPER_TIMEOUT_SEC,
+                    timeout=timeout_sec,
+                    env=_whisper_subprocess_env(),
                 )
             except subprocess.TimeoutExpired as te:
                 raise TranscriptionError(
-                    f"whisper-cli timed out after {WHISPER_TIMEOUT_SEC}s  "
+                    f"whisper-cli timed out after {timeout_sec}s  "
                     f"mp3={mp3_path.name}  slug={slug!r}\n"
                     f"  partial stderr: {(te.stderr or b'')[-300:]!r}"
                 ) from te
@@ -228,11 +330,12 @@ def transcribe_episode(
                             stdout=stdout_f,
                             stderr=subprocess.PIPE,
                             text=True,
-                            timeout=WHISPER_TIMEOUT_SEC,
+                            timeout=timeout_sec,
+                            env=_whisper_subprocess_env(),
                         )
                     except subprocess.TimeoutExpired as te:
                         raise TranscriptionError(
-                            f"whisper-cli timed out after {WHISPER_TIMEOUT_SEC}s  "
+                            f"whisper-cli timed out after {timeout_sec}s  "
                             f"mp3={mp3_path.name}  slug={slug!r}\n"
                             f"  partial stderr: {(te.stderr or b'')[-300:]!r}"
                         ) from te
@@ -251,7 +354,7 @@ def transcribe_episode(
                 pass
         if result.returncode != 0:
             raise TranscriptionError(
-                f"whisper-cli exit {result.returncode}  "
+                f"whisper-cli exit {result.returncode} ({_explain_exit(result.returncode)})  "
                 f"mp3={mp3_path.name}  model={model_path.name}  "
                 f"slug={slug!r}\n"
                 f"  stderr (last 400): {(result.stderr or '')[-400:]!r}\n"

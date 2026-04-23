@@ -29,11 +29,57 @@ ALLOWED_SCHEMES = frozenset({"http", "https"})
 ALLOWED_AUDIO_CT_PREFIXES = (
     "audio/",
     "application/ogg",
+    "application/octet-stream",
+    "binary/octet-stream",
 )
+
+
+# Magic bytes for common audio container formats. Used by the downloader
+# AFTER the first chunk is read to confirm an octet-stream response is
+# actually audio, not e.g. HTML mistakenly served as binary.
+def looks_like_audio(first_bytes: bytes) -> bool:
+    """Return True if the leading bytes match a known audio magic.
+
+    Recognised: ID3 (tagged MP3), MPEG audio frame sync, fLaC (FLAC),
+    OggS (Vorbis/Opus), RIFF (WAV), 'ftyp' inside MP4 box.
+    """
+    if not first_bytes:
+        return False
+    head = first_bytes[:12]
+    if head.startswith(b"ID3"):
+        return True
+    if len(head) >= 2 and head[0] == 0xFF and (head[1] & 0xE0) == 0xE0:
+        return True  # MPEG audio frame sync
+    if head.startswith(b"fLaC") or head.startswith(b"OggS"):
+        return True
+    if head.startswith(b"RIFF"):
+        return True
+    if len(head) >= 8 and head[4:8] == b"ftyp":
+        return True  # MP4 / M4A box
+    return False
 
 
 class UnsafeURLError(ValueError):
     """Raised when a URL points at something we refuse to fetch."""
+
+
+# NAT64 well-known prefixes (RFC 6052 + RFC 8215). macOS's resolver
+# synthesises addresses in these ranges for IPv4-only hosts when the
+# user is on an IPv6-only / NAT64 network, and Python's ``ipaddress``
+# classifies them as ``is_reserved=True`` (IANA's "IPv4/IPv6
+# Translators" registration). Without unwrapping the embedded IPv4,
+# every public host on a NAT64 LAN would trip the SSRF guard.
+_NAT64_WKP = ipaddress.IPv6Network("64:ff9b::/96")
+_NAT64_LOCAL = ipaddress.IPv6Network("64:ff9b:1::/48")
+
+
+def _unwrap_nat64(ip: ipaddress.IPv6Address) -> ipaddress.IPv4Address | None:
+    """If ``ip`` is in a standardised NAT64 prefix, return the embedded
+    IPv4 (last 32 bits per RFC 6052 §2.2 for /96 prefixes). Otherwise
+    return ``None``."""
+    if ip in _NAT64_WKP or ip in _NAT64_LOCAL:
+        return ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+    return None
 
 
 def _is_private_ip(host: str) -> bool:
@@ -50,6 +96,17 @@ def _is_private_ip(host: str) -> bool:
             ip = ipaddress.ip_address(addr)
         except ValueError:
             continue
+        # Unwrap IPv4-mapped IPv6 (``::ffff:x.x.x.x`` per RFC 4291) and
+        # NAT64-synthesised IPv6 (``64:ff9b::/96`` per RFC 6052). Both
+        # appear naturally on macOS when DNS64 / Happy Eyeballs is
+        # active, and Python's ``ipaddress`` flags them as
+        # ``is_reserved=True``. Without these unwraps, plain public
+        # podcast hosts intermittently fail SSRF screening with a
+        # misleading "private-network host" error.
+        if isinstance(ip, ipaddress.IPv6Address):
+            v4 = ip.ipv4_mapped or _unwrap_nat64(ip)
+            if v4 is not None:
+                ip = v4
         if (
             ip.is_loopback
             or ip.is_private

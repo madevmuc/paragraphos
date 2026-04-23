@@ -42,6 +42,11 @@ class ProgressRing(QWidget):
         self._stroke = stroke
         self._done = 0
         self._total = 0
+        # When idle, the centre shows a pause glyph (two vertical bars)
+        # instead of the running fraction, and the accent sweep is
+        # replaced by a single full muted track. Used by QueueHero to
+        # keep the dashboard visible across active + idle states.
+        self._idle = False
 
         tm = manager()
         if tm is not None:
@@ -50,6 +55,12 @@ class ProgressRing(QWidget):
     def set_progress(self, done: int, total: int) -> None:
         self._done = max(0, done)
         self._total = max(0, total)
+        self.update()
+
+    def set_idle(self, idle: bool) -> None:
+        if self._idle == bool(idle):
+            return
+        self._idle = bool(idle)
         self.update()
 
     def _on_theme_changed(self, _mode: str) -> None:
@@ -74,6 +85,27 @@ class ProgressRing(QWidget):
         # Track
         p.setPen(QPen(track, self._stroke))
         p.drawEllipse(r)
+
+        if self._idle:
+            # Idle: full grey ring + centred pause glyph (two vertical
+            # bars). No accent sweep, no fraction text — keeps the card
+            # visible without giving the impression that anything is
+            # actually progressing.
+            p.setPen(QPen(ink_3, self._stroke, cap=Qt.PenCapStyle.RoundCap))
+            p.drawEllipse(r)
+            p.setBrush(ink_3)
+            p.setPen(Qt.PenStyle.NoPen)
+            cx = self.rect().center().x()
+            cy = self.rect().center().y()
+            bar_w = 7
+            bar_h = 26
+            gap = 6
+            from PyQt6.QtCore import QRect
+
+            p.drawRoundedRect(QRect(cx - bar_w - gap // 2, cy - bar_h // 2, bar_w, bar_h), 2, 2)
+            p.drawRoundedRect(QRect(cx + gap // 2, cy - bar_h // 2, bar_w, bar_h), 2, 2)
+            p.end()
+            return
 
         # Accent sweep
         if self._total > 0:

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import Callable
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFontMetrics
@@ -12,7 +11,6 @@ from PyQt6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
-    QPushButton,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -45,11 +43,9 @@ def human_finish_framing(now: datetime, finish: datetime) -> str:
 class QueueHero(QWidget):
     """Composite card: ProgressRing on the left, stats grid on the right."""
 
-    def __init__(self, ctx, on_pause: Callable[[], None], on_stop: Callable[[], None], parent=None):
+    def __init__(self, ctx, parent=None):
         super().__init__(parent)
         self.ctx = ctx
-        self._on_pause = on_pause
-        self._on_stop = on_stop
 
         # Styling comes from the global QSS (QFrame#QueueHeroCard rule
         # in ui/themes/app.qss.tmpl) — border color + bg flip with the
@@ -76,14 +72,12 @@ class QueueHero(QWidget):
         # put it; long titles get elided in setText via QFontMetrics.
         self.ep_title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.ep_title.setMinimumWidth(0)
-        pause = QPushButton("Pause")
-        pause.clicked.connect(self._on_pause)
-        stop = QPushButton("Stop")
-        stop.clicked.connect(self._on_stop)
+        # Pause/Stop buttons live in the QueueTab toolbar at the top of the
+        # page (consolidated 2026-04-23). The hero card now only renders
+        # state — the toolbar is the single source for queue-control
+        # actions so users never see duplicate Pause/Stop buttons.
         top.addWidget(self.pill)
         top.addWidget(self.ep_title, stretch=1)
-        top.addWidget(pause)
-        top.addWidget(stop)
         top_w = QWidget()
         top_w.setLayout(top)
         grid.addWidget(top_w, 0, 1)
@@ -122,9 +116,30 @@ class QueueHero(QWidget):
     def refresh(self) -> None:
         q = self.ctx.queue
         if not q.running or not q.started_at:
-            self.hide()
+            # Idle state — keep the card visible. ProgressRing renders a
+            # grey pause glyph; pill turns 'idle'; pause/stop disabled;
+            # stats reset to dashes. The QSS gives the idle card a muted
+            # border via the dynamic 'state' property below.
+            self.show()
+            self.setProperty("state", "idle")
+            self.style().unpolish(self)
+            self.style().polish(self)
+            self.ring.set_idle(True)
+            self.pill.set_kind("idle")
+            self.pill.setText("idle")
+            self.ep_title.setText("Queue is idle. Click Start to begin a check pass.")
+            self.ep_title.setToolTip("")
+            for value, sub in self.stat_widgets.values():
+                value.setText("—")
+                sub.setText("")
             return
         self.show()
+        self.setProperty("state", "active")
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self.ring.set_idle(False)
+        self.pill.set_kind("running")
+        self.pill.setText("running")
         self.ring.set_progress(q.done, q.total)
 
         now = datetime.now()
