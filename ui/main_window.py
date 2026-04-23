@@ -104,11 +104,12 @@ class MainWindow(QMainWindow):
         outer.setContentsMargins(0, 0, 0, 0)
         # Banner is a QWidget (not a bare QLabel) so it can host an action
         # button (Download) and a dismiss button alongside the message.
-        # Two logical states:
+        # Three logical states:
         #   "compile" — transcripts newer than last wiki compile
         #   "update"  — new Paragraphos release available
+        #   "offline" — network is down, queue paused, will auto-resume
         self.banner = QWidget()
-        self._banner_state: str = ""  # "", "compile", or "update"
+        self._banner_state: str = ""  # "", "compile", "update", or "offline"
         self._update_tag: str = ""
         self._update_url: str = ""
         bl = QHBoxLayout(self.banner)
@@ -377,7 +378,10 @@ class MainWindow(QMainWindow):
             btn_bg = t["accent"]
             btn_fg = "#ffffff"
         else:
-            # compile / default — warn family (amber).
+            # compile / offline / default — warn family (amber). Offline
+            # piggy-backs on the same palette: it's a transient pause-state,
+            # not an error, so the warn hue (rather than danger red) reads
+            # right.
             warn = t["warn"]
             if dark:
                 # Translucent warn wash — matches the pill_fail_bg pattern
@@ -512,6 +516,11 @@ class MainWindow(QMainWindow):
         self.status_label.setText(" · ".join(parts))
 
     def _refresh_banner(self) -> None:
+        # Offline takes top priority — when the network is down, the
+        # queue-paused notice is the only thing the user can act on; the
+        # compile reminder + update banner are noise until reconnect.
+        if self._banner_state == "offline":
+            return
         # Update-available takes priority over the wiki-compile reminder —
         # a new release is a one-click action the user cares about more.
         tag = getattr(self.ctx, "update_available_tag", "") or self._update_tag
@@ -605,3 +614,86 @@ class MainWindow(QMainWindow):
     def _is_update_dismissed(self, tag: str) -> bool:
         s = QSettings("madevmuc", "Paragraphos")
         return s.value("updater/dismissed_tag", "", type=str) == tag
+
+    # ---------- offline banner / auto-resume ----------
+
+    def on_online_changed(self, online: bool) -> None:
+        """Slot wired from ``core.connectivity.ConnectivityMonitor``.
+
+        When the network drops, pause the queue and surface a banner so
+        the user knows why nothing is moving. When it returns, clear the
+        pause flag, re-queue any episodes that failed with a network-
+        class error in the last ``auto_resume_failed_window_hours`` hours,
+        and trigger an immediate check so work resumes without a manual
+        kick.
+
+        ``paused_reason`` discriminates between this auto-pause and a
+        user-initiated pause (Queue tab) so the auto-resume path won't
+        steamroll an explicit user choice.
+        """
+        from core.connectivity import is_network_error
+
+        state = self.ctx.state
+        if not online:
+            state.set_meta("queue_paused", "1")
+            state.set_meta("paused_reason", "offline")
+            self._banner_state = "offline"
+            self.banner_label.setText(
+                "Offline — queue paused, will resume when connection returns."
+            )
+            self.banner_action_btn.setVisible(False)
+            self._apply_banner_style()
+            self.banner.setVisible(True)
+            return
+
+        # Online again — only auto-resume when WE were the ones who paused.
+        if state.get_meta("paused_reason") != "offline":
+            # Hide the offline banner if it was up but DON'T touch the
+            # pause flag — a user-initiated pause stays paused.
+            if self._banner_state == "offline":
+                self._banner_state = ""
+                self.banner.setVisible(False)
+                self._refresh_banner()
+            return
+
+        state.set_meta("queue_paused", "0")
+        state.set_meta("paused_reason", "")
+
+        # Re-queue network-failed episodes from the configurable window.
+        # SELECT-then-UPDATE per row: the Python-side classifier filter is
+        # cheaper + more accurate than chaining LIKE clauses for every hint.
+        from datetime import datetime, timedelta, timezone
+
+        window_h = int(getattr(self.ctx.settings, "auto_resume_failed_window_hours", 24))
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=window_h)).isoformat()
+        try:
+            with state._conn() as c:
+                rows = c.execute(
+                    "SELECT guid, error_text FROM episodes "
+                    "WHERE status='failed' AND attempted_at > ?",
+                    (cutoff,),
+                ).fetchall()
+                resumed = [r["guid"] for r in rows if is_network_error(r["error_text"])]
+                if resumed:
+                    c.executemany(
+                        "UPDATE episodes SET status='pending', error_text=NULL WHERE guid=?",
+                        [(g,) for g in resumed],
+                    )
+        except Exception:
+            # DB hiccup — don't crash the UI; the next manual check will
+            # still re-attempt failed items via the existing retry path.
+            resumed = []
+
+        # Hide the offline banner before kicking off the next check so the
+        # user sees the queue start moving without stale chrome on screen.
+        if self._banner_state == "offline":
+            self._banner_state = ""
+            self.banner.setVisible(False)
+            self._refresh_banner()
+
+        # Drain immediately — force=True so the check runs even if the
+        # scheduler thinks it ran recently.
+        try:
+            self.shows_tab.start_check(force=True)
+        except Exception:
+            pass

@@ -117,6 +117,17 @@ class Settings(BaseModel):
     # default — power-user diagnostic, surfaced by the Logs sidebar
     # entry and the Ctrl+L shortcut for everyone else.
     show_log_dock: bool = False
+    # Background connectivity probe (core.connectivity.ConnectivityMonitor).
+    # When True, a daemon thread TCP-probes 1.1.1.1/8.8.8.8/youtube.com on a
+    # 30 s/5 s cadence; when the network drops, the queue is paused with a
+    # banner; when it returns, network-failed episodes from the last
+    # ``auto_resume_failed_window_hours`` hours are re-queued automatically.
+    # Off-switch for users behind captive portals where the probes are noisy.
+    connectivity_monitor_enabled: bool = True
+    # How far back (hours) to look for network-failed episodes when
+    # auto-resuming after the connection comes back. 24 h covers the
+    # overnight / laptop-sleep case without re-running ancient retries.
+    auto_resume_failed_window_hours: int = 24
 
     @field_validator("daily_check_time")
     @classmethod

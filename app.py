@@ -635,6 +635,18 @@ def main() -> int:
         print("First-run wizard cancelled — exiting.", flush=True)
         return 0
     app = ParagraphosApp()
+    # Background connectivity monitor — pauses the queue + shows a banner
+    # when the network drops, auto-resumes + re-queues network-failed items
+    # when it returns. Off-switch via Settings.connectivity_monitor_enabled
+    # for users behind captive portals where the probes would be noisy.
+    from core.connectivity import ConnectivityMonitor
+
+    if app.ctx.settings.connectivity_monitor_enabled:
+        app._conn_monitor = ConnectivityMonitor()
+        app._conn_monitor.online_changed.connect(
+            lambda online: app._window.on_online_changed(online) if app._window else None
+        )
+        app._conn_monitor.start()
     # New-install migration: flip ``setup_completed`` for legacy users
     # whose customised folder paths imply they've already done the work
     # the setup dialog asks about. Fresh installs see the dialog once;
