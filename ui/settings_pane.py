@@ -356,6 +356,20 @@ class SettingsPane(QWidget):
             hint="start checking + transcribing automatically when you open Paragraphos",
             hint_kind="good",
         )
+        self.auto_start_delay = QSpinBox()
+        self.auto_start_delay.setRange(0, 60)
+        self.auto_start_delay.setSuffix(" s")
+        self.auto_start_delay.setValue(
+            int(getattr(self.ctx.settings, "auto_start_delay_seconds", 5))
+        )
+        self.auto_start_delay.valueChanged.connect(self._schedule_save)
+        self._add_field(
+            f2,
+            "Auto-start delay",
+            self.auto_start_delay,
+            hint="wait this long after launch before the queue starts (lets the window paint first)",
+            hint_kind="info",
+        )
         root.addLayout(f2)
 
         # ── Notifications ──────────────────────────────────────
@@ -903,6 +917,7 @@ class SettingsPane(QWidget):
         s.daily_check_time = self.time.time().toString("HH:mm")
         s.catch_up_missed = self.catchup.isChecked()
         s.auto_start_queue = self.auto_start.isChecked()
+        s.auto_start_delay_seconds = int(self.auto_start_delay.value())
         s.notify_on_success = self.notify.isChecked()
         s.mp3_retention_days = self.retention.value()
         s.delete_mp3_after_transcribe = self.del_mp3.isChecked()

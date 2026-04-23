@@ -82,6 +82,10 @@ class FailedTab(QWidget):
             fixed_cols={5: 40},
             defaults={0: 140, 2: 280, 3: 60, 4: 150},
         )
+        # Click-to-sort on column headers. Disabled during refresh()
+        # population (Qt re-sorts on every setItem) and re-enabled after.
+        self.table.setSortingEnabled(True)
+        self.table.horizontalHeader().setSortIndicatorShown(True)
         v.addWidget(self.table)
 
         # guid → raw error text, for Copy-error / Show-log handlers.
@@ -95,6 +99,11 @@ class FailedTab(QWidget):
                 "SELECT show_slug, guid, title, attempted_at, error_text "
                 "FROM episodes WHERE status='failed' ORDER BY attempted_at DESC"
             ).fetchall()
+        # Sorting must be off during repopulation — Qt re-sorts on every
+        # setItem when enabled, scrambling row indices and leaving cells
+        # past column 0 empty. Restore at the end.
+        was_sorting = self.table.isSortingEnabled()
+        self.table.setSortingEnabled(False)
         self.table.setRowCount(0)
         self._errors.clear()
         for r in rows:
@@ -129,6 +138,8 @@ class FailedTab(QWidget):
             a_skip.triggered.connect(lambda _=False, g=guid: self._skip_forever(g))
             btn.setMenu(menu)
             self.table.setCellWidget(row, 5, btn)
+        # Restore click-to-sort after the bulk insertion completes.
+        self.table.setSortingEnabled(was_sorting)
 
     # --- Per-row handlers -------------------------------------------------
 

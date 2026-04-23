@@ -161,20 +161,25 @@ class ParagraphosApp(QObject):
         )
         self._sched.start()
 
+        # Delay before either the catch-up or the regular auto-start fires.
+        # Settings → 'Auto-start delay' (default 5 s). Gives the window time
+        # to paint and the tray icon to appear before the queue grabs CPU.
+        _delay_ms = max(0, int(getattr(self.ctx.settings, "auto_start_delay_seconds", 5))) * 1000
+
         if self.ctx.settings.catch_up_missed and should_catch_up(
             self.ctx.state.get_meta("last_successful_check"),
             self.ctx.settings.daily_check_time,
         ):
-            # Fire AFTER the window opens (300ms) so ShowsTab owns the thread.
+            # Fire AFTER the window opens so ShowsTab owns the thread.
             self.ctx.state.set_meta("queue_paused", "0")
-            QTimer.singleShot(2500, self._run_check)
+            QTimer.singleShot(_delay_ms, self._run_check)
         elif getattr(self.ctx.settings, "auto_start_queue", True):
             # Auto-start the queue on launch (checkbox in Settings, on by
             # default). If a previous session left the queue paused, the
             # user's explicit setting here overrides — a launch-time
             # auto-start means "resume and go", not "sit and wait".
             self.ctx.state.set_meta("queue_paused", "0")
-            QTimer.singleShot(2500, lambda: self._run_check(force=False))
+            QTimer.singleShot(_delay_ms, lambda: self._run_check(force=False))
 
     def _rebuild_tray_menu(
         self,

@@ -103,6 +103,11 @@ class QueueTab(QWidget):
         )
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._on_context_menu)
+        # Click-to-sort on column headers. The Queue's natural order is
+        # priority+date so users get the worker order by default; turning
+        # sorting on lets them re-sort by Show / Status / etc. ad-hoc.
+        self.table.setSortingEnabled(True)
+        self.table.horizontalHeader().setSortIndicatorShown(True)
         v.addWidget(self.table)
 
         h = QHBoxLayout()
@@ -364,6 +369,11 @@ class QueueTab(QWidget):
                 "  END, "
                 "  priority DESC, pub_date ASC"
             ).fetchall()
+        # Sorting must be off during repopulation — Qt re-sorts on every
+        # setItem when enabled, scrambling row indices and leaving cells
+        # past column 0 empty. Restore at the end.
+        was_sorting = self.table.isSortingEnabled()
+        self.table.setSortingEnabled(False)
         self.table.setRowCount(0)
         for r in rows:
             row = self.table.rowCount()
@@ -403,6 +413,8 @@ class QueueTab(QWidget):
                 self.table.setItem(row, 7, QTableWidgetItem(_fmt_finish(finish_at)))
             else:
                 self.table.setItem(row, 7, QTableWidgetItem("—"))
+        # Restore click-to-sort after the bulk insertion completes.
+        self.table.setSortingEnabled(was_sorting)
 
     # ── context menu ──────────────────────────────────────────
 
@@ -437,6 +449,13 @@ class QueueTab(QWidget):
 
     def _retranscribe(self, guid: str) -> None:
         retranscribe_episode(self.ctx, guid)
+        # Kick the worker so the bumped re-transcribe runs next instead
+        # of waiting for the next scheduled pass.
+        try:
+            self._shows_tab().start_check(force=True)
+        except Exception:
+            pass
+        self._last_table_refresh = 0.0
         self.refresh()
 
     def _bump(self, guid: str, priority: int) -> None:

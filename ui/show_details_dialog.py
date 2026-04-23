@@ -718,6 +718,23 @@ class ShowDetailsDialog(QDialog):
 
     def _retranscribe(self, guid: str) -> None:
         retranscribe_episode(self.ctx, guid)
+        # Kick the worker + force-refresh the Queue so the re-transcribed
+        # episode immediately jumps to the top of the visible queue. Same
+        # nudge pattern as _bump.
+        shows_tab = self.parent()
+        if shows_tab is not None and hasattr(shows_tab, "start_check"):
+            try:
+                shows_tab.start_check(only_slug=self.slug, force=True)
+            except Exception:
+                pass
+            try:
+                main_win = shows_tab.window()
+                queue_tab = getattr(main_win, "queue_tab", None)
+                if queue_tab is not None and hasattr(queue_tab, "refresh"):
+                    queue_tab._last_table_refresh = 0.0
+                    queue_tab.refresh()
+            except Exception:
+                pass
         # Refresh backlog label so the user sees the bump take effect.
         self.backlog_lbl.setText(self._fmt_backlog())
 
@@ -730,6 +747,19 @@ class ShowDetailsDialog(QDialog):
         if shows_tab is not None and hasattr(shows_tab, "start_check"):
             try:
                 shows_tab.start_check(only_slug=self.slug, force=True)
+            except Exception:
+                pass
+            # Force-refresh the Queue tab table NOW (instead of waiting
+            # for its 3 s tick) so the user sees the bumped row jump to
+            # the top immediately. Reach the queue tab via the main
+            # window — shows_tab.parent() is the main window, which has
+            # `queue_tab`.
+            try:
+                main_win = shows_tab.window()
+                queue_tab = getattr(main_win, "queue_tab", None)
+                if queue_tab is not None and hasattr(queue_tab, "refresh"):
+                    queue_tab._last_table_refresh = 0.0
+                    queue_tab.refresh()
             except Exception:
                 pass
         # The recent-episodes table is ordered by pub_date so a priority

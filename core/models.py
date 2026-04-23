@@ -60,6 +60,10 @@ class Settings(BaseModel):
     # Paragraphos begins work immediately; turn off if you prefer the
     # queue to sit idle until you click Start.
     auto_start_queue: bool = True
+    # Seconds to wait after launch before the auto-start fires. Lets the
+    # main window finish painting + the tray icon appear before the queue
+    # grabs CPU. Settings UI exposes this next to auto_start_queue.
+    auto_start_delay_seconds: int = 5
     notify_on_success: bool = True
     # Flipped True the first time the user completes the first-run setup
     # dialog. Legacy users with customised paths get auto-backfilled on load

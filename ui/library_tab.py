@@ -97,6 +97,10 @@ class LibraryTab(QWidget):
         self.table.itemDoubleClicked.connect(self._on_row_double_click)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._on_row_context_menu)
+        # Click-to-sort. _populate_table disables sorting during the
+        # bulk insert and re-enables after.
+        self.table.setSortingEnabled(True)
+        hdr.setSortIndicatorShown(True)
         lp.addWidget(self.table)
         self._splitter.addWidget(list_panel)
 
@@ -285,6 +289,11 @@ class LibraryTab(QWidget):
         self._populate_table()
 
     def _populate_table(self) -> None:
+        # Sorting must be off during repopulation — Qt re-sorts on every
+        # setItem when enabled, scrambling row indices and leaving cells
+        # past column 0 empty. Restore at the end.
+        was_sorting = self.table.isSortingEnabled()
+        self.table.setSortingEnabled(False)
         self.table.setRowCount(0)
         # Hide the Show column when a specific show is selected — same
         # info would just repeat per row.
@@ -308,6 +317,8 @@ class LibraryTab(QWidget):
             self._current_guid = None
             self._set_empty_preview()
             self._set_action_buttons_enabled(False)
+        # Restore click-to-sort after the bulk insertion completes.
+        self.table.setSortingEnabled(was_sorting)
         # Auto-select the top row (most recent episode by pub_date DESC)
         # when nothing is currently selected. Gives the user an immediate
         # preview when they switch shows, instead of an empty right pane.
