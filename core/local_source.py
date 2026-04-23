@@ -321,7 +321,7 @@ def ingest_file(
         guid=guid,
         title=p.stem,
         pub_date=mtime.isoformat(),
-        mp3_url=f"file://{p}",
+        mp3_url=p.as_uri(),
         duration_sec=dur,
     )
     # Remember the origin path for the pipeline copy-or-symlink step.

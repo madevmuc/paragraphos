@@ -388,3 +388,37 @@ def test_ingest_url_dispatches_through_yt_dlp(tmp_path: Path, monkeypatch):
     assert ep["title"] == "Annual Talk"
     assert ep["pub_date"] == "2026-03-01"
     assert ep["duration_sec"] == 1234
+
+
+def test_ingest_file_url_encodes_spaces_and_non_ascii(tmp_path: Path):
+    from core import local_source
+    from core.local_source import ingest_file
+
+    # Filename with a space AND a non-ASCII character (German umlaut).
+    d = tmp_path / "Zoom Meetings"
+    d.mkdir()
+    f = d / "Büro 2026.wav"
+    f.write_bytes(b"hello")
+    state = _fresh_state(tmp_path)
+    wl_path = _seed_watchlist(tmp_path)
+
+    local_source.has_audio_stream = lambda p: True  # type: ignore[assignment]
+    local_source.duration_seconds = lambda p: 42  # type: ignore[assignment]
+
+    guid = ingest_file(f, show_slug=None, state=state, watchlist_path=wl_path)
+
+    ep = state.get_episode(guid)
+    assert ep is not None
+    url = ep["mp3_url"]
+    # Must be a valid file URI — no raw spaces, non-ASCII percent-encoded.
+    assert " " not in url
+    assert url.startswith("file:///")
+    # Percent-encoded forms (uppercase hex per RFC 3986 §2.1).
+    assert "Zoom%20Meetings" in url
+    assert "B%C3%BCro%202026" in url  # Büro → B%C3%BCro, space → %20
+    # urllib round-trips cleanly.
+    from urllib.parse import unquote, urlparse
+
+    parsed = urlparse(url)
+    assert parsed.scheme == "file"
+    assert unquote(parsed.path).endswith("Büro 2026.wav")
