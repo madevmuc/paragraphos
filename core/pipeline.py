@@ -69,6 +69,56 @@ def _guard_disk(path: Path) -> None:
         raise DiskSpaceError(f"only {free // 1024**2} MB free at {path}")
 
 
+def _find_existing_audio(audio_dir: Path, pub_date: str, title: str) -> Path | None:
+    """Return an already-on-disk audio file matching ``<pub_date>_*_<title>``,
+    or None.
+
+    Used as the slug-drift escape hatch in download_phase. The slug is
+    rebuilt every call from (pub_date, title, episode_number) but the
+    episode_number is only known when ep_num_map carries it for the
+    current run. An earlier run with the real number could have written
+    `<date>_0102_<title>.mp3`; this run rebuilds with `0000` and would
+    miss it. Globbing for the same date prefix + title fragment
+    catches it.
+
+    Match is conservative: same `YYYY-MM-DD` prefix AND the file's
+    stem must contain the first 20 chars of the sanitised title (so
+    two episodes from the same date with different titles don't get
+    crossed). Falls back to ``None`` if 0 or 2+ candidates remain
+    after the title check.
+    """
+    if not audio_dir.is_dir():
+        return None
+    date_prefix = (pub_date or "")[:10]
+    if not date_prefix:
+        return None
+    title_part = sanitize_filename(title or "", max_bytes=120)[:20]
+    candidates = sorted(audio_dir.glob(f"{date_prefix}_*"))
+    candidates = [
+        p
+        for p in candidates
+        if p.is_file()
+        and p.suffix.lower() in (".mp3", ".m4a", ".mp4", ".wav", ".ogg", ".webm", ".flac", ".aac")
+    ]
+    if title_part:
+        scoped = [p for p in candidates if title_part in p.name]
+        if len(scoped) == 1:
+            return scoped[0]
+        # If title-scoped match is ambiguous, prefer the largest file
+        # (most likely the real audio rather than a partial / leftover).
+        if len(scoped) > 1:
+            return max(scoped, key=lambda p: p.stat().st_size)
+        # Title-scoped found zero — refuse to fall through to date-only
+        # matches, which would happily return the wrong episode when
+        # two episodes share a publish date but have unrelated titles.
+        return None
+    # No title to scope by (caller passed a blank title). Only match
+    # when exactly one candidate exists for that date.
+    if len(candidates) == 1:
+        return candidates[0]
+    return None
+
+
 @dataclass(frozen=True)
 class DownloadOutcome:
     """Result of the download phase.
@@ -113,6 +163,60 @@ def download_phase(
     mp3_path = audio_dir / f"{slug}.mp3"
     safe_path_within(ctx.output_root, mp3_path)
     safe_path_within(ctx.output_root, show_dir / f"{slug}.md")
+
+    # 2a) Already-on-disk shortcut. Two cases hit this:
+    #   * Local-source ingest (mp3_url starts with 'file://') — the
+    #     audio is already where it lives; just point at it.
+    #   * Slug drift across runs. download_phase rebuilds slug from
+    #     (pub_date, title, episode_number) every time, but
+    #     ep_num_map is only populated for THIS run's feed-fetch. An
+    #     earlier run with the real episode_number wrote
+    #     `<date>_<real-num>_<title>.mp3`; this run rebuilds with
+    #     `_0000_` and would re-download (or, after the v1.3
+    #     persist-mp3_path patch, fail because mp3_path is stale).
+    #     Glob for any `<YYYY-MM-DD>_*.mp3` in the audio dir whose
+    #     stem ends in the same sanitized title; if found, skip the
+    #     network round-trip and use it.
+    existing = _find_existing_audio(audio_dir, ep["pub_date"], ep["title"])
+    if existing is not None:
+        # Persist + return so transcribe_phase reads from the real file,
+        # not the slug-rebuilt guess.
+        ctx.state.set_mp3_path(guid, str(existing))
+        ctx.state.set_status(guid, EpisodeStatus.DOWNLOADED)
+        return DownloadOutcome(
+            guid=guid,
+            mp3_path=existing,
+            show_dir=show_dir,
+            slug=existing.stem,
+            ep=ep,
+        )
+    if (ep.get("mp3_url") or "").startswith("file://"):
+        # Local-file ingest with no on-disk hit above means the source
+        # file moved or never existed — surface a clear download error
+        # rather than letting safe_url raise an opaque
+        # "refused scheme 'file'" message.
+        local_origin = ctx.state.get_meta(f"local_path:{guid}") or ""
+        if local_origin and Path(local_origin).exists():
+            # Source is still readable; just stage / point at it.
+            ctx.state.set_mp3_path(guid, local_origin)
+            ctx.state.set_status(guid, EpisodeStatus.DOWNLOADED)
+            return DownloadOutcome(
+                guid=guid,
+                mp3_path=Path(local_origin),
+                show_dir=show_dir,
+                slug=slug,
+                ep=ep,
+            )
+        err = (
+            f"download failed [LocalFileMissing]: source file no longer at "
+            f"{local_origin or ep['mp3_url']!r}; restore the file or "
+            f"remove the episode."
+        )
+        ctx.state.set_status(guid, EpisodeStatus.FAILED, error_text=err)
+        return DownloadOutcome(
+            guid=guid,
+            result=PipelineResult("failed", guid, err),
+        )
     try:
         _guard_disk(audio_dir)
         ctx.state.set_status(guid, EpisodeStatus.DOWNLOADING)

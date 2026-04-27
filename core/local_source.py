@@ -399,6 +399,14 @@ def ingest_url(
     """Ingest a pasted URL via yt-dlp's generic extractor. Returns the
     episode GUID (``<Extractor>:<id>``). Actual audio download happens
     later in the pipeline's URL branch.
+
+    YouTube watch URLs are detected via the yt-dlp extractor name
+    (``youtube`` family) and the show is created with
+    ``source="youtube"`` so the existing captions-first / whisper
+    fallback pipeline picks them up. Pre-2026-04-27 these landed under
+    ``source="url"`` and were sent through the podcast download path,
+    which fetched the watch HTML and rejected it as
+    ``Content-Type: text/html``.
     """
     info = _yt_dlp_probe(url)
     vid_id = info.get("id") or ""
@@ -406,9 +414,15 @@ def ingest_url(
     uploader = info.get("uploader")
     slug = show_slug or slug_for_url(url, uploader=uploader)
 
+    # YouTube extractor names start with "youtube" (e.g. "youtube",
+    # "youtube:tab", "youtube:playlist"). Route them through the YouTube
+    # pipeline by tagging the show as a YouTube source.
+    is_youtube = extractor.lower().startswith("youtube")
+    show_source = "youtube" if is_youtube else "url"
+
     _ensure_show(
         slug,
-        source="url",
+        source=show_source,
         title=uploader or slug,
         watchlist_path=watchlist_path,
     )
