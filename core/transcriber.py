@@ -54,6 +54,95 @@ WHISPER_BIN = _locate_whisper_bin()
 _FFMPEG_DIR = _locate_ffmpeg_dir()
 
 
+def _is_whisper_native(src: Path) -> bool:
+    """Sniff first 16 bytes for a magic that whisper.cpp's bundled
+    dr_libs decoder actually handles (WAV / MP3 / FLAC).
+
+    Trusting the extension is unsafe — a user-reported failure had
+    podcasts whose enclosure was iTunes ALAC inside an M4A box but the
+    feed advertised `.mp3`. Whisper-cli then exited 0 with no output
+    in ~700 ms (no ftyp, dr_libs gives up silently). Magic-byte sniff
+    catches that:
+
+      * ``RIFF…WAVE``                       — WAV
+      * ``ID3``                              — MP3 with ID3 tag
+      * ``\\xFF\\xFB`` / ``\\xFF\\xF3`` / ``\\xFF\\xF2`` — bare MPEG audio frame sync
+      * ``fLaC``                             — FLAC
+
+    Anything else (incl. ``ftyp`` MP4 boxes) returns False so the
+    caller pre-converts via ffmpeg.
+    """
+    try:
+        with src.open("rb") as f:
+            head = f.read(16)
+    except OSError:
+        return False
+    if len(head) < 4:
+        return False
+    if head[:4] == b"RIFF" and head[8:12] == b"WAVE":
+        return True
+    if head[:3] == b"ID3":
+        return True
+    if head[0] == 0xFF and head[1] in (0xFB, 0xF3, 0xF2):
+        return True
+    if head[:4] == b"fLaC":
+        return True
+    return False
+
+
+def _maybe_convert_to_wav(src: Path, tmpdir: str) -> Path:
+    """Return a path whisper-cli can read.
+
+    Pass-through when magic-byte sniff says the file is WAV / MP3 /
+    FLAC. For anything else (M4A, MP4, OGG, WebM, AAC, ALAC inside
+    MP4, …) shell out to ffmpeg, write a 16 kHz mono PCM WAV into
+    ``tmpdir``, and return that path.
+
+    On ffmpeg failure (binary missing, codec error, etc.) returns
+    ``src`` unchanged so the caller still sees whisper's own diagnostic
+    rather than a confusing pre-pass error.
+    """
+    import shutil as _shutil
+    import subprocess as _subprocess
+
+    if _is_whisper_native(src):
+        return src
+    ffmpeg = _shutil.which("ffmpeg")
+    if ffmpeg is None and _FFMPEG_DIR is not None:
+        candidate = Path(_FFMPEG_DIR) / "ffmpeg"
+        if candidate.exists():
+            ffmpeg = str(candidate)
+    if ffmpeg is None:
+        return src
+    out = Path(tmpdir) / f"{src.stem}.wav"
+    try:
+        _subprocess.run(
+            [
+                ffmpeg,
+                "-y",
+                "-loglevel",
+                "error",
+                "-i",
+                str(src),
+                "-ar",
+                "16000",
+                "-ac",
+                "1",
+                "-c:a",
+                "pcm_s16le",
+                str(out),
+            ],
+            check=True,
+            capture_output=True,
+            timeout=600,
+        )
+    except Exception:  # noqa: BLE001
+        return src
+    if not out.exists() or out.stat().st_size == 0:
+        return src
+    return out
+
+
 def _whisper_subprocess_env() -> dict[str, str] | None:
     """Build the ``env=`` dict for whisper-cli subprocess calls.
 
@@ -235,12 +324,20 @@ def transcribe_episode(
 
     with tempfile.TemporaryDirectory() as td:
         stem = Path(td) / slug
+        # Whisper.cpp's built-in audio loader covers WAV / MP3 / FLAC.
+        # Anything else (M4A / MP4 / AAC / OGG / WebM / Matroska — common
+        # for podcasts whose enclosure is `audio/mp4` or whose feed lies
+        # about the Content-Type) makes whisper-cli exit 0 in ~700 ms
+        # with no output. Pre-convert via ffmpeg into the same tempdir
+        # and feed whisper the WAV. The output stem stays slug-based so
+        # downstream .txt / .srt paths don't change.
+        whisper_input = _maybe_convert_to_wav(mp3_path, td)
         cmd = [
             whisper_bin,
             "-m",
             str(model_path),
             "-f",
-            str(mp3_path),
+            str(whisper_input),
             "-l",
             language,
             "-t",
