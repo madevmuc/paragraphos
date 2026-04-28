@@ -1,5 +1,66 @@
 # Paragraphos Changelog
 
+## v1.3.2 — 2026-04-28 (failed-bucket fixes)
+
+### Fixed
+- **`whisper-cli exit 2` on slug-drift** (63 episodes in user's
+  failed bucket). `download_phase` rebuilds the slug from
+  `(pub_date, title, episode_number)`; `episode_number` defaults to
+  `"0000"` when `ep_num_map` (current-run feed-fetch only) doesn't
+  carry the guid. Earlier runs wrote `<date>_<real-num>_<title>.mp3`,
+  this run rebuilt to `_0000_`, persisted `mp3_path` → ENOENT →
+  whisper-cli "input not found" → exit 2 with usage banner. Fixed by
+  globbing the audio dir for `<YYYY-MM-DD>_*<title-fragment>*` in
+  any supported audio extension BEFORE attempting download
+  (`_find_existing_audio` in `core/pipeline.py`); when found, persist
+  the actual on-disk path and skip the network round-trip. Match is
+  conservative — refuses to fall through to date-only when title
+  scoping yields zero hits, so two same-day episodes can't cross.
+- **`whisper-cli exit 0, no output` on M4A-as-mp3** (4 episodes:
+  hausverwalter-inside MP4 podcasts whose feed advertised `.mp3` but
+  the actual enclosure is iTunes ALAC inside an M4A box). Whisper.cpp
+  1.8.4's bundled dr_libs decoder doesn't handle MP4 containers and
+  doesn't auto-shell-out to ffmpeg even when on PATH. Fixed by
+  sniffing the first 16 bytes for whisper-native magic (RIFF+WAVE /
+  ID3 / MPEG sync / fLaC); anything else is pre-converted to 16 kHz
+  mono PCM WAV via ffmpeg into the existing tempdir before
+  whisper-cli is invoked (`_maybe_convert_to_wav` in
+  `core/transcriber.py`). Trusting the file extension was unsafe —
+  these files have `.mp3` extensions but ALAC content.
+- **`refused scheme 'file'` on local-file ingest** (1 episode).
+  `ingest_file` writes `mp3_url=file://…` plus a `local_path:<guid>`
+  meta key, but the pipeline was sending the file:// URL to
+  `download_mp3` → safe_url rejected the scheme. Fixed by reading
+  `local_path:<guid>` when the URL starts with `file://` and using
+  the path directly; raises a readable `LocalFileMissing` error if
+  the source is gone.
+- **`non-audio Content-Type` on YouTube-via-URL ingest** (1 episode).
+  `ingest_url` tagged the show with `source="url"`, so the worker's
+  YouTube branch (`pctx.source == "youtube"`) didn't fire and the
+  watch URL went through `download_mp3` → fetched the watch HTML →
+  rejected as `text/html`. Fixed by inspecting the yt-dlp extractor
+  name in `ingest_url`; anything starting with `youtube` lands as
+  `source="youtube"` so the existing captions-first / whisper
+  pipeline picks it up.
+
+### Internal
+- 9 new tests in `tests/test_pipeline_existing_audio.py` covering
+  the match-by-date+title rule (single hit, ambiguous → largest,
+  refuses date-only fallthrough, accepts m4a/mp4 in addition to
+  mp3), the `download_phase` short-circuit (no `download_mp3`
+  invoked when shortcut fires, `mp3_path` persisted, outcome wired
+  for transcribe), and both `file://` branches.
+- Tests: 429 → 438 passing.
+
+### Verified
+- User's failed bucket went 69 → 0. 63 caught by the existing-audio
+  shortcut (dedup-by-guid because the original transcripts already
+  exist in the library). 4 caught by the magic-byte / ffmpeg
+  pre-pass. 2 stranded test ingests (shows no longer in watchlist)
+  were marked done manually.
+
+---
+
 ## v1.3.1 — 2026-04-23 (Local Transcript tab + UX polish)
 
 ### Added
