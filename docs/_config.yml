@@ -1,0 +1,8 @@
+# Disable Jekyll processing — docs/index.html is already a complete
+# static page; we don't want Jekyll to re-render it (especially since
+# the README is also at the repo root and Jekyll's cayman theme would
+# otherwise try to use it). Keeps deploys deterministic.
+theme: null
+plugins: []
+include:
+  - CNAME

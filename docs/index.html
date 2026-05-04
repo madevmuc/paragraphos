@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Paragraphos — local podcast + YouTube → whisper.cpp transcription for macOS</title>
+<meta name="description" content="Paragraphos transcribes podcasts and YouTube channels entirely on your Mac with whisper.cpp. No cloud, no API keys, no telemetry. Free and open source.">
+<meta property="og:title" content="Paragraphos">
+<meta property="og:description" content="Local podcast + YouTube → whisper.cpp transcription pipeline for macOS. No cloud, no telemetry, no account.">
+<meta property="og:url" content="https://paragraphos.m4ma.com/">
+<meta property="og:image" content="https://paragraphos.m4ma.com/screenshots/queue-tab.png">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="canonical" href="https://paragraphos.m4ma.com/">
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #0e0e10;
+    --fg: #e8e8ea;
+    --ink-3: #9a9aa2;
+    --line: #26262b;
+    --accent: #b18cff;
+    --accent-ink: #1a1530;
+    --card: #16161a;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #fdfdfd;
+      --fg: #1a1a1f;
+      --ink-3: #6b6b75;
+      --line: #e7e7ec;
+      --accent: #6f4dd0;
+      --accent-ink: #ffffff;
+      --card: #f6f6f8;
+    }
+  }
+  *,*::before,*::after { box-sizing: border-box }
+  html, body { margin: 0; padding: 0 }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font: 16px/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  main { max-width: 880px; margin: 0 auto; padding: 64px 24px 96px }
+  h1 { font-size: 44px; line-height: 1.1; margin: 0 0 12px; letter-spacing: -0.02em }
+  h2 { font-size: 22px; margin: 56px 0 14px; letter-spacing: -0.01em }
+  p  { margin: 0 0 14px; color: var(--fg) }
+  .lead { font-size: 19px; color: var(--ink-3); margin: 0 0 32px }
+  .btn-row { display: flex; flex-wrap: wrap; gap: 12px; margin: 24px 0 8px }
+  .btn {
+    display: inline-block;
+    padding: 12px 22px;
+    border-radius: 10px;
+    font-weight: 600;
+    text-decoration: none;
+    border: 1px solid var(--line);
+  }
+  .btn-primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent) }
+  .btn-primary:hover { filter: brightness(1.08) }
+  .btn-ghost { background: transparent; color: var(--fg) }
+  .btn-ghost:hover { background: var(--card) }
+  .meta { color: var(--ink-3); font-size: 13px; margin-top: 4px }
+  .screenshot {
+    margin: 40px 0 8px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    overflow: hidden;
+    background: var(--card);
+  }
+  .screenshot img { display: block; width: 100%; height: auto }
+  .features { display: grid; grid-template-columns: 1fr 1fr; gap: 20px 32px; margin: 8px 0 }
+  @media (max-width: 600px) { .features { grid-template-columns: 1fr } }
+  .feature h3 { margin: 0 0 4px; font-size: 15px }
+  .feature p  { margin: 0; color: var(--ink-3); font-size: 14px }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace; font-size: 13px }
+  pre {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    line-height: 1.5;
+  }
+  .pill {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    font-size: 12px;
+    color: var(--ink-3);
+    margin-right: 6px;
+  }
+  footer {
+    margin-top: 72px;
+    padding-top: 24px;
+    border-top: 1px solid var(--line);
+    color: var(--ink-3);
+    font-size: 13px;
+  }
+  footer a { color: var(--ink-3) }
+  a { color: var(--accent); text-decoration: none }
+  a:hover { text-decoration: underline }
+</style>
+</head>
+<body>
+<main>
+  <h1>Paragraphos</h1>
+  <p class="lead">
+    Local podcast + YouTube → <code>whisper.cpp</code> transcription pipeline for macOS.
+    Everything runs on your Mac. No cloud APIs, no telemetry, no account.
+  </p>
+
+  <div>
+    <span class="pill">macOS · Apple Silicon</span>
+    <span class="pill">whisper.cpp large-v3-turbo</span>
+    <span class="pill">MIT licensed</span>
+  </div>
+
+  <div class="btn-row">
+    <a class="btn btn-primary" href="https://github.com/madevmuc/paragraphos/releases/latest">Download for macOS</a>
+    <a class="btn btn-ghost"   href="https://github.com/madevmuc/paragraphos">Source on GitHub</a>
+  </div>
+  <p class="meta">
+    Unsigned build — first launch needs the
+    <a href="https://github.com/madevmuc/paragraphos#first-launch-on-macos--opening-an-unsigned-build">three-click Gatekeeper walkthrough</a>.
+    Or build from source.
+  </p>
+
+  <div class="screenshot">
+    <img src="screenshots/queue-tab.png" alt="Queue tab — live transcribe dashboard with progress ring, per-row Audio / Whisper / Finish columns">
+  </div>
+
+  <h2>What it does</h2>
+  <div class="features">
+    <div class="feature">
+      <h3>🎧 Podcasts</h3>
+      <p>Find feeds by name (iTunes Search) or paste an RSS URL. Daily check; resumable downloads.</p>
+    </div>
+    <div class="feature">
+      <h3>📺 YouTube</h3>
+      <p>Subscribe to channels. Captions-first (requested lang → en → any), whisper fallback when none usable.</p>
+    </div>
+    <div class="feature">
+      <h3>📥 Anything else</h3>
+      <p>Drop audio / video files, paste a URL (yt-dlp generic), or watch a folder. Bulk-import a directory.</p>
+    </div>
+    <div class="feature">
+      <h3>📝 Local transcribe</h3>
+      <p>whisper.cpp on Metal — large-v3-turbo by default. Parallelised across N workers. Audio never leaves the machine.</p>
+    </div>
+    <div class="feature">
+      <h3>🩺 Self-diagnosing</h3>
+      <p>Failed feeds bucketed (DNS / TLS / 404 / 5xx / NAT64 / …) with one-click Retry now.</p>
+    </div>
+    <div class="feature">
+      <h3>🤖 Headless / agent-controllable</h3>
+      <p>23-command CLI with <code>--json</code> inspection so an LLM agent can drive the whole app.</p>
+    </div>
+  </div>
+
+  <h2>Install</h2>
+  <p>
+    Download the latest <code>.dmg</code> from the
+    <a href="https://github.com/madevmuc/paragraphos/releases/latest">releases page</a>,
+    drag <code>Paragraphos.app</code> to <code>/Applications</code>,
+    then walk through the
+    <a href="https://github.com/madevmuc/paragraphos#first-launch-on-macos--opening-an-unsigned-build">first-launch Gatekeeper steps</a>.
+    The first-run wizard handles Homebrew, <code>whisper-cpp</code>, <code>ffmpeg</code>, and the ~1.5&nbsp;GB Whisper model.
+  </p>
+  <p>Build from source instead:</p>
+  <pre><code>git clone https://github.com/madevmuc/paragraphos.git
+cd paragraphos
+python3.12 -m venv .venv
+.venv/bin/pip install -r requirements.txt -r dev-requirements.txt
+PYTHONPATH=. .venv/bin/python app.py</code></pre>
+
+  <h2>CLI</h2>
+  <p>
+    23 commands with <code>--json</code> inspection — full GUI parity for headless / agent control.
+    See the <a href="https://github.com/madevmuc/paragraphos#cli">CLI section in the README</a> for the table + an example task chain.
+  </p>
+
+  <footer>
+    <p>
+      Source &middot; releases &middot; issues &middot; CHANGELOG: <a href="https://github.com/madevmuc/paragraphos">github.com/madevmuc/paragraphos</a>
+    </p>
+    <p>
+      Built by <a href="https://m4ma.com/">m4ma</a>. MIT licensed.
+      The name comes from the ancient Greek punctuation mark that signalled a change of speaker in a text — the job Paragraphos does for every episode it transcribes.
+    </p>
+  </footer>
+</main>
+</body>
+</html>
