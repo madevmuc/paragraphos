@@ -1,0 +1,105 @@
+name: Site lint
+
+# Catches the two failure modes that would silently break paragraphos.m4ma.com
+# without anyone noticing until the next visitor:
+#   1. HTML syntax error (typo, unclosed tag)
+#   2. Broken link — internal screenshot path typo, removed file, dead
+#      external URL.
+# Runs on pushes / PRs that touch docs/**, and on a weekly cron so a
+# slowly-bitrotting external link still surfaces.
+
+on:
+  push:
+    branches: [main]
+    paths: ['docs/**', '.github/workflows/site-lint.yml']
+  pull_request:
+    paths: ['docs/**', '.github/workflows/site-lint.yml']
+  schedule:
+    # Mondays 06:00 UTC — picks up dead external links without our help.
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+jobs:
+  html-syntax:
+    name: HTML parses cleanly
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate index.html
+        # Python's html.parser is strict enough to catch unclosed tags,
+        # mis-nested elements, malformed attribute syntax. No npm install
+        # needed; ships with Python 3.
+        run: |
+          python3 - <<'PY'
+          import sys
+          from html.parser import HTMLParser
+
+          class Strict(HTMLParser):
+              def __init__(self):
+                  super().__init__(convert_charrefs=True)
+                  self.errors: list[str] = []
+                  self.stack: list[tuple[str, tuple[int, int]]] = []
+                  self.void = {
+                      "area", "base", "br", "col", "embed", "hr", "img",
+                      "input", "link", "meta", "param", "source", "track", "wbr",
+                  }
+
+              def handle_starttag(self, tag, attrs):
+                  if tag not in self.void:
+                      self.stack.append((tag, self.getpos()))
+
+              def handle_endtag(self, tag):
+                  if not self.stack:
+                      self.errors.append(f"closing </{tag}> at {self.getpos()} with no open tag")
+                      return
+                  open_tag, _ = self.stack[-1]
+                  if open_tag != tag:
+                      self.errors.append(
+                          f"</{tag}> at {self.getpos()} doesn't match open <{open_tag}> at {self.stack[-1][1]}"
+                      )
+                      return
+                  self.stack.pop()
+
+              def error(self, message):
+                  self.errors.append(message)
+
+          src = open("docs/index.html").read()
+          p = Strict()
+          p.feed(src)
+          p.close()
+          if p.stack:
+              for tag, pos in p.stack:
+                  p.errors.append(f"unclosed <{tag}> opened at {pos}")
+          if p.errors:
+              for e in p.errors:
+                  print(f"::error file=docs/index.html::{e}")
+              sys.exit(1)
+          print("docs/index.html parses cleanly")
+          PY
+
+  links:
+    name: Links resolve
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lychee link check
+        uses: lycheeverse/lychee-action@v2
+        with:
+          # `--base docs` resolves relative URLs against the published
+          # site root, matching what GitHub Pages serves at
+          # paragraphos.m4ma.com. `--no-progress` keeps CI logs clean.
+          # 200 + 403 accepted: some sites bot-403 us but humans get
+          # through; we don't want to fail the build on those.
+          # `--exclude-mailto` since mailto: links don't make sense to fetch.
+          args: >-
+            --no-progress
+            --base docs
+            --accept 200,202,203,204,206,301,302,303,307,308,403
+            --exclude-mailto
+            --max-retries 2
+            --retry-wait-time 4
+            docs/**/*.html docs/**/*.md
+          fail: true
+        # Lychee can flake on transient outages — a single retry buys
+        # robustness against a 30-second blip without masking real
+        # breakage (the workflow re-runs every Monday anyway).
