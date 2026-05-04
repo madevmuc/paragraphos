@@ -1,5 +1,68 @@
 # Paragraphos Changelog
 
+## v1.3.3 — 2026-05-04 (Library auto-refresh, install loop, log dates, Gatekeeper docs)
+
+### Fixed
+- **Library tab missed most-recent transcripts.** `_resolve_md_path`
+  rebuilt the `.md` filename with `episode_number="0000"` and stat'd
+  it. Real downloads write the file under the actual episode number
+  from the feed (`_0314_`, `_0644_`, …), so the constructed path
+  didn't exist and the row was silently dropped from the Library
+  tree. Same slug-drift class as the v1.3.2 `download_phase` fix.
+  Apply the same conservative recovery: try canonical path first,
+  then glob the show dir for `<YYYY-MM-DD>_*<title-fragment>*.md`,
+  refusing date-only fallthrough so two same-day episodes can't
+  cross. Verified on a live install with **16 of the 50
+  most-recent done episodes invisible** before the fix.
+- **Library wasn't refreshed after transcripts completed.**
+  `LibraryTab.refresh()` only fired on `__init__` and after a manual
+  re-transcribe — long sessions showed a static snapshot from app
+  launch. Wire the worker's `episode_done` signal into a 1-second
+  debounced refresh; ShowsTab forwards it to a new `library_listener`
+  slot the same way it forwards to `queue_listener`. The 1-second
+  debounce coalesces a finish-burst (parallel_transcribe=N
+  completing several episodes within seconds) into a single tree
+  rebuild instead of N rebuilds. `MainWindow._on_nav` already
+  refreshes on every Library click as defence-in-depth.
+- **Install Homebrew loop.** Clicking the wizard's
+  *Install Homebrew…* opened a Terminal that printed
+  `curl: (77) error setting certificate verify locations:` and then
+  `✓ Homebrew installer finished` despite the curl failure. Two
+  bugs in the .command script: (a) py2app's
+  `SSL_CERT_FILE` / `SSL_CERT_DIR` / `CURL_CA_BUNDLE` /
+  `REQUESTS_CA_BUNDLE` / `OPENSSL_CONF` env vars leak into the
+  Terminal child and point at non-existent paths inside the .app
+  bundle (curl exits 77); (b) the `bash -c "$(curl …)"` pipe
+  swallows curl's exit code, so even `set -e` saw a clean exit and
+  printed "finished" anyway. Fix: `unset` the five TLS env vars at
+  the top of the script; download `install.sh` to a `mktemp` file,
+  check `curl`'s exit code explicitly, and only run
+  `bash <tempfile>` on success.
+- **In-app log timestamps now include the date.** Both `LogDock` and
+  `LogsPane` stamped entries with `HH:MM:SS` only — long sessions had
+  ambiguous lines (`08:23:14` could be from this morning or
+  yesterday). Switch to `YYYY-MM-DD HH:MM:SS` so dock entries line
+  up with the file handler for grepping.
+
+### Docs
+- New **First launch on macOS — opening an unsigned build** section
+  in README. The old "right-click → Open" trick stopped working on
+  macOS Sequoia (15)+. Three-step walkthrough with screenshots:
+  (1) click **Done** on the "Paragraphos.app Not Opened" dialog,
+  (2) System Settings → Privacy & Security → **Open Anyway**,
+  (3) confirm with **Open Anyway** at re-launch. Includes a brief
+  why-it-happens note (no $99/yr Apple Developer account → unsigned
+  → one-time Gatekeeper challenge).
+
+### Internal
+- New tests: `test_library_resolve_md_path.py` (6),
+  `test_first_run_brew_script.py` (2 — sniffs the script body and
+  end-to-end runs the script with a fake `curl` that exits 77 to
+  pin the failure-propagation behaviour).
+- Suite: 438 → 446 passing.
+
+---
+
 ## v1.3.2 — 2026-04-28 (failed-bucket fixes)
 
 ### Fixed
