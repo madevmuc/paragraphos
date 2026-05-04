@@ -56,7 +56,12 @@ class LogDock(QDockWidget):
         self.setTitleBarWidget(_CopyOnClickTitle(self))
 
     def append(self, msg: str) -> None:
-        ts = datetime.now().strftime("%H:%M:%S")
+        # Full date + time so a long-running session's log entries stay
+        # unambiguous (an `08:23:14` could be from this morning or
+        # yesterday — the in-app dock didn't carry the day before).
+        # Matches the file-handler's `YYYY-MM-DD HH:MM:SS` so copying
+        # from the dock and grepping the on-disk log line up.
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self._text.appendPlainText(f"{ts}  {msg}")
 
     def copy_all(self) -> None:
@@ -92,7 +97,12 @@ class LogsPane(QWidget):
         v.addWidget(self._text, 1)
 
     def append(self, msg: str) -> None:
-        ts = datetime.now().strftime("%H:%M:%S")
+        # Full date + time so a long-running session's log entries stay
+        # unambiguous (an `08:23:14` could be from this morning or
+        # yesterday — the in-app dock didn't carry the day before).
+        # Matches the file-handler's `YYYY-MM-DD HH:MM:SS` so copying
+        # from the dock and grepping the on-disk log line up.
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self._text.appendPlainText(f"{ts}  {msg}")
 
     def copy_all(self) -> None:

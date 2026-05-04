@@ -290,12 +290,37 @@ class FirstRunWizard(QDialog):
         ``osascript tell Terminal to do script`` which silently fails
         when the brew one-liner has embedded quotes / $() and when
         Automation permission hasn't been granted.
+
+        Two non-obvious things the script has to do:
+
+        * **Unset bundled SSL env vars.** Paragraphos.app ships with
+          py2app, which sets ``SSL_CERT_FILE`` / ``SSL_CERT_DIR`` /
+          ``CURL_CA_BUNDLE`` / ``REQUESTS_CA_BUNDLE`` / ``OPENSSL_CONF``
+          to paths inside the bundle so the bundled Python's TLS works.
+          Those env vars leak into ``open -a Terminal`` and the
+          ``curl`` invoked by Homebrew's installer dies with
+          ``curl: (77) error setting certificate verify locations`` —
+          the user's Terminal hits a path that exists in the .app
+          but not in their shell. Unsetting them at the top of the
+          script lets curl fall back to macOS's secure-transport
+          backend / system trust store.
+
+        * **Detect pipe failure.** ``bash -c "$(curl ...)"`` swallows
+          curl's exit code: when curl fails the ``$(...)`` substitutes
+          empty, bash runs nothing successfully (exit 0), and even
+          ``set -e`` is satisfied. Pre-fix the user saw the curl error
+          followed by "✓ Homebrew installer finished" and assumed it
+          worked. Now we curl into a tempfile, check ``$?`` ourselves,
+          and only run bash on success.
         """
         import os
         import tempfile
 
         from PyQt6.QtWidgets import QMessageBox
 
+        # Used only by the OSError fallback below — we still want to
+        # show the user the canonical brew one-liner if launching
+        # Terminal fails entirely.
         cmd = deps.install_brew_command()
         with tempfile.NamedTemporaryFile(
             mode="w",
@@ -305,9 +330,32 @@ class FirstRunWizard(QDialog):
             encoding="utf-8",
         ) as f:
             f.write("#!/bin/sh\n")
-            f.write("set -e\n")
-            f.write(cmd + "\n")
-            f.write('\necho ""\n')
+            f.write("set -eu\n")
+            # Strip py2app's TLS env. They point at paths inside the
+            # .app bundle that don't exist outside the bundled Python.
+            f.write(
+                "unset SSL_CERT_FILE SSL_CERT_DIR CURL_CA_BUNDLE REQUESTS_CA_BUNDLE OPENSSL_CONF\n"
+            )
+            # Download install.sh into a tempfile so we can check
+            # curl's exit code separately from bash's. -fsSL: fail on
+            # 4xx/5xx, silent progress, follow redirects.
+            f.write('script="$(mktemp -t paragraphos-brew-installer)"\n')
+            f.write("trap 'rm -f \"$script\"' EXIT\n")
+            f.write(
+                "if ! curl -fsSL "
+                "https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh "
+                '-o "$script"; then\n'
+            )
+            f.write("  echo ''\n")
+            f.write(
+                "  echo '❌ Could not download the Homebrew installer "
+                "(curl failed). Check your internet connection, then re-run "
+                "Install Homebrew… in Paragraphos.'\n"
+            )
+            f.write("  exit 1\n")
+            f.write("fi\n")
+            f.write('/bin/bash "$script"\n')
+            f.write("echo ''\n")
             f.write(
                 'echo "✓ Homebrew installer finished. Close this window and '
                 'click Recheck in Paragraphos."\n'
