@@ -121,13 +121,48 @@ auto-detected on macOS via `sysctl`. Full dark-mode polish.
 
 ### Option A — Download the `.app`
 
-1. Grab the latest release from the [Releases page](../../releases) (once
-   published).
-2. Drag `Paragraphos.app` into `/Applications`.
-3. First launch: right-click → **Open** to bypass Gatekeeper (the bundle
-   is not notarised; code signing is an explicit non-goal for v1.0).
+1. Grab the latest `Paragraphos-x.y.z.dmg` from the
+   [Releases page](../../releases).
+2. Open the `.dmg`, drag `Paragraphos.app` into `/Applications`.
+3. **First launch — three clicks through Gatekeeper** (see below).
 4. The first-run wizard handles the rest (Homebrew + `whisper-cpp` +
    `ffmpeg` + ~1.5 GB model download).
+
+#### First launch on macOS — opening an unsigned build
+
+Paragraphos isn't notarised by Apple (no developer account). On macOS
+Sequoia (15) and later, the old right-click → **Open** trick no longer
+works — you have to go through System Settings once. Three clicks,
+then it's launchable normally forever.
+
+**Step 1.** Double-click `Paragraphos.app` in `/Applications`. macOS
+shows this dialog. Click **Done** (do **not** click Move to Bin).
+
+<img src="docs/screenshots/gatekeeper-1-blocked.png" alt="Gatekeeper block dialog" width="320">
+
+**Step 2.** Open **System Settings → Privacy & Security**, scroll
+down to **Security**. You'll see *"Paragraphos.app" was blocked to
+protect your Mac.* Click **Open Anyway**.
+
+<img src="docs/screenshots/gatekeeper-2-settings.jpeg" alt="Privacy & Security — Open Anyway" width="640">
+
+**Step 3.** macOS asks one more time, with **Open Anyway** as an
+explicit choice. Click it (you may be prompted for your password /
+Touch ID).
+
+<img src="docs/screenshots/gatekeeper-3-confirm.png" alt="Final Open Anyway confirmation" width="320">
+
+That's it — the app launches and from then on opens normally from
+the Dock / Spotlight / Launchpad without any prompts. macOS remembers
+your decision per-app.
+
+> **Why the song and dance?** Apple charges $99/yr for a Developer
+> account to notarise apps. Paragraphos is a personal-tools project
+> with no commercial revenue, so it ships unsigned. The Gatekeeper
+> warning is macOS's standard "I haven't seen this developer before"
+> screen — it doesn't mean the app is unsafe, just unverified by
+> Apple's notarisation service. The full source is in this repo if
+> you'd rather build it yourself (see Option B).
 
 ### Option B — Build from source
 
