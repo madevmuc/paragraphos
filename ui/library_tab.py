@@ -193,16 +193,55 @@ class LibraryTab(QWidget):
         self._apply_filter()
 
     def _resolve_md_path(self, show_slug: str, pub_date: str, title: str) -> Optional[Path]:
-        """Compute the canonical .md path the pipeline would have written.
+        """Find the on-disk .md for an episode.
 
-        v1 deliberately skips LibraryIndex lookup — `build_slug` +
-        existence check is enough and avoids a moving dependency on
-        the index's scan cadence.
+        Two paths to a hit, in order:
+
+        1. Construct the canonical path the pipeline would have
+           written (``<output_root>/<slug>/<date>_0000_<title>.md``)
+           and stat it. Cheap; covers shows that genuinely have
+           ``episode_number=0000`` in their slug.
+
+        2. If that misses, glob the show dir for
+           ``<YYYY-MM-DD>_*<title-fragment>*.md``. Same conservative
+           rules as ``core.pipeline._find_existing_audio``: title
+           prefix scope, ambiguous → most recently modified, refuses
+           to fall through to a date-only match. Catches the slug-
+           drift case where the transcript was written under the real
+           ``episode_number`` (e.g. ``_0314_``) but the Library row
+           has none.
+
+           Pre-2026-05-04 the Library skipped step 2 and silently
+           dropped every transcript whose filename used a non-zero
+           episode number — most recent episodes vanished from the
+           tree even though state and disk both had them.
         """
         from core.pipeline import build_slug
+        from core.sanitize import sanitize_filename
 
+        show_dir = Path(self.ctx.settings.output_root).expanduser() / show_slug
         slug = build_slug(pub_date, title, "0000")
-        return Path(self.ctx.settings.output_root).expanduser() / show_slug / f"{slug}.md"
+        canonical = show_dir / f"{slug}.md"
+        if canonical.exists():
+            return canonical
+        if not show_dir.is_dir():
+            return None
+        date_prefix = (pub_date or "")[:10]
+        if not date_prefix:
+            return None
+        title_part = sanitize_filename(title or "", max_bytes=120)[:20]
+        if not title_part:
+            return None
+        candidates = [
+            p for p in show_dir.glob(f"{date_prefix}_*.md") if p.is_file() and title_part in p.name
+        ]
+        if not candidates:
+            return None
+        if len(candidates) == 1:
+            return candidates[0]
+        # Ambiguous: same date + title prefix but different episode
+        # numbers (rare). Prefer the most recently modified.
+        return max(candidates, key=lambda p: p.stat().st_mtime_ns)
 
     # ── Show metadata ────────────────────────────────────────────
     def _show_meta(self, slug: str) -> tuple[str, str]:
