@@ -29,6 +29,7 @@ class ShowsTab(QWidget):
         self._thread = None
         self.log_sink = None  # set by MainWindow to route progress to LogDock
         self.queue_listener = None  # set by MainWindow — receives queue signals
+        self.library_listener = None  # set by MainWindow — Library tab debounced refresh
 
         layout = QVBoxLayout(self)
 
@@ -482,6 +483,14 @@ class ShowsTab(QWidget):
             self._thread.queue_sized.connect(self.queue_listener.on_queue_sized)
             self._thread.episode_done.connect(self.queue_listener.on_episode_done)
             self._thread.finished_all.connect(self.queue_listener.on_finished_all)
+        # Library tab listens too — debounced refresh on every
+        # episode_done so newly-completed transcripts surface in the
+        # tree without restarting the app. Wired in MainWindow via
+        # `library_listener`. Kept optional so unit tests that build
+        # ShowsTab in isolation don't trip on a missing attribute.
+        lib = getattr(self, "library_listener", None)
+        if lib is not None and hasattr(lib, "on_episode_done"):
+            self._thread.episode_done.connect(lib.on_episode_done)
         self.stop_btn.setEnabled(True)
         self.check_btn.setEnabled(False)
         from datetime import datetime

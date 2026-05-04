@@ -158,6 +158,18 @@ class LibraryTab(QWidget):
             )
         self._splitter.splitterMoved.connect(self._save_splitter)
 
+        # Debounced auto-refresh. Wired by ShowsTab to fire once after
+        # 1 s of quiet following the last episode_done — avoids
+        # rebuilding the tree N times during a check pass that finishes
+        # 50 episodes in a burst, while still landing the new rows
+        # before the user clicks back to Library. Pre-2026-05-04 the
+        # tab was scanned ONCE on construction and never again, so a
+        # session that ran for hours showed a static snapshot.
+        self._auto_refresh_timer = QTimer(self)
+        self._auto_refresh_timer.setSingleShot(True)
+        self._auto_refresh_timer.setInterval(1000)
+        self._auto_refresh_timer.timeout.connect(self.refresh)
+
         # Initial build.
         self.refresh()
 
@@ -165,6 +177,30 @@ class LibraryTab(QWidget):
     def refresh(self) -> None:
         """Reload episode list from state DB + filesystem."""
         self._load()
+
+    # ── Auto-refresh hooks ───────────────────────────────────────
+    def on_episode_done(
+        self,
+        slug: str,
+        guid: str,
+        action: str,
+        done_idx: int,
+        total: int,
+        show_title: str,
+        ep_title: str,
+    ) -> None:
+        """Slot wired in MainWindow to the worker's episode_done signal.
+        Restarts the debounce timer; refresh fires 1 s after the last
+        signal in a burst. Reuses the same 7-tuple shape as
+        QueueTab.on_episode_done so ShowsTab's existing forwarder can
+        connect to either consumer interchangeably.
+
+        ``MainWindow._on_nav`` separately calls ``refresh()`` whenever
+        the user clicks back into the Library tab — so even if the
+        auto-refresh ever misses (signal dropped, timer paused while
+        the window was hidden), navigation always reconciles state."""
+        if action == "transcribed":
+            self._auto_refresh_timer.start()
 
     # ── Data loading ─────────────────────────────────────────────
     def _load(self) -> None:

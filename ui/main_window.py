@@ -193,6 +193,10 @@ class MainWindow(QMainWindow):
         self.about_pane = AboutPane(self)
         # Let ShowsTab forward queue signals to the queue tab.
         self.shows_tab.queue_listener = self.queue_tab  # type: ignore[attr-defined]
+        # LibraryTab debounces episode_done into a single refresh so a
+        # check-pass burst doesn't rebuild the tree N times. Without
+        # this, the Library shows a snapshot frozen at app launch.
+        self.shows_tab.library_listener = self.library_tab  # type: ignore[attr-defined]
 
         # Local Transcript tab — top-level sibling of Shows/Queue. Hosts
         # the universal-ingest surface (drop, folder, URL) that used to
