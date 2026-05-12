@@ -85,15 +85,17 @@ jobs:
       - name: Lychee link check
         uses: lycheeverse/lychee-action@v2
         with:
-          # `--base docs` resolves relative URLs against the published
-          # site root, matching what GitHub Pages serves at
-          # paragraphos.m4ma.com. `--no-progress` keeps CI logs clean.
+          # `--root-dir` resolves any root-relative `/foo` links against
+          # docs/, matching what GitHub Pages serves at
+          # paragraphos.m4ma.com. lychee v0.23+ requires an absolute
+          # path here (relative paths are rejected at startup).
+          # `--no-progress` keeps CI logs clean.
           # 200 + 403 accepted: some sites bot-403 us but humans get
           # through; we don't want to fail the build on those.
           # `--exclude-mailto` since mailto: links don't make sense to fetch.
           args: >-
             --no-progress
-            --base docs
+            --root-dir ${{ github.workspace }}/docs
             --accept 200,202,203,204,206,301,302,303,307,308,403
             --exclude-mailto
             --max-retries 2
