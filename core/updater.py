@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from datetime import datetime, timedelta
 from typing import Callable, Optional
 
 from core.http import get_client
@@ -82,3 +83,25 @@ def check_for_update(
             logger.debug("update check failed: %s", e)
 
     threading.Thread(target=run, daemon=True).start()
+
+
+def should_recheck_update(
+    last_iso: Optional[str], now: datetime, min_interval_h: float = 24.0
+) -> bool:
+    """True when a periodic re-check is due: never checked, an unparseable
+    stored timestamp (defensively re-check), or at least ``min_interval_h``
+    hours since the last check."""
+    if not last_iso:
+        return True
+    try:
+        last = datetime.fromisoformat(last_iso)
+    except ValueError:
+        return True
+    return (now - last) >= timedelta(hours=min_interval_h)
+
+
+def should_notify_tag(notified_tag: str, tag: str) -> bool:
+    """True when this release tag has not yet been surfaced via a tray
+    notification — so the user is pinged once per version, not once per
+    check/launch."""
+    return notified_tag != tag
