@@ -150,3 +150,12 @@ Startup + tägliche Aktivierungen geben genug Versuche.
   neu gestartet"-Fall).
 - Re-Check-Slot ist entkoppelt vom Catch-up-Slot — `_on_app_activated`
   und sein `_catch_up_pending`-Latch werden nicht angefasst.
+- **Benigne Doppelprüfung Launch → erste Aktivierung:** Der Startup-Check
+  schreibt `last_update_check` bewusst NICHT (kein Erfolgs-Callback). Die
+  erste `ApplicationActive`-Aktivierung nach dem Launch sieht daher kein/
+  veraltetes Meta und feuert eine zweite `releases/latest`-Anfrage wenige
+  Sekunden nach der Startup-Anfrage. Akzeptiert: zwei unauth. GitHub-GETs
+  (weit unter 60/h), Tray-Dedupe verhindert den Doppel-Toast. **Nicht
+  „fixen" durch Kopplung des Startup-Pfads an `last_update_check`** — das
+  würde den absichtlich vermiedenen „offline beim Start überspringt den
+  24 h-Slot"-Fall wieder einführen.
