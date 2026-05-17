@@ -92,12 +92,13 @@ jobs:
           # `--no-progress` keeps CI logs clean.
           # 200 + 403 accepted: some sites bot-403 us but humans get
           # through; we don't want to fail the build on those.
-          # `--exclude-mailto` since mailto: links don't make sense to fetch.
+          # mailto: links are skipped by lychee's default (only checked
+          # with --include-mail); v0.23 has no --exclude-mailto/-mail flag,
+          # so passing one aborts lychee at startup before any link check.
           args: >-
             --no-progress
             --root-dir ${{ github.workspace }}/docs
             --accept 200,202,203,204,206,301,302,303,307,308,403
-            --exclude-mailto
             --max-retries 2
             --retry-wait-time 4
             docs/**/*.html docs/**/*.md
