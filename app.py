@@ -17,7 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from PyQt6.QtCore import QEvent, QObject, QTimer, pyqtSignal
+from PyQt6.QtCore import QEvent, QObject, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QFileOpenEvent, QFont, QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractSpinBox,
@@ -344,6 +344,10 @@ class ParagraphosApp(QObject):
         # Settings → 'Auto-start delay' (default 5 s). Gives the window time
         # to paint and the tray icon to appear before the queue grabs CPU.
         _delay_ms = max(0, int(getattr(self.ctx.settings, "auto_start_delay_seconds", 5))) * 1000
+        self._auto_start_delay_ms = _delay_ms
+        _qapp = QApplication.instance()
+        if _qapp is not None:
+            _qapp.applicationStateChanged.connect(self._on_app_activated)
 
         if self.ctx.settings.catch_up_missed and should_catch_up(
             self.ctx.state.get_meta("last_successful_check"),
@@ -486,6 +490,25 @@ class ParagraphosApp(QObject):
         # Whatever the source, connect app-level notification hooks.
         self._thread.episode_done.connect(self._on_episode_done)
         self._thread.finished_all.connect(self._on_check_done)
+
+    def _on_app_activated(self, state) -> None:
+        """Catch up a missed daily check when the app is brought to the
+        foreground. ``should_catch_up`` gates this to once per daily slot
+        (it compares against last_successful_check), so this does not
+        re-fire on every tray click within the same day."""
+        if state != Qt.ApplicationState.ApplicationActive:
+            return
+        if not self.ctx.settings.catch_up_missed:
+            return
+        if self._is_queue_busy():
+            return
+        if not should_catch_up(
+            self.ctx.state.get_meta("last_successful_check"),
+            self.ctx.settings.daily_check_time,
+        ):
+            return
+        self.ctx.state.set_meta("queue_paused", "0")
+        QTimer.singleShot(self._auto_start_delay_ms, self._run_check)
 
     def _on_episode_done(
         self,
