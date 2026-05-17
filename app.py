@@ -17,7 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from PyQt6.QtCore import QEvent, QObject, QTimer, pyqtSignal
+from PyQt6.QtCore import QEvent, QObject, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QFileOpenEvent, QFont, QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractSpinBox,
@@ -34,7 +34,7 @@ from PyQt6.QtWidgets import (
 from core.logger import setup_logging  # noqa: E402
 from core.models import backfill_setup_completed  # noqa: E402
 from core.paths import migrate_from_legacy, user_data_dir  # noqa: E402
-from core.scheduler import should_catch_up  # noqa: E402
+from core.scheduler import check_counts_as_success, should_catch_up  # noqa: E402
 from core.version import VERSION as _LOCAL_VERSION  # noqa: E402
 from ui.app_context import AppContext  # noqa: E402
 from ui.first_run_wizard import show_wizard_if_needed  # noqa: E402
@@ -265,6 +265,7 @@ class ParagraphosApp(QObject):
             self._startup_fingerprint_msg = None
         self._thread: CheckAllThread | None = None
         self._run_tally: dict[str, object] = {}
+        self._catch_up_pending = False
 
         # Non-blocking update check against GitHub releases. Runs in a
         # daemon thread; emit through a signal so the UI sees it on the GUI
@@ -344,6 +345,10 @@ class ParagraphosApp(QObject):
         # Settings → 'Auto-start delay' (default 5 s). Gives the window time
         # to paint and the tray icon to appear before the queue grabs CPU.
         _delay_ms = max(0, int(getattr(self.ctx.settings, "auto_start_delay_seconds", 5))) * 1000
+        self._auto_start_delay_ms = _delay_ms
+        _qapp = QApplication.instance()
+        if _qapp is not None:
+            _qapp.applicationStateChanged.connect(self._on_app_activated)
 
         if self.ctx.settings.catch_up_missed and should_catch_up(
             self.ctx.state.get_meta("last_successful_check"),
@@ -351,7 +356,11 @@ class ParagraphosApp(QObject):
         ):
             # Fire AFTER the window opens so ShowsTab owns the thread.
             self.ctx.state.set_meta("queue_paused", "0")
-            QTimer.singleShot(_delay_ms, self._run_check)
+            self._catch_up_pending = True
+            QTimer.singleShot(
+                _delay_ms,
+                lambda: (setattr(self, "_catch_up_pending", False), self._run_check()),
+            )
         elif getattr(self.ctx.settings, "auto_start_queue", True):
             # Auto-start the queue on launch (checkbox in Settings, on by
             # default). If a previous session left the queue paused, the
@@ -487,6 +496,35 @@ class ParagraphosApp(QObject):
         self._thread.episode_done.connect(self._on_episode_done)
         self._thread.finished_all.connect(self._on_check_done)
 
+    def _on_app_activated(self, state: Qt.ApplicationState) -> None:
+        """Catch up a missed daily check when the app is brought to the
+        foreground. ``should_catch_up`` gates this to once per daily slot
+        (it compares against last_successful_check), so this does not
+        re-fire on every tray click within the same day. ``_catch_up_pending``
+        guards the delay window between scheduling and the run actually
+        starting, so a refocus within that window (or the cold-launch
+        catch-up overlapping an activation) does not queue a second
+        ``_run_check`` and emit a spurious "already running" toast."""
+        if state != Qt.ApplicationState.ApplicationActive:
+            return
+        if self._catch_up_pending:
+            return
+        if not self.ctx.settings.catch_up_missed:
+            return
+        if self._is_queue_busy():
+            return
+        if not should_catch_up(
+            self.ctx.state.get_meta("last_successful_check"),
+            self.ctx.settings.daily_check_time,
+        ):
+            return
+        self.ctx.state.set_meta("queue_paused", "0")
+        self._catch_up_pending = True
+        QTimer.singleShot(
+            self._auto_start_delay_ms,
+            lambda: (setattr(self, "_catch_up_pending", False), self._run_check()),
+        )
+
     def _on_episode_done(
         self,
         slug: str,
@@ -583,10 +621,15 @@ class ParagraphosApp(QObject):
         return (row[0] or 0) > 0
 
     def _on_check_done(self) -> None:
-        self.ctx.state.set_meta(
-            "last_successful_check",
-            datetime.now(timezone.utc).isoformat(),
-        )
+        from core.connectivity import is_online
+
+        stopped = bool(getattr(self._thread, "_stop", False)) if self._thread else False
+        paused = self.ctx.state.get_meta("queue_paused") == "1"
+        if check_counts_as_success(stopped=stopped, paused=paused, online=is_online()):
+            self.ctx.state.set_meta(
+                "last_successful_check",
+                datetime.now(timezone.utc).isoformat(),
+            )
         # Daily-summary notification: single consolidated message after a
         # run instead of one-per-episode. Useful for overnight catch-ups.
         if self.ctx.settings.notify_mode == "daily_summary":
