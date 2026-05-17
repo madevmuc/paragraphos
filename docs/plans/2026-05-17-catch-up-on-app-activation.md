@@ -42,7 +42,7 @@ def test_not_success_when_offline():
 
 **Step 2: Run tests to verify they fail**
 
-Run: `pytest tests/test_scheduler.py -v -k success`
+Run: `.venv/bin/python -m pytest tests/test_scheduler.py -v -k success`
 Expected: FAIL — `ImportError: cannot import name 'check_counts_as_success'`
 
 **Step 3: Write minimal implementation**
@@ -61,7 +61,7 @@ def check_counts_as_success(*, stopped: bool, paused: bool, online: bool) -> boo
 
 **Step 4: Run tests to verify they pass**
 
-Run: `pytest tests/test_scheduler.py -v -k success`
+Run: `.venv/bin/python -m pytest tests/test_scheduler.py -v -k success`
 Expected: PASS (4 passed)
 
 **Step 5: Commit**
@@ -118,7 +118,7 @@ The rest of `_on_check_done` (notification, tray reset) stays unchanged and stil
 
 **Step 3: Sanity-check nothing else broke**
 
-Run: `pytest tests/test_app_tally.py tests/test_scheduler.py -v`
+Run: `.venv/bin/python -m pytest tests/test_app_tally.py tests/test_scheduler.py -v`
 Expected: PASS (existing app-tally + scheduler tests still green)
 
 **Step 4: Commit**
@@ -190,8 +190,8 @@ Add this method to the same class, immediately after `_run_check` (after `app.py
 
 **Step 4: Lint + full unit suite**
 
-Run: `ruff check app.py core/scheduler.py && pytest tests/ -q`
-Expected: ruff clean; full unit suite PASS (no regressions; pre-existing pass count from README is 429 — expect that plus the 4 new scheduler tests).
+Run: `.venv/bin/python -m ruff check app.py core/scheduler.py && .venv/bin/python -m pytest tests/ -q`
+Expected: ruff clean; full unit suite PASS (no regressions; pre-existing baseline is ~448 passing — expect that plus the 4 new scheduler tests, i.e. 452).
 
 **Step 5: Commit**
 
@@ -212,7 +212,7 @@ In a Python REPL against the app's state DB (or via the app stopped), set `last_
 
 **Step 2: Run the app, defocus, refocus**
 
-Run: `python app.py`
+Run: `.venv/bin/python app.py`
 - Let it finish launch catch-up (or set state so launch catch-up does not fire).
 - Click another app to deactivate, then click the Paragraphos tray icon / window to reactivate.
 - Expected: after `auto_start_delay_seconds`, a check starts (visible in the tray status block / Shows tab).
@@ -229,7 +229,7 @@ Run: `python app.py`
 
 **Step 4b: Verify the delay-window re-entrancy latch**
 
-- Force a "missed" state again (Step 1). Run `python app.py`.
+- Force a "missed" state again (Step 1). Run `.venv/bin/python app.py`.
 - Refocus the app twice within the `auto_start_delay_seconds` window (deactivate→reactivate, then again, all before the delay elapses).
 - Expected: exactly **one** check starts, and **NO** "A check is already running." tray toast appears.
 - Then test the cold-launch overlap: with a catch-up due, launch the app and activate it (click tray/window) during the launch catch-up's delay window.
