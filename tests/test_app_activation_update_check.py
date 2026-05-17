@@ -23,6 +23,8 @@ INACTIVE = Qt.ApplicationState.ApplicationInactive
 
 
 class _FakeApp:
+    """Carries exactly the attributes ``_on_activation_update_check`` touches."""
+
     def __init__(self, state: StateStore, settings: Settings):
         self.ctx = types.SimpleNamespace(state=state, settings=settings)
         self.update_available = types.SimpleNamespace(emit=lambda *a: None)
@@ -51,11 +53,18 @@ def _activate(fake, st=ACTIVE):
 
 def test_checks_when_due_and_records_timestamp(state, recorder):
     fake = _FakeApp(state, Settings())  # update_check_enabled True by default
+    before = datetime.now(timezone.utc)
 
     _activate(fake)
 
     assert len(recorder) == 1
-    assert state.get_meta("last_update_check") is not None
+    call = recorder[0]
+    assert call["repo"] == fake.ctx.settings.github_repo
+    assert callable(call["on_update_available"])
+    written = state.get_meta("last_update_check")
+    assert written is not None
+    # set-meta-before-fire: timestamp is fresh (written this call, UTC iso)
+    assert (datetime.fromisoformat(written) - before) < timedelta(seconds=5)
 
 
 def test_gated_within_24h(state, recorder):
@@ -94,3 +103,4 @@ def test_rechecks_after_24h(state, recorder):
     _activate(fake)
 
     assert len(recorder) == 1
+    assert state.get_meta("last_update_check") != old
