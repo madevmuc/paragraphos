@@ -265,6 +265,7 @@ class ParagraphosApp(QObject):
             self._startup_fingerprint_msg = None
         self._thread: CheckAllThread | None = None
         self._run_tally: dict[str, object] = {}
+        self._catch_up_pending = False
 
         # Non-blocking update check against GitHub releases. Runs in a
         # daemon thread; emit through a signal so the UI sees it on the GUI
@@ -355,7 +356,11 @@ class ParagraphosApp(QObject):
         ):
             # Fire AFTER the window opens so ShowsTab owns the thread.
             self.ctx.state.set_meta("queue_paused", "0")
-            QTimer.singleShot(_delay_ms, self._run_check)
+            self._catch_up_pending = True
+            QTimer.singleShot(
+                _delay_ms,
+                lambda: (setattr(self, "_catch_up_pending", False), self._run_check()),
+            )
         elif getattr(self.ctx.settings, "auto_start_queue", True):
             # Auto-start the queue on launch (checkbox in Settings, on by
             # default). If a previous session left the queue paused, the
@@ -491,12 +496,18 @@ class ParagraphosApp(QObject):
         self._thread.episode_done.connect(self._on_episode_done)
         self._thread.finished_all.connect(self._on_check_done)
 
-    def _on_app_activated(self, state) -> None:
+    def _on_app_activated(self, state: Qt.ApplicationState) -> None:
         """Catch up a missed daily check when the app is brought to the
         foreground. ``should_catch_up`` gates this to once per daily slot
         (it compares against last_successful_check), so this does not
-        re-fire on every tray click within the same day."""
+        re-fire on every tray click within the same day. ``_catch_up_pending``
+        guards the delay window between scheduling and the run actually
+        starting, so a refocus within that window (or the cold-launch
+        catch-up overlapping an activation) does not queue a second
+        ``_run_check`` and emit a spurious "already running" toast."""
         if state != Qt.ApplicationState.ApplicationActive:
+            return
+        if self._catch_up_pending:
             return
         if not self.ctx.settings.catch_up_missed:
             return
@@ -508,7 +519,11 @@ class ParagraphosApp(QObject):
         ):
             return
         self.ctx.state.set_meta("queue_paused", "0")
-        QTimer.singleShot(self._auto_start_delay_ms, self._run_check)
+        self._catch_up_pending = True
+        QTimer.singleShot(
+            self._auto_start_delay_ms,
+            lambda: (setattr(self, "_catch_up_pending", False), self._run_check()),
+        )
 
     def _on_episode_done(
         self,

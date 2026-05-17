@@ -227,6 +227,14 @@ Run: `python app.py`
 - While a check is running, deactivate/reactivate.
 - Expected: no second check starts ("A check is already running." path is never reached because `_is_queue_busy()` short-circuits first).
 
+**Step 4b: Verify the delay-window re-entrancy latch**
+
+- Force a "missed" state again (Step 1). Run `python app.py`.
+- Refocus the app twice within the `auto_start_delay_seconds` window (deactivate→reactivate, then again, all before the delay elapses).
+- Expected: exactly **one** check starts, and **NO** "A check is already running." tray toast appears.
+- Then test the cold-launch overlap: with a catch-up due, launch the app and activate it (click tray/window) during the launch catch-up's delay window.
+- Expected: **one** check starts, **no** spurious "A check is already running." toast.
+
 **Step 5: Mark design doc done and commit notes if any**
 
 If the smoke test surfaces fixes, fold them into the relevant task above and re-run. Otherwise:

@@ -115,3 +115,17 @@ berechnet.
 - `applicationStateChanged` feuert auch beim allerersten Aktivieren direkt
   nach Launch → kann mit dem Launch-Catch-up zusammenfallen.
   `_is_queue_busy()` + `should_catch_up` verhindern den Doppellauf.
+- **Re-Entrancy im Verzögerungsfenster** — zwischen `QTimer.singleShot`
+  und dem tatsächlichen `_run_check` (Default 5 s) hat noch nichts
+  `queue.running`/`last_successful_check` umgelegt, alle vier Guards
+  bleiben offen. Ein erneutes Fokussieren in diesem Fenster (oder das
+  Launch-Catch-up, dessen Timer noch läuft, während die
+  Cold-Launch-Aktivierung ein zweites `ApplicationActive` synthetisiert)
+  würde sonst einen zweiten `_run_check` einreihen und — obwohl der innere
+  `start_check`/`isRunning`-Guard den echten Doppellauf verhindert — einen
+  irreführenden „A check is already running."-Tray-Toast für eine vom
+  Nutzer nie ausgelöste Aktion erzeugen. Geschlossen durch ein
+  In-Memory-Latch `_catch_up_pending`, das sich Launch-Catch-up und
+  Aktivierungs-Handler teilen: gesetzt beim Einplanen, im Lambda *vor*
+  `_run_check` wieder gelöscht, sodass danach `_is_queue_busy()` den Guard
+  übernimmt (kein dauerhaftes Latch, kein persistierter State).
