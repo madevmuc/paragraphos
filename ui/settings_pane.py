@@ -437,6 +437,16 @@ class SettingsPane(QWidget):
             hint="recommended — runs immediately on wake if a check was missed",
             hint_kind="good",
         )
+        self.update_check = QCheckBox()
+        self.update_check.setChecked(self.ctx.settings.update_check_enabled)
+        self.update_check.stateChanged.connect(self._schedule_save)
+        self._add_field(
+            f2,
+            "Check for updates",
+            self.update_check,
+            hint="checks GitHub for new releases on launch and when reopened",
+            hint_kind="info",
+        )
         self.auto_start = QCheckBox()
         self.auto_start.setChecked(self.ctx.settings.auto_start_queue)
         self.auto_start.stateChanged.connect(self._schedule_save)
@@ -1032,6 +1042,7 @@ class SettingsPane(QWidget):
         s.output_root = self.output.text()
         s.daily_check_time = self.time.time().toString("HH:mm")
         s.catch_up_missed = self.catchup.isChecked()
+        s.update_check_enabled = self.update_check.isChecked()
         s.auto_start_queue = self.auto_start.isChecked()
         s.auto_start_delay_seconds = int(self.auto_start_delay.value())
         s.notify_on_success = self.notify.isChecked()
