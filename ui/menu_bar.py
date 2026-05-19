@@ -577,7 +577,9 @@ def build_tray_menu(
     menu = QMenu()
     if running and total > 0:
         wa = QWidgetAction(menu)
-        wa.setDefaultWidget(_build_status_block(done, total, current_title, eta_sec, pausing))
+        wa.setDefaultWidget(
+            _build_status_block(done, total, current_title, eta_sec, pausing=pausing)
+        )
         menu.addAction(wa)
         menu.addSeparator()
 

@@ -266,6 +266,7 @@ class ParagraphosApp(QObject):
         self._thread: CheckAllThread | None = None
         self._run_tally: dict[str, object] = {}
         self._catch_up_pending = False
+        self._last_tick = (0, 0, "")
 
         # Non-blocking update check against GitHub releases. Runs in a
         # daemon thread; emit through a signal so the UI sees it on the GUI
@@ -509,6 +510,7 @@ class ParagraphosApp(QObject):
         # Whatever the source, connect app-level notification hooks.
         self._thread.episode_done.connect(self._on_episode_done)
         self._thread.finished_all.connect(self._on_check_done)
+        self._thread.pause_state_changed.connect(self._on_pause_state_changed)
 
     def _on_app_activated(self, state: Qt.ApplicationState) -> None:
         """Catch up a missed daily check when the app is brought to the
@@ -577,6 +579,7 @@ class ParagraphosApp(QObject):
         # episode_done tick so the fraction / ETA / Now line stay live.
         q = self.ctx.queue
         eta = int(q.effective_avg_sec * (total - done_idx)) if q.effective_avg_sec else None
+        self._last_tick = (done_idx, total, f"{show_title} — {ep_title}")
         self._rebuild_tray_menu(
             running=True,
             done=done_idx,
@@ -612,6 +615,25 @@ class ParagraphosApp(QObject):
             self.tray.showMessage(
                 f"{title_prefix} — {show_title}",
                 ep_title[:120],
+            )
+
+    def _on_pause_state_changed(self) -> None:
+        """Pause was pressed mid-run. No episode_done fires until the
+        in-flight episode ends, so rebuild the tray now so the Pill flips
+        to 'Pausing' at click time rather than at episode end. ETA is
+        deliberately omitted: the cached tick ETA is a whole-queue
+        estimate ('time to drain everything'), which contradicts
+        'pausing — finishing the current episode then halting'. Showing
+        no ETA is more honest than a misleading one."""
+        done, total, title = self._last_tick
+        if total > 0:
+            self._rebuild_tray_menu(
+                running=True,
+                done=done,
+                total=total,
+                current_title=title,
+                eta_sec=None,
+                pausing=True,
             )
 
     def quit_with_confirm(self) -> bool:
