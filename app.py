@@ -379,6 +379,7 @@ class ParagraphosApp(QObject):
         total: int = 0,
         current_title: str = "",
         eta_sec: int | None = None,
+        pausing: bool = False,
     ) -> None:
         """Rebuild the tray context menu, swapping between idle and a
         rich status block while a queue run is active. Keeps a strong
@@ -391,6 +392,7 @@ class ParagraphosApp(QObject):
             total=total,
             current_title=current_title,
             eta_sec=eta_sec,
+            pausing=pausing,
             on_open=self.open_window,
             on_check_now=lambda: self._run_check(force=True),
             on_import_opml=self._import_opml,
