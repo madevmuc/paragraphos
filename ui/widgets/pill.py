@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import QLabel
 
 
 class Pill(QLabel):
-    ALLOWED_KINDS = ("ok", "fail", "running", "idle")
+    ALLOWED_KINDS = ("ok", "fail", "running", "idle", "pausing")
 
     def __init__(self, text: str = "", kind: str = "idle", parent=None):
         super().__init__(text, parent)
