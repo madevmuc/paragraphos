@@ -399,18 +399,31 @@ Qt signal + visual; not unit-testable headless.
 1. `.venv/bin/python app.py`, add a show, Start a check so an episode is
    transcribing (whisper running).
 2. Click **Pause** mid-episode. Expected immediately:
-   - Tray status block: amber **Pausing** pill + "Finishing current
-     episode…" (not the x/total fraction); "Now:" still shows the
-     in-flight title; progress bar still present.
    - Queue tab: Pause button → "Pausing…" disabled; Start disabled;
-     Stop still enabled.
+     Stop still enabled. (This is the pausing surface for a manual
+     toolbar Start — verify it here.)
    - Activity log: "pausing — current episode will finish…".
+   - Tray status block: the amber **Pausing** pill + "Finishing current
+     episode…" (not the x/total fraction; "Now:" still shows the
+     in-flight title; progress bar still present) applies **only to
+     background runs** — scheduler cron, startup catch-up, or tray
+     "Check now". The tray rich status block is never wired for manual
+     in-window runs (toolbar Start / Resume / Ctrl+R go through
+     `ShowsTab.start_check()`, which drives only the in-window Queue
+     tab). To verify the tray pill, trigger the run via the scheduler or
+     tray "Check now" instead of a manual toolbar Start, then Pause
+     mid-episode and confirm the pill flips at click time. This is an
+     accepted constraint (see design "Surface 4"), not a defect.
 3. Let the episode finish. Expected: state → **paused** — tray reverts to
    idle menu, Queue tab shows **Resume** enabled, Pause disabled.
 4. Click **Resume** → back to running, green pill.
 5. Repeat but click **Stop** (force) during `pausing` → in-flight episode
    is killed, state goes to idle/halted (existing force-stop behaviour
    unaffected).
+6. (Task-4 review carry-over) Kill `whisper-cli` externally mid-drain
+   (e.g. `pkill whisper-cli` while an episode is transcribing) → the
+   worker dies without emitting `finished_all`. Confirm the user can
+   still recover via **Stop→Stop** (the queue is not permanently stuck).
 
 Record results. Any fix folds into the relevant task above + re-verify.
 

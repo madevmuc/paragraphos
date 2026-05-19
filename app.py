@@ -626,6 +626,9 @@ class ParagraphosApp(QObject):
         'pausing — finishing the current episode then halting'. Showing
         no ETA is more honest than a misleading one."""
         done, total, title = self._last_tick
+        # total==0 until the first episode_done tick; mirror
+        # build_tray_menu's own `running and total > 0` gate so we never
+        # rebuild an empty/zeroed status block.
         if total > 0:
             self._rebuild_tray_menu(
                 running=True,

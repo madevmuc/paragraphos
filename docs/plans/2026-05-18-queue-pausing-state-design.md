@@ -87,6 +87,21 @@ app↔thread/shows wiring, or add a minimal `stateChanged`-style
 notification) so the Pill flips to "Pausing" at click time. Queue-tab
 needs nothing extra (covered by `_tick` 1 s + on-click `_update_btns`).
 
+**Accepted constraint (scope).** The tray Pausing pill flips at click
+time **only for `_run_check`-path runs** — scheduler cron, startup
+catch-up, and tray "Check now". This is consistent with the pre-existing
+fact that the tray rich status block is never wired for manual in-window
+runs: toolbar Start / Resume (`ShowsTab._resume`) / Ctrl+R / auto-resume
+all go through `ShowsTab.start_check()` directly, which wires only
+ShowsTab's own slots + the Queue-tab `queue_listener`, never the
+app-level tray slots (`_on_episode_done` / `_on_check_done` /
+`_on_pause_state_changed`). For manual in-window runs the **Queue-tab
+buttons (Surface 2)** are the pausing surface and work for all flows via
+the 1 s tick (independent of app wiring). This is an accepted constraint,
+not a defect: it faithfully mirrors existing tray-status behavior.
+Wiring the tray for manual in-window runs is out of scope — a separate
+concern that would change pre-existing behavior.
+
 ## Log line
 
 Align `shows_tab._pause()`'s log with `_stop()`'s wording:
