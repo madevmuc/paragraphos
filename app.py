@@ -487,6 +487,16 @@ class ParagraphosApp(QObject):
         # feeds stay parked until their 1/3/7-day backoff window expires.
         QTimer.singleShot(0, self._run_check)
 
+    def _maybe_reload_watchlist(self) -> None:
+        """Checkpoint: adopt an external watchlist.yaml edit (no clobber) and
+        stamp newly-appeared shows so their 24h backlog auto-accept starts.
+        Cheap no-op when nothing changed."""
+        from datetime import datetime, timezone
+
+        from core.watchlist_io import detect_external_and_stamp
+
+        detect_external_and_stamp(self.ctx, now=datetime.now(timezone.utc))
+
     def _run_check(self, *, force: bool = False) -> None:
         # If the window exists, delegate to ShowsTab.start_check() — that path
         # wires the Stop button correctly. Otherwise fall back to owning the
@@ -496,6 +506,7 @@ class ParagraphosApp(QObject):
         # ``force`` only propagates meaningfully to user-initiated entry
         # points (tray "Check now"). Scheduler / startup catch-up call this
         # with the default False so feed backoff is respected.
+        self._maybe_reload_watchlist()
         if self._window is not None:
             started = self._window.shows_tab.start_check(force=force)
             if not started:
@@ -524,6 +535,7 @@ class ParagraphosApp(QObject):
         ``_run_check`` and emit a spurious "already running" toast."""
         if state != Qt.ApplicationState.ApplicationActive:
             return
+        self._maybe_reload_watchlist()
         if self._catch_up_pending:
             return
         if not self.ctx.settings.catch_up_missed:

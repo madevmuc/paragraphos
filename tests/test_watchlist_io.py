@@ -55,3 +55,29 @@ def test_save_no_external_change_just_writes(tmp_path):
     on_disk = Watchlist.load(tmp_path / "watchlist.yaml")
     assert {s.slug for s in on_disk.shows} == {"a", "b", "c"}
     assert ctx._watchlist_hash == file_digest(tmp_path / "watchlist.yaml")  # baseline refreshed
+
+
+def test_detect_external_and_stamp(tmp_path):
+    from datetime import datetime, timezone
+
+    from core.watchlist_guard import DETECTED_AT, is_decided
+    from core.watchlist_io import detect_external_and_stamp
+
+    ctx = _ctx(tmp_path, ["a"])
+    ext = Watchlist(shows=[Show(slug=s, title=s, rss=f"http://h/{s}") for s in ["a", "z"]])
+    ext.save(tmp_path / "watchlist.yaml")
+    now = datetime(2026, 6, 25, 12, 0, tzinfo=timezone.utc)
+    added = detect_external_and_stamp(ctx, now=now)
+    assert added == ["z"]
+    assert ctx.state.get_meta(DETECTED_AT("z")) is not None  # stamped
+    assert is_decided(ctx.state, "z") is False  # still undecided
+
+
+def test_detect_no_external_change_is_noop(tmp_path):
+    from datetime import datetime, timezone
+
+    from core.watchlist_io import detect_external_and_stamp
+
+    ctx = _ctx(tmp_path, ["a"])  # baseline matches file
+    now = datetime(2026, 6, 25, 12, 0, tzinfo=timezone.utc)
+    assert detect_external_and_stamp(ctx, now=now) == []

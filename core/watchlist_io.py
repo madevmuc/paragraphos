@@ -45,6 +45,22 @@ def save_watchlist(ctx) -> None:
     ctx._watchlist_hash = file_digest(path)
 
 
+def detect_external_and_stamp(ctx, *, now) -> List[str]:
+    """If watchlist.yaml changed externally since our baseline, reload it
+    (adopting the new shows) and stamp each newly-appeared slug's first-seen
+    time so the 24h auto-accept timer starts. Returns the newly-appeared slugs
+    (empty list if no external change)."""
+    from core.watchlist_guard import is_external_change, mark_detected_now
+
+    path = _path(ctx)
+    if not is_external_change(path, getattr(ctx, "_watchlist_hash", "")):
+        return []
+    added = reload_watchlist(ctx)
+    for slug in added:
+        mark_detected_now(ctx.state, slug, now=now)
+    return added
+
+
 def reload_watchlist(ctx) -> List[str]:
     path = _path(ctx)
     before = {s.slug for s in ctx.watchlist.shows}
