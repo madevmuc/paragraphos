@@ -26,6 +26,29 @@ from ui.retranscribe import retranscribe_episode
 from ui.widgets.queue_hero import QueueHero
 
 
+class _SortKeyItem(QTableWidgetItem):
+    """Table cell that sorts by an underlying numeric key, not its text.
+
+    Used for the queue's temporal columns — Pub Date, Audio, Whisper,
+    Finish ≈ — whose human-friendly display strings (``Mon 14:30``,
+    ``10:00``, ISO dates) order wrongly under Qt's text sort: ``Fri``
+    before ``Mon`` chronologically, ``"10:00" < "9:00"`` for durations.
+    Each cell carries a numeric key (seconds / epoch) so the column
+    orders by real time. Rows with no value (``—`` / unparseable) carry
+    ``inf`` and sink to the bottom of an ascending sort.
+    """
+
+    def __init__(self, text: str, sort_key: float) -> None:
+        super().__init__(text)
+        self._sort_key = sort_key
+
+    def __lt__(self, other: QTableWidgetItem) -> bool:
+        other_key = getattr(other, "_sort_key", None)
+        if other_key is None:
+            return super().__lt__(other)
+        return self._sort_key < other_key
+
+
 class QueueTab(QWidget):
     """Shows current queue + progress header with started/elapsed/ETA.
 
@@ -486,7 +509,9 @@ class QueueTab(QWidget):
             # can retrieve it via UserRole data.
             show_item.setData(Qt.ItemDataRole.UserRole, r["guid"])
             self.table.setItem(row, 0, show_item)
-            self.table.setItem(row, 1, QTableWidgetItem(r["pub_date"]))
+            self.table.setItem(
+                row, 1, _SortKeyItem(r["pub_date"], _pub_date_sort_key(r["pub_date"]))
+            )
             self.table.setItem(row, 2, QTableWidgetItem(""))  # episode_number not in state
             self.table.setItem(row, 3, QTableWidgetItem(r["title"]))
             # Status column — for transcribing rows, read the live
@@ -500,22 +525,32 @@ class QueueTab(QWidget):
             status_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             self.table.setItem(row, 4, status_item)
 
-            # Audio length (mm:ss or h:mm:ss)
+            # Audio length (mm:ss or h:mm:ss) — sort by seconds, not text.
             dur_sec = int(r["duration_sec"] or 0)
-            self.table.setItem(row, 5, QTableWidgetItem(_fmt_hms(dur_sec) if dur_sec else "—"))
+            self.table.setItem(
+                row,
+                5,
+                _SortKeyItem(_fmt_hms(dur_sec), dur_sec)
+                if dur_sec
+                else _SortKeyItem("—", float("inf")),
+            )
             # Whisper wall-clock estimate (audio × realtime_factor)
             whisper_sec = int(dur_sec * rtf) if dur_sec else 0
             self.table.setItem(
-                row, 6, QTableWidgetItem(_fmt_hms(whisper_sec) if whisper_sec else "—")
+                row,
+                6,
+                _SortKeyItem(_fmt_hms(whisper_sec), whisper_sec)
+                if whisper_sec
+                else _SortKeyItem("—", float("inf")),
             )
             # Finish ≈ — cumulative, so row N reflects "done after all
             # earlier rows in the queue have finished".
             if whisper_sec:
                 cumulative_wall += whisper_sec
                 finish_at = now + timedelta(seconds=cumulative_wall)
-                self.table.setItem(row, 7, QTableWidgetItem(_fmt_finish(finish_at)))
+                self.table.setItem(row, 7, _SortKeyItem(_fmt_finish(finish_at), cumulative_wall))
             else:
-                self.table.setItem(row, 7, QTableWidgetItem("—"))
+                self.table.setItem(row, 7, _SortKeyItem("—", float("inf")))
         # Restore click-to-sort after the bulk insertion completes.
         self.table.setSortingEnabled(was_sorting)
 
@@ -629,6 +664,25 @@ def _fmt_hms(sec: int) -> str:
     if h:
         return f"{h}:{m:02d}:{s:02d}"
     return f"{m}:{s:02d}"
+
+
+def _pub_date_sort_key(s: str) -> float:
+    """Chronological sort key for a stored pub_date string.
+
+    Values are normally ISO (``YYYY-MM-DD`` or ``YYYY-MM-DDTHH:MM:SS``),
+    which already sort lexically; but feeds can leave a raw non-ISO
+    fallback that would sort wrongly. Parse to epoch seconds, retrying on
+    the date prefix; anything unparseable returns ``inf`` so it sinks to
+    the bottom of an ascending sort.
+    """
+    if not s:
+        return float("inf")
+    for candidate in (s, s[:10]):
+        try:
+            return datetime.fromisoformat(candidate).timestamp()
+        except ValueError:
+            continue
+    return float("inf")
 
 
 def _fmt_finish(dt) -> str:
