@@ -37,6 +37,7 @@ from core.paths import migrate_from_legacy, user_data_dir  # noqa: E402
 from core.scheduler import check_counts_as_success, should_catch_up  # noqa: E402
 from core.version import VERSION as _LOCAL_VERSION  # noqa: E402
 from core.watchlist_io import save_watchlist  # noqa: E402
+from core.watchlist_watch import start_watchlist_watching  # noqa: E402
 from ui.app_context import AppContext  # noqa: E402
 from ui.first_run_wizard import show_wizard_if_needed  # noqa: E402
 from ui.main_window import MainWindow  # noqa: E402
@@ -75,6 +76,17 @@ def _build_icon() -> QIcon:
     p.drawText(pm.rect(), 0x84, "P")  # Qt::AlignCenter
     p.end()
     return QIcon(pm)
+
+
+class _WatchlistWatcher(QObject):
+    """GUI-thread bridge for the watchdog observer.
+
+    The observer thread emits ``changed`` (a thread-safe Qt signal emit);
+    because this QObject lives on the GUI thread, the AutoConnection slot is
+    delivered queued onto the GUI thread, so ``_maybe_reload_watchlist`` runs
+    there (never on the watchdog thread)."""
+
+    changed = pyqtSignal()
 
 
 class ParagraphosApp(QObject):
@@ -1067,6 +1079,26 @@ def main() -> int:
         _wf_timer.start()
         app._watch_folder_timer = _wf_timer  # keep-alive reference
         qapp.aboutToQuit.connect(_wf_timer.stop)
+    # Watchlist guardrail: a watchdog observer on the data dir fires the
+    # ``changed`` signal whenever watchlist.yaml is modified/created/moved on
+    # disk. The signal is emitted from the observer thread but the bridge
+    # QObject lives on the GUI thread, so the AutoConnection slot runs
+    # ``_maybe_reload_watchlist`` queued onto the GUI thread. That method is
+    # hash-suppressed (ignores our own writes — no feedback loop) and
+    # idempotent (reload tolerates half-written files), so no debounce is
+    # needed; a couple of redundant cheap reloads on one edit are harmless.
+    app._wl_watcher = _WatchlistWatcher()
+    app._wl_watcher.changed.connect(app._maybe_reload_watchlist)
+    app._wl_observer = start_watchlist_watching(app.ctx.data_dir, app._wl_watcher.changed.emit)
+
+    def _stop_wl_observer() -> None:
+        try:
+            app._wl_observer.stop()
+            app._wl_observer.join(timeout=2)
+        except Exception:
+            pass
+
+    qapp.aboutToQuit.connect(_stop_wl_observer)
     # New-install migration: flip ``setup_completed`` for legacy users
     # whose customised folder paths imply they've already done the work
     # the setup dialog asks about. Fresh installs see the dialog once;
