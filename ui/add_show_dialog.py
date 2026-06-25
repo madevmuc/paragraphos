@@ -1420,4 +1420,12 @@ class AddShowDialog(QDialog):
                         (slug, *stale_guids),
                     )
 
+        # A GUI add IS a backlog decision (we seeded episodes + applied the
+        # strategy above), so mark the show decided — otherwise the worker's
+        # per-show gate would wrongly skip it. Mirrors the blessed CLI
+        # `paragraphos add`, which sets the same marker.
+        from core.watchlist_guard import mark_decided
+
+        mark_decided(self.ctx.state, slug)
+
         self.accept()
