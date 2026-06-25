@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 import yaml
 from pydantic import BaseModel, Field, field_validator
@@ -81,7 +81,15 @@ class Settings(BaseModel):
     mp3_retention_days: int = 7
     delete_mp3_after_transcribe: bool = True
     bandwidth_limit_mbps: int = 0
-    parallel_transcribe: int = 1
+    # Load management — how hard the machine may be driven by transcription.
+    # The level derives concrete whisper-cli parallelism + thread count +
+    # macOS scheduling tier (see core/load.py); replaces the former
+    # parallel_transcribe / whisper_multiproc knobs.
+    load_level: Literal["quiet", "balanced", "full"] = "balanced"
+    # Run transcription under a deferential scheduling tier so the Mac stays
+    # responsive. Implied for quiet/balanced; at "full" this picks nice
+    # (polite, default) vs normal (raw maximum) priority.
+    background_priority: bool = True
     # Block E defaults
     obsidian_vault_path: str = ""
     obsidian_vault_name: str = "knowledge-hub"
@@ -90,7 +98,6 @@ class Settings(BaseModel):
     log_retention_days: int = 90
     # Performance toggles (Phase 1.5)
     whisper_fast_mode: bool = False  # beam=1/best=1/-ac 0, ~2-3× speedup, lower quality
-    whisper_multiproc: int = 1  # whisper-cli -p N file split (1 = off)
     rss_concurrency: int = 8  # parallel feed fetches per check
     download_concurrency: int = 4  # parallel MP3 downloads
     download_concurrency_per_host: int = 2
@@ -169,21 +176,20 @@ class Settings(BaseModel):
     @classmethod
     def load(cls, path: Path) -> "Settings":
         if not path.exists():
-            # Fresh install — populate HW-aware tuning defaults so the
-            # queue-tab tuning-hint banner doesn't immediately shout at
-            # brand-new users. Persist so subsequent loads see the values
-            # (which then take the existing-file branch below).
+            # Fresh install — the load_level default ("balanced") is already
+            # the responsive default, so no HW seeding is needed. Persist so
+            # subsequent loads take the existing-file branch below.
             s = cls()
-            _apply_hw_defaults(s)
             try:
                 s.save(path)
             except Exception:
                 # If we can't persist (e.g. read-only fs in tests), still
-                # return the populated in-memory settings.
+                # return the in-memory settings.
                 pass
             backfill_setup_completed(s)
             return s
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        _migrate_load_level(data)
         s = cls.model_validate(data)
         backfill_setup_completed(s)
         return s
@@ -196,18 +202,16 @@ class Settings(BaseModel):
         )
 
 
-def _apply_hw_defaults(s: "Settings") -> None:
-    """Populate parallel_transcribe + whisper_multiproc with hardware-
-    aware recommendations. Called only on fresh install — saved user
-    values are never overwritten."""
-    try:
-        from core.hw import recommended_multiproc_split, recommended_parallel_workers
-
-        s.parallel_transcribe = recommended_parallel_workers()
-        s.whisper_multiproc = recommended_multiproc_split()
-    except Exception:
-        # HW detect failure — leave generic defaults in place.
-        pass
+def _migrate_load_level(data: dict) -> None:
+    """Legacy settings.yaml had parallel_transcribe / whisper_multiproc.
+    Map an absent load_level onto a level so upgraders keep a sensible
+    profile instead of silently dropping to the default. Unknown legacy
+    keys are otherwise ignored by Pydantic (extra='ignore')."""
+    if "load_level" in data:
+        return
+    legacy = data.get("parallel_transcribe")
+    if isinstance(legacy, int):
+        data["load_level"] = "full" if legacy >= 2 else "balanced"
 
 
 def backfill_setup_completed(s: Settings) -> None:

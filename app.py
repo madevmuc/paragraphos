@@ -185,18 +185,6 @@ class ParagraphosApp(QObject):
                 _homebrew_version(Path(ffmpeg_dir_path) / "ffmpeg") if ffmpeg_present else "—"
             )
 
-            # Hardware-aware recommendations vs. current settings — log any
-            # mismatch so support tickets show 'is the user on the optimal
-            # tuning?' at a glance.
-            try:
-                from core.hw import recommended_multiproc_split, recommended_parallel_workers
-
-                rec_par = recommended_parallel_workers()
-                rec_mp = recommended_multiproc_split()
-            except Exception:
-                rec_par = None
-                rec_mp = None
-
             s = self.ctx.settings
             # Pre-format the full message once so we can both (a) send it
             # to the file handler now and (b) replay it into the in-app
@@ -209,7 +197,7 @@ class ParagraphosApp(QObject):
                 "version=%s | macOS=%s (%s) | python=%s | "
                 "cpu_cores=%s | ram=%s | "
                 "tooling: whisper-cli=%s (%s) yt-dlp=%s (%s) ffmpeg=%s (%s) | "
-                "settings: model=%s parallel=%s%s multiproc=%s%s fast_mode=%s "
+                "settings: model=%s load=%s bg_priority=%s fast_mode=%s "
                 "auto_start=%s auto_start_delay=%ss save_srt=%s "
                 "mp3_retention_days=%s "
                 "sources_podcasts=%s sources_youtube=%s "
@@ -232,12 +220,8 @@ class ParagraphosApp(QObject):
                 "yes" if ffmpeg_present else "no",
                 ffmpeg_version,
                 s.whisper_model,
-                s.parallel_transcribe,
-                f" (rec={rec_par})"
-                if rec_par is not None and rec_par != s.parallel_transcribe
-                else "",
-                s.whisper_multiproc,
-                f" (rec={rec_mp})" if rec_mp is not None and rec_mp != s.whisper_multiproc else "",
+                s.load_level,
+                s.background_priority,
                 s.whisper_fast_mode,
                 s.auto_start_queue,
                 getattr(s, "auto_start_delay_seconds", 5),

@@ -10,9 +10,9 @@ class WorkerPool:
     """Thread pool — fine for our I/O-bound and single-whisper-subprocess workload.
 
     We do NOT use ProcessPoolExecutor because whisper-cli itself is a subprocess
-    and runs at full CPU/GPU — running more than one at a time is the user's
-    explicit opt-in via settings.parallel_transcribe. Threads are sufficient
-    for supervising those subprocesses.
+    and runs at full CPU/GPU — running more than one at a time is governed by the
+    load-management level (see core/load.py). Threads are sufficient for
+    supervising those subprocesses.
     """
 
     def __init__(self, max_workers: int = 1):

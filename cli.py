@@ -507,30 +507,16 @@ def cmd_show(args: argparse.Namespace) -> int:
 
 
 def cmd_settings(args: argparse.Namespace) -> int:
-    """Print all settings (with HW-aware recommendations alongside)."""
+    """Print all settings."""
     s = _settings()
     payload = s.model_dump()
-    try:
-        from core.hw import recommended_multiproc_split, recommended_parallel_workers
-
-        payload["_recommendations"] = {
-            "parallel_transcribe": recommended_parallel_workers(),
-            "whisper_multiproc": recommended_multiproc_split(),
-        }
-    except Exception:
-        pass
     if args.json:
         _emit(payload, as_json=True, human="")
         return 0
-    rec = payload.get("_recommendations", {})
     for k in sorted(payload):
         if k.startswith("_"):
             continue
-        v = payload[k]
-        suffix = ""
-        if k in rec and rec[k] != v:
-            suffix = f"   (rec={rec[k]})"
-        print(f"  {k:38}{v!r}{suffix}")
+        print(f"  {k:38}{payload[k]!r}")
     return 0
 
 

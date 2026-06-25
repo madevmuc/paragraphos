@@ -107,7 +107,7 @@ def test_all_expected_subcommands_registered():
         ["set", "ted", "language=en"],
         ["retry-feed", "ted"],
         ["retry-all-feeds"],
-        ["set-setting", "parallel_transcribe", "4"],
+        ["set-setting", "load_level", "balanced"],
         ["check", "--show", "ted", "--limit", "3"],
         ["add", "https://example.com/feed.rss"],
         ["import-feeds"],
