@@ -47,6 +47,16 @@ from core.state import EpisodeStatus
 _SHUTDOWN = object()
 
 
+def show_is_gated(state, slug: str) -> bool:
+    """A show is skipped this pass if it is per-show paused OR has no backlog
+    decision yet (an externally-added show awaiting the reconcile choice)."""
+    from core.watchlist_guard import is_decided
+
+    if state.get_meta(f"show_paused:{slug}") == "1":
+        return True
+    return not is_decided(state, slug)
+
+
 class _DownloadPool(QThread):
     """Dispatches `pending` episodes across ``N`` download worker threads.
 
@@ -558,8 +568,8 @@ class CheckAllThread(QThread):
             if not self.force and backoff.in_backoff(self.ctx.state, show.slug):
                 self.progress.emit(f"skip {show.slug} (in backoff after repeated feed failures)")
                 continue
-            if self.ctx.state.get_meta(f"show_paused:{show.slug}") == "1":
-                self.progress.emit(f"skip {show.slug} (paused per-show)")
+            if show_is_gated(self.ctx.state, show.slug):
+                self.progress.emit(f"skip {show.slug} (paused or backlog undecided)")
                 continue
             fetch_targets.append(show)
 
