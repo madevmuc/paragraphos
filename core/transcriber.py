@@ -8,7 +8,7 @@ import tempfile
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Mapping
+from typing import Mapping, Sequence
 
 
 def _locate_whisper_bin() -> str:
@@ -301,6 +301,8 @@ def transcribe_episode(
     model_path: Path = MODEL_PATH,
     fast_mode: bool = False,
     processors: int = 1,
+    threads: int = int(THREADS),
+    launch_prefix: Sequence[str] = (),
     save_srt: bool = True,
     progress_cb=None,
 ) -> TranscribeResult:
@@ -356,6 +358,7 @@ def transcribe_episode(
         # downstream .txt / .srt paths don't change.
         whisper_input = _maybe_convert_to_wav(mp3_path, td)
         cmd = [
+            *launch_prefix,
             whisper_bin,
             "-m",
             str(model_path),
@@ -364,7 +367,7 @@ def transcribe_episode(
             "-l",
             language,
             "-t",
-            THREADS,
+            str(threads),
             "-of",
             str(stem),
             "-otxt",
