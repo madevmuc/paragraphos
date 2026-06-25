@@ -4,5 +4,11 @@
 # otherwise try to use it). Keeps deploys deterministic.
 theme: null
 plugins: []
+# Internal design/implementation docs under docs/plans/ are not part of the
+# published site and contain code blocks with `{{ }}`-style snippets that
+# Jekyll's Liquid parser would choke on. Keep them in the repo but out of the
+# Pages build.
+exclude:
+  - plans
 include:
   - CNAME
