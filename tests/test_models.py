@@ -25,10 +25,8 @@ def test_watchlist_roundtrip(tmp_path: Path):
 
 
 def test_settings_defaults_match_design(tmp_path: Path):
-    # Settings() gives the generic defaults; Settings.load() on a fresh
-    # install now overlays HW-aware tuning recommendations for
-    # parallel_transcribe + whisper_multiproc (see T15), so assert the
-    # generic defaults against the constructor instead.
+    # Settings() gives the generic defaults. Load management uses a named
+    # level (load_level) that defaults to the responsive "balanced".
     s = Settings()
     assert s.daily_check_time == "09:00"
     assert s.catch_up_missed is True
@@ -36,7 +34,8 @@ def test_settings_defaults_match_design(tmp_path: Path):
     assert s.mp3_retention_days == 7
     assert s.delete_mp3_after_transcribe is True
     assert s.bandwidth_limit_mbps == 0
-    assert s.parallel_transcribe == 1
+    assert s.load_level == "balanced"
+    assert s.background_priority is True
 
 
 def test_settings_time_validation():

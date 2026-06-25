@@ -239,6 +239,51 @@ def test_fast_mode_adds_decoder_flags(tmp_path: Path):
     assert "--no-fallback" in cmd
 
 
+_META = {
+    "guid": "g",
+    "title": "T",
+    "show_slug": "d",
+    "pub_date": "2026-04-01",
+    "mp3_url": "u",
+}
+
+
+def _capture_cmd(tmp_path: Path, **kwargs) -> list:
+    mp3 = tmp_path / "ep.mp3"
+    mp3.write_bytes(b"x")
+    captured = {}
+
+    def fake(cmd, *a, **kw):
+        captured["cmd"] = list(cmd)
+        return _fake_whisper_ok(cmd, *a, **kw)
+
+    with patch("core.transcriber.subprocess.run", side_effect=fake):
+        transcribe_episode(
+            mp3_path=mp3,
+            output_dir=tmp_path / "out",
+            slug="s",
+            metadata=_META,
+            **kwargs,
+        )
+    return captured["cmd"]
+
+
+def test_threads_flag_uses_explicit_value(tmp_path: Path):
+    cmd = _capture_cmd(tmp_path, threads=3)
+    assert "-t" in cmd and cmd[cmd.index("-t") + 1] == "3"
+
+
+def test_launch_prefix_prepends_scheduler(tmp_path: Path):
+    cmd = _capture_cmd(tmp_path, threads=2, launch_prefix=["nice", "-n", "10"])
+    assert cmd[:3] == ["nice", "-n", "10"]
+    assert "whisper" in cmd[3]  # binary right after the prefix
+
+
+def test_no_launch_prefix_by_default(tmp_path: Path):
+    cmd = _capture_cmd(tmp_path)
+    assert cmd[0] not in ("nice", "taskpolicy")
+
+
 def test_processors_adds_p_flag(tmp_path: Path):
     mp3 = tmp_path / "ep.mp3"
     mp3.write_bytes(b"x")
