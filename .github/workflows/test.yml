@@ -15,6 +15,10 @@ env:
 jobs:
   test:
     runs-on: macos-14
+    # Backstop against an occasional hang: fail the job in 20 min instead of
+    # letting it sit until the 6 h default. The per-test --timeout below
+    # surfaces *which* test hung.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
 
@@ -43,4 +47,7 @@ jobs:
         env:
           PYTHONPATH: .
           QT_QPA_PLATFORM: offscreen
-        run: .venv/bin/pytest -q
+        # --timeout fails (with a thread stack dump naming the test) if any
+        # single test stalls past 180 s, so an occasional hang is diagnosable
+        # instead of an opaque job timeout.
+        run: .venv/bin/pytest -q --timeout=180 --timeout-method=thread

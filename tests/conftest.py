@@ -38,3 +38,25 @@ def _isolate_user_data_dir(tmp_path_factory, monkeypatch):
     if mod is not None and hasattr(mod, "DATA"):
         monkeypatch.setattr(mod, "DATA", data, raising=False)
     yield
+
+
+@pytest.fixture(autouse=True)
+def _stub_blocking_msgboxes(monkeypatch):
+    """No test may block on a modal QMessageBox under the offscreen QPA.
+
+    The informational static dialogs (``warning`` / ``information`` /
+    ``critical``) wait for an OK click and hang headless runs — e.g.
+    ``AddShowDialog._add_from_youtube`` pops ``QMessageBox.warning('Resolve a
+    channel URL first')`` and the suite stalls until the runner is killed.
+    Stub them to return ``Ok`` without showing anything. ``question`` and
+    instance ``exec`` are left alone — tests that need a specific button
+    answer patch those themselves.
+    """
+    try:
+        from PyQt6.QtWidgets import QMessageBox
+    except Exception:
+        return
+    ok = QMessageBox.StandardButton.Ok
+    for _name in ("warning", "information", "critical"):
+        monkeypatch.setattr(QMessageBox, _name, staticmethod(lambda *a, **k: ok), raising=False)
+    yield
