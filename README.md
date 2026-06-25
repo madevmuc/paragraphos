@@ -47,9 +47,9 @@ later.
 - ⬇ **Downloads new episodes** resumably, with retry + backoff on transient
   failures.
 - 📝 **Transcribes locally** with `whisper.cpp` (`large-v3-turbo`),
-  parallelised across N workers (`parallel_transcribe`) plus
-  whisper-cli's `-p N` per-file split (`whisper_multiproc`). Your audio
-  never leaves the machine.
+  with throughput governed by a single **background-load level**
+  (`load_level`: quiet / balanced / full — drives worker count, whisper
+  threads, and process QoS). Your audio never leaves the machine.
 - 📅 **Monitors daily** at a time you choose. Catches up automatically
   after sleep + offline; downloaded items keep transcribing while
   feed-fetch is offline.
@@ -190,8 +190,8 @@ open dist/Paragraphos.app
    YouTube use).
 3. Choose your **backlog** mode: all episodes / only new / last 20 / last 50.
 4. Paragraphos downloads + transcribes in the background. Watch the Queue
-   tab for live ETA. With `parallel_transcribe ≥ 2` multiple episodes
-   transcribe at once.
+   tab for live ETA. At a higher `load_level` (balanced / full) multiple
+   episodes transcribe at once.
 5. Completed transcripts land as `.md` + `.srt` files under the
    `Output root` you configured (Settings tab).
 
@@ -211,7 +211,7 @@ via SQLite WAL — mutations show up live in a running window.
 |---------------|-----------------------------------------------------------------------------------------|
 | Inspection    | `status`, `shows`, `show <slug>`, `episodes <slug>`, `failed`, `settings`, `feed-health` |
 | Queue control | `pause`, `resume`, `stop`, `clear-queue`, `priority <guid> <N>`, `run-next <guid>`, `retranscribe <guid>`, `retry-failed` |
-| Show admin    | `add <name-or-url>`, `enable <slug>`, `disable <slug>`, `remove <slug>`, `set <slug> key=value`, `import-feeds` |
+| Show admin    | `add <name-or-url> --backlog <all\|recent\|last:N\|since:YYYY-MM-DD> [--yes]` (backlog **required**; never edit `watchlist.yaml` directly), `enable <slug>`, `disable <slug>`, `remove <slug>`, `set <slug> key=value`, `import-feeds` |
 | Local ingest  | `ingest file <path> [--show SLUG]`, `ingest url <url> [--show SLUG]`, `ingest folder <path> [--show SLUG] [--no-recursive]`, `watch add <path>`, `watch remove`, `watch list [--json]` |
 | Feed retry    | `retry-feed <slug>`, `retry-all-feeds`                                                  |
 | Settings      | `set-setting <key> <value>`                                                             |
@@ -320,14 +320,15 @@ RSS and YouTube channel URLs through the same `add` command.
 cd ~/dev/paragraphos
 export PYTHONPATH=.
 
-# Podcasts
-.venv/bin/python cli.py add "Odd Lots"          # by name (iTunes)
-.venv/bin/python cli.py add https://feeds.acast.com/public/shows/…
+# Podcasts — --backlog is REQUIRED (how much history to transcribe);
+# --yes makes it non-interactive (takes the first iTunes match).
+.venv/bin/python cli.py add "Odd Lots" --backlog last:5 --yes      # by name (iTunes)
+.venv/bin/python cli.py add https://feeds.acast.com/public/shows/… --backlog all
 
 # YouTube channels (yt-dlp auto-installs to
 # ~/Library/Application Support/Paragraphos/bin/yt-dlp on first use)
-.venv/bin/python cli.py add https://www.youtube.com/@TED
-.venv/bin/python cli.py add https://www.youtube.com/channel/UCAuU…
+.venv/bin/python cli.py add https://www.youtube.com/@TED --backlog last:10
+.venv/bin/python cli.py add https://www.youtube.com/channel/UCAuU… --backlog recent
 
 .venv/bin/python cli.py list                    # source col: podcast | youtube
 .venv/bin/python cli.py check --show odd-lots --limit 5
