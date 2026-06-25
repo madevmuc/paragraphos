@@ -67,3 +67,16 @@ def test_apply_since_marks_older_done(tmp_path):
     # keep episodes with pub_date >= 2026-01-06  → i in 5..9 = 5 pending
     apply_backlog(st, "x", ("since", "2026-01-06"), manifest)
     assert _count(st, "pending") == 5
+
+
+def test_apply_since_keeps_unparseable_pubdate_pending(tmp_path):
+    st, manifest = _seed(tmp_path, n=3)
+    # add an episode with a junk pubDate to the DB + manifest
+    st.upsert_episode(
+        show_slug="x", guid="gjunk", title="junk", pub_date="not-a-date", mp3_url="http://h/j.mp3"
+    )
+    manifest.append({"guid": "gjunk", "pubDate": "not-a-date"})
+    apply_backlog(st, "x", ("since", "2026-01-06"), manifest)
+    with st._conn() as c:
+        status = c.execute("SELECT status FROM episodes WHERE guid='gjunk'").fetchone()["status"]
+    assert status == "pending"  # fail-open: unparseable date is kept

@@ -94,6 +94,7 @@ def apply_backlog(state, slug: str, mode: Mode, manifest: List[dict]) -> None:
         stale = [
             ep["guid"]
             for ep in manifest
+            # fail-open: an unparseable/missing pubDate falls back to `cutoff`, so it is KEPT pending (never auto-marked done on a parse failure).
             if (_parse_pubdate(ep.get("pubDate", "")) or cutoff) < cutoff
         ]
         if stale:
