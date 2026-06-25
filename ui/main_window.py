@@ -661,13 +661,16 @@ class MainWindow(QMainWindow):
             self._open_reconcile_dialog()
 
     def _open_reconcile_dialog(self) -> None:
-        """Open the backlog-reconcile dialog for externally-added shows.
+        """Open the backlog-reconcile dialog for externally-added shows, then
+        refresh the Shows tab + banner to reflect any decisions made."""
+        from ui.reconcile_dialog import ReconcileDialog
 
-        STUB: the real dialog is implemented in the next task. Wiring the
-        action button to it now keeps the "Choose…" button live without a
-        dangling reference.
-        """
-        pass
+        ReconcileDialog(self.ctx, self).exec()
+        try:
+            self.shows_tab.refresh()
+        except Exception:
+            pass
+        self._refresh_banner()
 
     def _dismiss_banner(self) -> None:
         if self._banner_state == "update" and self._update_tag:
