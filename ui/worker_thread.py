@@ -22,6 +22,7 @@ so the existing UI / tray / queue-listener wiring in ``app.py`` and
 
 from __future__ import annotations
 
+import os
 import queue as _queue
 import threading
 from collections import defaultdict
@@ -31,6 +32,8 @@ from urllib.parse import parse_qs, urlparse
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 
+from core.hw import detect as hw_detect
+from core.load import resolve_load_profile
 from core.models import Settings, Watchlist
 from core.pipeline import (
     DownloadOutcome,
@@ -487,6 +490,16 @@ class CheckAllThread(QThread):
         super().__init__()
         self.ctx = ctx
         self.settings = settings
+        # Resolve the load-management profile once per run — it drives the
+        # transcribe worker count, the whisper -t thread count, and the macOS
+        # scheduling tier (see core/load.py). detect() shells out to sysctl,
+        # so do it once here rather than per-episode.
+        _mem, _perf = hw_detect()
+        self._load_profile = resolve_load_profile(
+            self.settings.load_level,
+            perf_cores=_perf or (os.cpu_count() or 4),
+            background_priority=self.settings.background_priority,
+        )
         self.only_slug = only_slug
         self.limit = limit
         # force=True bypasses the per-feed backoff filter in pass 1a so a
@@ -513,7 +526,9 @@ class CheckAllThread(QThread):
             language=show.language,
             model_name=self.settings.whisper_model,
             fast_mode=self.settings.whisper_fast_mode,
-            processors=self.settings.whisper_multiproc,
+            processors=1,  # whisper_multiproc retired; level controls load
+            threads=self._load_profile.threads,
+            launch_prefix=tuple(self._load_profile.command_prefix()),
             save_srt=self.settings.save_srt,
         )
         if getattr(show, "source", "podcast") == "youtube":
@@ -722,14 +737,14 @@ class CheckAllThread(QThread):
             workers=dl_conc,
             orphan_guids=orphan_guids,
         )
-        # Spawn `parallel_transcribe` transcribe workers (default 1).
+        # Spawn the load profile's transcribe-worker count (default 1).
         # Pre-2026-04-23 only one was created regardless of the setting,
-        # so users with parallel_transcribe=2+ saw a single transcribing
+        # so users on a multi-worker level saw a single transcribing
         # row at a time despite paying the configuration cost. All
         # workers share the same in_q (queue.Queue is thread-safe) and
         # the same stop_event; shutdown sends N _SHUTDOWN sentinels via
         # the download pool's existing terminator (one per consumer).
-        n_tr = max(int(self.settings.parallel_transcribe or 1), 1)
+        n_tr = max(self._load_profile.parallel, 1)
         # Shared atomic counter so the UI sees a coherent done_idx
         # across all parallel workers (workers race to increment).
         shared_done_counter = [0]
