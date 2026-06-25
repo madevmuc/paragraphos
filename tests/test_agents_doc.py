@@ -1,4 +1,5 @@
 """AGENTS.md must steer automated operators to the blessed CLI path."""
+
 from pathlib import Path
 
 

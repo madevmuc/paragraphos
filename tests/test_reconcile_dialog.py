@@ -1,5 +1,6 @@
 """apply_reconcile_choice: seed + apply backlog + mark decided for an
 externally-added show. Drives the real helper with the feed stubbed."""
+
 from types import SimpleNamespace
 
 import ui.reconcile_dialog as rd
@@ -39,8 +40,8 @@ def test_apply_reconcile_last5_seeds_and_decides(tmp_path, monkeypatch):
     monkeypatch.setattr(rd, "build_manifest", lambda rss: _manifest(10))
     n = rd.apply_reconcile_choice(ctx, "x", "last:5")
     assert n == 10
-    assert _pending(ctx.state) == 5          # back-catalog marked done
-    assert is_decided(ctx.state, "x")         # un-gated now
+    assert _pending(ctx.state) == 5  # back-catalog marked done
+    assert is_decided(ctx.state, "x")  # un-gated now
 
 
 def test_apply_reconcile_all_keeps_everything(tmp_path, monkeypatch):
