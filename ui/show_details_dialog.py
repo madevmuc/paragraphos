@@ -244,7 +244,9 @@ class ShowDetailsDialog(QDialog):
         # collapsible Advanced + episodes table + footer. Fixed 440 h
         # clipped the footer off-screen on the v1.0.0 restyle.
         self.setMinimumSize(620, 560)
-        self.resize(660, 640)
+        # Open at 80%×80% of the main window so the episode browser has room to
+        # show a long back-catalogue (falls back to a fixed size if unparented).
+        self._resize_to_parent()
         # The episodes table is now a full browser (every episode, not the
         # last 10) — let the user maximize/resize the window to scan a long
         # back-catalogue. The dialog is already non-fixed; this just exposes
@@ -266,6 +268,16 @@ class ShowDetailsDialog(QDialog):
         # Kick off the paced back-catalogue stream now that the table exists
         # (no-op for non-YouTube shows or when yt-dlp isn't installed).
         self._start_history_stream()
+
+    def _resize_to_parent(self) -> None:
+        """Size the dialog to 80%×80% of the main window so the episode list has
+        room; clamp to the minimum and fall back to a fixed size if unparented."""
+        par = self.parent()
+        win = par.window() if par is not None else None
+        if win is not None and win.width() > 100 and win.height() > 100:
+            self.resize(max(620, int(win.width() * 0.8)), max(560, int(win.height() * 0.8)))
+        else:
+            self.resize(660, 640)
 
     # ── header ───────────────────────────────────────────────
 
@@ -855,7 +867,22 @@ class ShowDetailsDialog(QDialog):
         self._status_filter_combo.currentTextChanged.connect(self._on_status_filter_changed)
         row.addWidget(self._status_filter_combo)
 
-        row.addStretch(1)
+        # Shown while the full back-catalogue is being enumerated off-thread, so
+        # the user knows more episodes than the DB-seeded ones are on the way.
+        self._history_status = QLabel("")
+        self._history_status.setStyleSheet("color: palette(mid); padding-left: 6px;")
+        self._history_status.hide()
+        row.addWidget(self._history_status)
+
+        # Free-text search over episode titles. Typing pulls in the full
+        # back-catalogue (flushes the paced buffer) so a match is never hidden
+        # behind the cap / "Load more", then hides the non-matching rows. Its
+        # stretch pushes the date-sweep + queue buttons to the right edge.
+        self._ep_search = QLineEdit()
+        self._ep_search.setPlaceholderText("Search episodes…")
+        self._ep_search.setClearButtonEnabled(True)
+        self._ep_search.textChanged.connect(self._on_episode_search)
+        row.addWidget(self._ep_search, 1)
 
         # Date-sweep: queue every not-yet-done episode published on or after
         # the chosen date. Default the picker to ~1 year ago so the common
@@ -1043,6 +1070,46 @@ class ShowDetailsDialog(QDialog):
                 ]
                 if restored:
                     self._available_buffer = restored + self._available_buffer
+        # Re-apply any active title search to the freshly rebuilt rows.
+        self._reapply_search()
+
+    # ── title search ─────────────────────────────────────────
+
+    def _on_episode_search(self, text: str) -> None:
+        q = text.strip().lower()
+        # Make search comprehensive: pull every remaining back-catalogue row in
+        # so a match isn't hidden behind the paced cap / "Load more".
+        if q and self._available_buffer and self._status_filter is None:
+            self._flush_available_buffer()
+        self._apply_episode_search(q)
+
+    def _flush_available_buffer(self) -> None:
+        """Append ALL remaining buffered back-catalogue rows at once so every
+        known episode is present to search against."""
+        if self._status_filter is not None:
+            return
+        while self._available_buffer:
+            self._append_available_row(self._available_buffer.pop(0))
+        self._stop_history_timer()
+        self._set_load_more_visible(False)
+
+    def _apply_episode_search(self, query: str) -> None:
+        """Hide rows whose title doesn't contain ``query`` (already lower-cased);
+        an empty query un-hides everything."""
+        tbl = self._episodes_tbl
+        for i in range(tbl.rowCount()):
+            if not query:
+                tbl.setRowHidden(i, False)
+                continue
+            item = tbl.item(i, 1)
+            title = (item.text() if item is not None else "").lower()
+            tbl.setRowHidden(i, query not in title)
+
+    def _reapply_search(self) -> None:
+        """Re-apply the active title search after the table body was rebuilt."""
+        edit = getattr(self, "_ep_search", None)
+        if edit is not None and edit.text().strip():
+            self._apply_episode_search(edit.text().strip().lower())
 
     def _selected_guids(self) -> list[str]:
         """Guids of every selected row, in row order.
@@ -1274,11 +1341,16 @@ class ShowDetailsDialog(QDialog):
         # `_metadata_thread`/`_artwork_thread` pattern).
         thread.finished.connect(lambda: setattr(self, "_history_thread", None))
         self._history_thread = thread
+        if getattr(self, "_history_status", None) is not None:
+            self._history_status.setText("Loading the channel's full episode list…")
+            self._history_status.show()
         thread.start()
 
     def _on_history_failed(self, message: str) -> None:
         """A failed back-catalogue enumeration is non-fatal — the DB-seeded
         rows are already on screen, so we swallow the error silently."""
+        if getattr(self, "_history_status", None) is not None:
+            self._history_status.hide()
         return
 
     def _seeded_guids(self) -> set[str]:
@@ -1299,6 +1371,8 @@ class ShowDetailsDialog(QDialog):
         # thread finished its yt-dlp dump just as we cancelled); ignore it.
         if self._history_cancelled:
             return
+        if getattr(self, "_history_status", None) is not None:
+            self._history_status.hide()
         manifest = manifest_from_videos(videos)
         seeded = self._seeded_guids()
         self._available_buffer = [m for m in manifest if m["guid"] not in seeded]

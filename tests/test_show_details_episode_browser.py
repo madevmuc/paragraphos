@@ -92,6 +92,27 @@ def test_all_episodes_render_no_limit(qapp, tmp_path):
     assert dlg._episodes_tbl.rowCount() == 15
 
 
+def test_title_search_hides_nonmatching_rows(qapp, tmp_path):
+    """The search box above the list filters episodes by title — non-matching
+    rows are hidden, and clearing the box un-hides everything."""
+    show = Show(slug="srch", title="Srch", rss="https://feed", source="podcast")
+    from ui.show_details_dialog import ShowDetailsDialog
+
+    ctx = _make_ctx(tmp_path, show)
+    _seed_episodes(ctx, "srch", 5)  # titles "Episode 0".."Episode 4"
+    dlg = ShowDetailsDialog(ctx, "srch")
+    _keepalive.append(dlg)
+    tbl = dlg._episodes_tbl
+    assert tbl.rowCount() == 5
+
+    dlg._ep_search.setText("Episode 2")
+    visible = [i for i in range(tbl.rowCount()) if not tbl.isRowHidden(i)]
+    assert [tbl.item(i, 1).text() for i in visible] == ["Episode 2"]
+
+    dlg._ep_search.clear()
+    assert all(not tbl.isRowHidden(i) for i in range(tbl.rowCount()))
+
+
 def test_window_is_resizable_maximizable(qapp, tmp_path):
     """The dialog keeps a minimum size but is not fixed, and the maximize
     button hint is enabled so the browser can grow to fill the screen."""
