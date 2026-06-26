@@ -560,6 +560,16 @@ class CheckAllThread(QThread):
             kwargs["youtube_default_transcript_source"] = getattr(
                 self.settings, "youtube_default_transcript_source", "captions"
             )
+            # Per-show Shorts policy. Neither attribute exists yet (they land
+            # in later tasks); the getattr fallbacks default to True today and
+            # pick up the real per-show / settings values once added.
+            kwargs["skip_shorts"] = bool(
+                getattr(
+                    show,
+                    "skip_shorts",
+                    getattr(self.settings, "youtube_skip_shorts_default", True),
+                )
+            )
         return PipelineContext(**kwargs)
 
     def run(self) -> None:

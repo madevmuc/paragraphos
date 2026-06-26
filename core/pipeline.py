@@ -47,11 +47,15 @@ class PipelineContext:
     youtube_transcript_pref: str = ""  # "" → fall back to default below
     youtube_default_transcript_source: str = "captions"
     youtube_channel_id: str = ""
+    # When True (the per-show default), a cheap probe runs before download
+    # and a YouTube Short is marked SKIPPED instead of transcribed. When
+    # False the probe is skipped entirely and Shorts transcribe normally.
+    skip_shorts: bool = True
 
 
 @dataclass(frozen=True)
 class PipelineResult:
-    action: Literal["transcribed", "skipped", "failed"]
+    action: Literal["transcribed", "skipped", "failed", "deferred"]
     guid: str
     detail: str = ""
 
@@ -500,6 +504,21 @@ def _process_youtube_episode(
         return PipelineResult("failed", guid, err)
     vid = parsed.value
 
+    # Proactive Shorts skip: only when the show excludes Shorts. A cheap
+    # metadata probe classifies the video; a Short is terminal-SKIPPED and
+    # never downloaded. Any other category is handled reactively below.
+    if ctx.skip_shorts:
+        from core.youtube_classify import classify_video
+
+        try:
+            meta = youtube_audio.probe_video_meta(vid)
+        except Exception:
+            meta = {}
+        category, message = classify_video(meta)
+        if category == "short":
+            ctx.state.set_status(guid, EpisodeStatus.SKIPPED)
+            return PipelineResult("skipped", guid, message or "YouTube Short")
+
     pref = ctx.youtube_transcript_pref or ctx.youtube_default_transcript_source or "captions"
 
     show_dir = ctx.output_root / ep["show_slug"]
@@ -539,6 +558,20 @@ def _process_youtube_episode(
             ctx.state.set_status(guid, EpisodeStatus.PENDING)
             return PipelineResult("failed", guid, f"disk: {e}")
         except Exception as e:
+            from core.youtube_classify import classify_video
+
+            category, message = classify_video(str(e))
+            # Live/premiere/upcoming → DEFERRED (re-probed later, not a failure).
+            if category == "live":
+                ctx.state.set_status(guid, EpisodeStatus.DEFERRED)
+                return PipelineResult("deferred", guid, message)
+            # Members-only / age-restricted / region-locked → FAILED with the
+            # friendly classification message rather than the raw exception.
+            if category in ("members_only", "age_restricted", "region_locked"):
+                ctx.state.set_status(guid, EpisodeStatus.FAILED, error_text=message)
+                return PipelineResult("failed", guid, message)
+            # Unrecognised error → generic FAILED (never deferred: avoids a
+            # livelock on a persistent error such as a bot-gate challenge).
             err = f"youtube audio download failed [{type(e).__name__}]: {e}"
             logger.error("yt audio failed: %s (guid=%s)", ep["show_slug"], guid, exc_info=True)
             ctx.state.set_status(guid, EpisodeStatus.FAILED, error_text=err)
