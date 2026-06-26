@@ -293,6 +293,39 @@ def test_slug_autofills_from_channel_and_is_editable(tmp_path, monkeypatch):
     assert any(s.slug == "beast-custom" for s in dlg.updated_watchlist.shows)
 
 
+def test_lang_combo_offers_curated_list_with_auto(tmp_path):
+    """The transcript-language combo offers a curated multi-language list
+    plus an explicit "auto" option (channel default / detect)."""
+    dlg = _make_dialog(tmp_path, Settings(sources_youtube=True))
+    codes = [dlg._yt_lang_combo.itemData(i) for i in range(dlg._yt_lang_combo.count())]
+    assert dlg._yt_lang_combo.count() >= 10
+    for expected in ("de", "en", "es", "fr", "auto"):
+        assert expected in codes
+
+
+def test_lang_combo_seeds_from_settings(tmp_path):
+    """The combo's initial selection follows Settings.youtube_default_language."""
+    dlg = _make_dialog(tmp_path, Settings(sources_youtube=True, youtube_default_language="fr"))
+    assert dlg._yt_lang_combo.currentData() == "fr"
+
+
+def test_lang_combo_seeds_auto_from_settings(tmp_path):
+    """`youtube_default_language="auto"` selects the auto option."""
+    dlg = _make_dialog(tmp_path, Settings(sources_youtube=True, youtube_default_language="auto"))
+    assert dlg._yt_lang_combo.currentData() == "auto"
+
+
+def test_youtube_languages_constant_shape():
+    """The shared picker list includes auto plus the expected codes."""
+    from ui.languages import YOUTUBE_LANGUAGES
+
+    codes = [c for _label, c in YOUTUBE_LANGUAGES]
+    assert ("Auto (channel default / detect)", "auto") in YOUTUBE_LANGUAGES
+    for expected in ("de", "en", "es", "fr", "it", "auto"):
+        assert expected in codes
+    assert len(YOUTUBE_LANGUAGES) >= 10
+
+
 def test_captions_checkbox_sets_transcript_pref(tmp_path, monkeypatch):
     monkeypatch.setattr("core.ytdlp.is_installed", lambda: True)
     # Settings default is "captions" → checkbox starts checked.

@@ -49,6 +49,7 @@ from core.youtube import (
     rss_url_for_channel_id,
 )
 from ui.feed_probe import FeedProbeWorker
+from ui.languages import YOUTUBE_LANGUAGES
 from ui.themes import current_tokens
 from ui.widgets.pill import Pill
 from ui.widgets.show_results_table import ShowResultsTable
@@ -1084,19 +1085,22 @@ class AddShowDialog(QDialog):
 
         # Per-show transcript language. Pre-filled from the YouTube
         # default in Settings → YouTube. Used as the lang code passed to
-        # both yt-dlp's caption fetch (with a fallback chain inside
-        # core.youtube_captions) and whisper-cli (when audio fallback
-        # fires).
+        # both yt-dlp's caption fetch and whisper-cli (when audio fallback
+        # fires). A specific language is STRICT for captions (only that
+        # language → otherwise whisper); "auto" accepts the channel's
+        # default manual track and lets whisper auto-detect.
         lang_row = QHBoxLayout()
         lang_row.addWidget(QLabel("Transcript language:"))
         self._yt_lang_combo = QComboBox()
-        self._yt_lang_combo.addItem("German (de)", userData="de")
-        self._yt_lang_combo.addItem("English (en)", userData="en")
+        for label, code in YOUTUBE_LANGUAGES:
+            self._yt_lang_combo.addItem(label, userData=code)
         _seed_lang = getattr(self.ctx.settings, "youtube_default_language", "de") or "de"
         for i in range(self._yt_lang_combo.count()):
             if self._yt_lang_combo.itemData(i) == _seed_lang:
                 self._yt_lang_combo.setCurrentIndex(i)
                 break
+        else:
+            self._yt_lang_combo.setCurrentIndex(0)
         lang_row.addWidget(self._yt_lang_combo)
         lang_row.addStretch(1)
         v.addLayout(lang_row)
