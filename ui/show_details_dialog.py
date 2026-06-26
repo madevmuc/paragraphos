@@ -176,7 +176,12 @@ class ShowDetailsDialog(QDialog):
         # collapsible Advanced + episodes table + footer. Fixed 440 h
         # clipped the footer off-screen on the v1.0.0 restyle.
         self.setMinimumSize(620, 560)
-        self.resize(620, 560)
+        self.resize(660, 640)
+        # The episodes table is now a full browser (every episode, not the
+        # last 10) — let the user maximize/resize the window to scan a long
+        # back-catalogue. The dialog is already non-fixed; this just exposes
+        # the OS maximize affordance.
+        self.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, True)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 16, 16, 12)
@@ -756,14 +761,45 @@ class ShowDetailsDialog(QDialog):
         tbl.setColumnWidth(0, 90)
         tbl.setColumnWidth(2, 90)
 
+        # Size so several rows are visible within the dialog.
+        tbl.setMinimumHeight(140)
+        tbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+        # Right-click on a row → "Re-transcribe this episode".
+        self._episodes_tbl = tbl
+        tbl.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        tbl.customContextMenuRequested.connect(self._on_episode_context_menu)
+
+        # Populate rows from the DB. Kept separate so later actions can
+        # refresh the table in place via _reload_episodes().
+        self._reload_episodes()
+        return tbl
+
+    def _episode_rows(self) -> list:
+        """All episodes for this show, newest first.
+
+        No LIMIT — the table is a full per-show browser, so every episode
+        renders (the previous last-10 cap is gone).
+        """
         with self.ctx.state._conn() as c:
-            rows = c.execute(
+            return c.execute(
                 "SELECT guid, pub_date, title, status "
                 "FROM episodes WHERE show_slug=? "
-                "ORDER BY pub_date DESC LIMIT 10",
+                "ORDER BY pub_date DESC",
                 (self.slug,),
             ).fetchall()
 
+    def _reload_episodes(self) -> None:
+        """Re-query episodes and rebuild the table body in place.
+
+        Rebuilds every Date/Title/Status-pill row from ``_episode_rows()``.
+        The Date cell stashes the guid at ``UserRole`` and the status at
+        ``UserRole + 1`` so the context menu (and bulk-select helpers) can
+        resolve per-row identity without re-hitting the DB.
+        """
+        tbl = self._episodes_tbl
+        rows = self._episode_rows()
+        tbl.clearContents()
         tbl.setRowCount(len(rows))
         for i, r in enumerate(rows):
             date_item = QTableWidgetItem((r["pub_date"] or "")[:10])
@@ -784,16 +820,6 @@ class ShowDetailsDialog(QDialog):
             lay.addWidget(pill)
             lay.addStretch(1)
             tbl.setCellWidget(i, 2, holder)
-
-        # Size so ~10 rows are visible within the 440-tall dialog.
-        tbl.setMinimumHeight(140)
-        tbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-
-        # Right-click on a row → "Re-transcribe this episode".
-        self._episodes_tbl = tbl
-        tbl.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        tbl.customContextMenuRequested.connect(self._on_episode_context_menu)
-        return tbl
 
     def _on_episode_context_menu(self, pos) -> None:
         tbl = self._episodes_tbl
