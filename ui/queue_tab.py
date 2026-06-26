@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.state import EpisodeStatus
+from ui.activity_log import log as log_activity
 from ui.prioritize import (
     PRIORITY_RUN_NEXT,
     PRIORITY_RUN_NOW,
@@ -236,11 +237,13 @@ class QueueTab(QWidget):
         paused = self.ctx.state.get_meta("queue_paused") == "1"
         if paused:
             self.ctx.state.set_meta("queue_paused", "0")
+        log_activity("Resumed the queue" if paused else "Started the queue")
         # Queue tab Start is always user-initiated → bypass feed backoff.
         self._shows_tab().start_check(force=True)
         self._update_btns()
 
     def _pause(self):
+        log_activity("Paused the queue")
         self._shows_tab()._pause()
         self._update_btns()
 
@@ -248,6 +251,7 @@ class QueueTab(QWidget):
         # Dual-stage: graceful first, force on the second click.
         if not self._stop_pressed_once:
             self._stop_pressed_once = True
+            log_activity("Stopping the queue (graceful — finishing the current episode)")
             self._shows_tab()._stop()
             self.stop_btn.setText("Stop now (force)")
             self.stop_btn.setEnabled(True)  # keep clickable for the force step
@@ -257,6 +261,7 @@ class QueueTab(QWidget):
         # Then terminate the worker QThread as a last resort.
         self._stop_pressed_once = False
         self.stop_btn.setText("Stop")
+        log_activity("Force-stopped the queue (killed running whisper-cli / yt-dlp)")
         try:
             import subprocess
 
@@ -303,6 +308,7 @@ class QueueTab(QWidget):
         if reply != QMessageBox.StandardButton.Yes:
             return
         moved = self.ctx.state.clear_pending()
+        log_activity(f"Cleared the queue ({moved} episode(s) marked done)")
         self._last_table_refresh = 0.0
         self.refresh()
         QMessageBox.information(
@@ -626,6 +632,13 @@ class QueueTab(QWidget):
         """Flip status (e.g. pending↔paused) on every given episode; refresh once."""
         for g in guids:
             self.ctx.state.set_status(g, status)
+        if status == EpisodeStatus.PAUSED:
+            verb = "Deactivated"
+        elif status == EpisodeStatus.PENDING:
+            verb = "Reactivated"
+        else:
+            verb = f"Set to {status.value}:"
+        log_activity(f"{verb} {len(guids)} episode(s) in the queue")
         self._last_table_refresh = 0.0
         self.refresh()
 
@@ -636,12 +649,14 @@ class QueueTab(QWidget):
         ``skipped`` and can be re-queued from there."""
         for g in guids:
             self.ctx.state.set_status(g, EpisodeStatus.SKIPPED)
+        log_activity(f"Removed {len(guids)} episode(s) from the queue")
         self._last_table_refresh = 0.0
         self.refresh()
 
     def _retranscribe(self, guids: list[str]) -> None:
         for g in guids:
             retranscribe_episode(self.ctx, g)
+        log_activity(f"Re-queued {len(guids)} episode(s) for transcription")
         # Kick the worker so the bumped re-transcribes run next instead of
         # waiting for the next scheduled pass.
         try:

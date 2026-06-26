@@ -626,6 +626,9 @@ class LibraryTab(QWidget):
                 p.unlink()
             except OSError:
                 pass
+        from ui.activity_log import log as log_activity
+
+        log_activity(f"Deleted transcript: {md.name}")
         self.refresh()
 
     def _delete_show_folder(self, slug: str) -> None:
@@ -653,6 +656,9 @@ class LibraryTab(QWidget):
         except OSError as e:
             QMessageBox.warning(self, "Delete failed", str(e))
             return
+        from ui.activity_log import log as log_activity
+
+        log_activity(f"Deleted folder '{slug}' ({n_md} transcript(s))")
         self.refresh()
 
     @staticmethod

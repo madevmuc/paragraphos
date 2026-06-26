@@ -495,6 +495,12 @@ class ShowsTab(QWidget):
 
         if self._thread and self._thread.isRunning():
             return False
+        if force:
+            # User-initiated check (toolbar, tray, shortcut, Queue Start). The
+            # scheduler path (force=False) stays silent so it doesn't spam.
+            from ui.activity_log import log as log_activity
+
+            log_activity(f"Started a check{f' for {only_slug}' if only_slug else ''}")
         self._thread = CheckAllThread(self.ctx, self.ctx.settings, only_slug=only_slug, force=force)
         self._thread.progress.connect(self._log)
         self._thread.queue_sized.connect(self._on_queue_sized)
@@ -766,4 +772,7 @@ class ShowsTab(QWidget):
         # Purge each removed show's episode rows so re-adding re-queues cleanly.
         for slug in slugs:
             self.ctx.state.delete_episodes_for_show(slug)
+        from ui.activity_log import log as log_activity
+
+        log_activity(f"Removed {len(slugs)} show(s): {', '.join(slugs)}")
         self.refresh()

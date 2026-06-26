@@ -246,6 +246,11 @@ class MainWindow(QMainWindow):
             self.logs_pane.append(msg)
 
         self.shows_tab.log_sink = _log_sink  # type: ignore[attr-defined]
+        # App-wide activity log (adds/removes/start/pause/deletes/…) fans into
+        # the same dock + pane via this sink.
+        from ui import activity_log
+
+        activity_log.set_sink(_log_sink)
 
         self.setMenuBar(build_menu_bar(self))
 

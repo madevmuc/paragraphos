@@ -1719,6 +1719,10 @@ class AddShowDialog(QDialog):
         model = Show(**model_kwargs)
         self.updated_watchlist.shows.append(model)
         save_watchlist(self.ctx)
+        from ui.activity_log import log as log_activity
+
+        _kind = "channel" if model.source == "youtube" else "show"
+        log_activity(f"Added {_kind} '{model.title}' ({slug})")
 
         # Seed episodes in state; handle backlog strategy.
         manifest = show.get("manifest") or []

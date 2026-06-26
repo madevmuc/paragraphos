@@ -1525,4 +1525,7 @@ class ShowDetailsDialog(QDialog):
         # Purge the episode rows so re-adding the same channel re-queues from a
         # clean slate instead of finding its old episodes still marked done.
         self.ctx.state.delete_episodes_for_show(self.slug)
+        from ui.activity_log import log as log_activity
+
+        log_activity(f"Removed show '{self.show_.title}' ({self.slug})")
         self.accept()
