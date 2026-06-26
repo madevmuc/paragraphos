@@ -1236,6 +1236,9 @@ class AddShowDialog(QDialog):
             )
             if answer != QMessageBox.StandardButton.Yes:
                 # Declined — leave the UI in a clean, neutral state (no error).
+                # Clear any previously-resolved channel card so a stale preview
+                # doesn't linger above the idle pill.
+                self.yt_card.setVisible(False)
                 self.yt_status.setText("No problem — paste a channel or video URL when ready.")
                 self.yt_status.set_kind("idle")
                 self.yt_status.setVisible(True)
