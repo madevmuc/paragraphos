@@ -48,7 +48,11 @@ from ui.themes import current_tokens
 from ui.widgets.pill import Pill
 
 # Episode-status → Pill-kind mapping. `done` is the canonical success
-# state in `core.stats`; other values map conservatively.
+# state in `core.stats`; other values map conservatively. Neither
+# `skipped` (intentionally not processed) nor `deferred` (waiting to be
+# re-checked later, e.g. a live/premiere not yet finished) is a failure:
+# `skipped` reads as neutral/idle, `deferred` as amber waiting/paused —
+# both visually distinct from `failed`.
 _STATUS_PILL_KIND = {
     "done": "ok",
     "transcribed": "ok",
@@ -56,6 +60,7 @@ _STATUS_PILL_KIND = {
     "pending": "running",
     "downloading": "running",
     "skipped": "idle",
+    "deferred": "pausing",
 }
 
 # (display label, whisper language code) — mirrors the pre-restyle picker.
