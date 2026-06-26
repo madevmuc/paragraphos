@@ -41,6 +41,30 @@ def _isolate_user_data_dir(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _reset_event_bus():
+    """Clear core.events subscribers around every test for isolation.
+
+    The bus is a module-level singleton; persistence + activity-bridge + ad-hoc
+    test subscribers otherwise accumulate across the session and could let one
+    test's emit fire another test's subscriber. Resetting per-test keeps state
+    isolated. (Harmless when core.events isn't importable.)
+    """
+    try:
+        from core import events
+
+        events.reset()
+    except Exception:
+        pass
+    yield
+    try:
+        from core import events
+
+        events.reset()
+    except Exception:
+        pass
+
+
+@pytest.fixture(autouse=True)
 def _stub_blocking_msgboxes(monkeypatch):
     """No test may block on a modal QMessageBox under the offscreen QPA.
 

@@ -87,6 +87,7 @@ def _episode_dict(row: dict) -> dict:
         "status": row.get("status"),
         "priority": row.get("priority", 0),
         "duration_sec": row.get("duration_sec"),
+        "detected_language": row.get("detected_language"),
         "word_count": row.get("word_count"),
         "mp3_path": row.get("mp3_path"),
         "transcript_path": row.get("transcript_path"),

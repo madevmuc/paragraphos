@@ -332,6 +332,9 @@ def transcribe_phase(outcome: DownloadOutcome, ctx: PipelineContext) -> Pipeline
     from core.stats import _duration_from_srt
 
     ctx.state.record_completion(guid, result.word_count, _duration_from_srt(result.srt_path))
+    _detected = getattr(result, "detected_language", None)
+    if _detected:
+        ctx.state.set_detected_language(guid, _detected)
     ctx.state.set_status(guid, EpisodeStatus.DONE)
     # Clean up stale % so a later re-transcribe of the same guid starts
     # from blank instead of inheriting the previous 99%.

@@ -154,6 +154,7 @@ class StateStore:
                 "ALTER TABLE episodes ADD COLUMN duration_sec INTEGER",
                 "ALTER TABLE episodes ADD COLUMN word_count INTEGER",
                 "ALTER TABLE episodes ADD COLUMN priority INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE episodes ADD COLUMN detected_language TEXT",
             ):
                 try:
                     c.execute(stmt)
@@ -207,6 +208,11 @@ class StateStore:
                 )
             else:
                 c.execute("UPDATE episodes SET word_count=? WHERE guid=?", (word_count, guid))
+
+    def set_detected_language(self, guid: str, lang: str) -> None:
+        """Persist the language whisper auto-detected for this episode (1.1)."""
+        with self._conn() as c:
+            c.execute("UPDATE episodes SET detected_language=? WHERE guid=?", (lang, guid))
 
     def set_duration_sec(self, guid: str, duration_sec: int) -> None:
         """Persist a video's known audio length mid-flight (before transcription
@@ -349,7 +355,8 @@ class StateStore:
             else:
                 c.execute("UPDATE episodes SET status=? WHERE guid=?", (status.value, guid))
             row = c.execute(
-                "SELECT show_slug, title FROM episodes WHERE guid=?", (guid,)
+                "SELECT show_slug, title, detected_language FROM episodes WHERE guid=?",
+                (guid,),
             ).fetchone()
         self._emit_status_event(guid, status, row, error_text)
 
@@ -362,6 +369,8 @@ class StateStore:
         payload: dict = {}
         if row is not None and row["title"]:
             payload["title"] = row["title"]
+        if status == EpisodeStatus.DONE and row is not None and row["detected_language"]:
+            payload["detected_language"] = row["detected_language"]
         if error_text:
             payload["error_text"] = error_text
         events.emit(

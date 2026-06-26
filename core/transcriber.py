@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import tempfile
@@ -251,14 +252,35 @@ class TranscribeResult:
     md_path: Path
     srt_path: Path
     word_count: int
+    # ISO 639 code whisper auto-detected when language="auto" (e.g. "de").
+    # None when a fixed language was supplied or detection couldn't be parsed.
+    detected_language: str | None = None
 
 
-def _fmt_frontmatter(meta: Mapping[str, str], engine: Mapping[str, str] | None = None) -> str:
+# whisper-cli logs e.g. "whisper_full_with_state: auto-detected language: de (p = 0.98)"
+_DETECTED_LANG_RE = re.compile(r"auto-detected language:\s*([a-z]{2,3})")
+
+
+def parse_detected_language(text: str) -> str | None:
+    """Extract the ISO language code from whisper-cli's auto-detect log line."""
+    if not text:
+        return None
+    m = _DETECTED_LANG_RE.search(text)
+    return m.group(1) if m else None
+
+
+def _fmt_frontmatter(
+    meta: Mapping[str, str],
+    engine: Mapping[str, str] | None = None,
+    detected_language: str | None = None,
+) -> str:
     lines = ["---"]
     for key in ("guid", "show_slug", "title", "pub_date", "mp3_url"):
         v = meta.get(key, "")
         lines.append(f'{key}: "{v}"')
     lines.append(f'transcribed_at: "{datetime.now(timezone.utc).isoformat()}"')
+    if detected_language:
+        lines.append(f'detected_language: "{detected_language}"')
     # Engine fingerprint — lets the UI detect whisper/model upgrades and
     # offer a bulk re-transcribe. Missing fields are skipped so we never
     # write a `null`-valued line.
@@ -516,6 +538,11 @@ def transcribe_episode(
                 f"  mp3={mp3_path.name}  slug={slug!r}"
             )
 
+        # When language="auto", whisper logs the detected code on stderr.
+        detected_language = None
+        if language == "auto":
+            detected_language = parse_detected_language(result.stderr or "")
+
         text = txt_path.read_text(encoding="utf-8").strip()
         words = len(text.split())
         if words < MIN_WPM_GUARD:
@@ -529,7 +556,7 @@ def transcribe_episode(
         md_path = output_dir / f"{slug}.md"
         srt_dest = output_dir / f"{slug}.srt"
         md_path.write_text(
-            _fmt_frontmatter(metadata, engine)
+            _fmt_frontmatter(metadata, engine, detected_language)
             + _banner(metadata.get("pub_date", ""))
             + text
             + "\n",
@@ -542,4 +569,9 @@ def transcribe_episode(
         # already handle a non-existent SRT path gracefully.
         if save_srt:
             srt_dest.write_bytes(srt_src.read_bytes())
-        return TranscribeResult(md_path=md_path, srt_path=srt_dest, word_count=words)
+        return TranscribeResult(
+            md_path=md_path,
+            srt_path=srt_dest,
+            word_count=words,
+            detected_language=detected_language,
+        )

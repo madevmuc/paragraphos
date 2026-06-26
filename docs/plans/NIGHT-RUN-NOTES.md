@@ -52,3 +52,9 @@ Plan: [`2026-06-26-roadmap-execution-plan.md`](2026-06-26-roadmap-execution-plan
   **Best-assumption:** settings-pane UI controls deferred to each feature's own
   task (queue_order→T8, caption_fallback→T10, use_etag→T11, confidence→T7,
   disk_guard→T22) to avoid double-work; Task 4 is schema + CLI only.
+- **Task 5 — per-episode language auto-detect (1.1)** ✅
+  `transcriber.parse_detected_language` (regex on whisper stderr) +
+  `TranscribeResult.detected_language`; frontmatter line; `detected_language`
+  episodes column + `set_detected_language`; pipeline stores it (defensive
+  getattr for test fakes); episode.transcribed payload carries it; CLI JSON
+  exposes it. Both language dropdowns already had "auto". 6 tests.

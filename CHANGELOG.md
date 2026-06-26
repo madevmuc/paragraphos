@@ -24,6 +24,10 @@ people actually paste, and paired with a full per-show episode browser.
   a curated subset is mirrored into the activity-log dock.
 
 ### Added
+- **Per-episode language auto-detect.** Set a show's language to **Auto-detect**
+  and whisper picks the language per episode; the detected ISO code is captured,
+  stored, written to the transcript frontmatter (`detected_language`), surfaced
+  in `cli.py episodes --json`, and carried on the `episode.transcribed` event.
 - **Add a channel by any URL form.** `/channel/UC…`, `/@handle`, `/c/Name`,
   `/user/Name`, and a bare `@handle` all resolve to the right channel. Paste a
   single **video** URL and Paragraphos offers to add the channel that posted
