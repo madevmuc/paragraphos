@@ -15,7 +15,7 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QDate, Qt
 from PyQt6.QtWidgets import QApplication, QTableWidget
 
 from core.models import Settings, Show, Watchlist
@@ -224,3 +224,39 @@ def test_queue_selected_empty_is_noop(qapp, tmp_path):
     dlg._queue_selected()  # must not raise
 
     assert ctx.state.get_episode("d1")["status"] == "done"
+
+
+# ── Task 4.4 ─────────────────────────────────────────────────────────────
+
+
+def test_queue_since_queues_on_or_after_cutoff_skipping_done(qapp, tmp_path):
+    """A date sweep queues every not-done episode on/after the cutoff,
+    leaves pre-cutoff episodes untouched, and never re-queues a done one."""
+    from core.state import EpisodeStatus
+    from ui.prioritize import PRIORITY_RUN_NEXT
+    from ui.show_details_dialog import ShowDetailsDialog
+
+    show = Show(slug="qd", title="Qd", rss="https://feed", source="podcast")
+    ctx = _make_ctx(tmp_path, show)
+    # 2026-06-01..05; cutoff will be 2026-06-03.
+    _seed_one(ctx, "qd", "e1", 1, EpisodeStatus.FAILED)  # pre-cutoff
+    _seed_one(ctx, "qd", "e2", 2, EpisodeStatus.SKIPPED)  # pre-cutoff
+    _seed_one(ctx, "qd", "e3", 3, EpisodeStatus.DONE)  # on cutoff but done
+    _seed_one(ctx, "qd", "e4", 4, EpisodeStatus.FAILED)  # after cutoff
+    _seed_one(ctx, "qd", "e5", 5, EpisodeStatus.SKIPPED)  # after cutoff
+    dlg = ShowDetailsDialog(ctx, "qd")
+    _keepalive.append(dlg)
+
+    dlg._since_date_edit.setDate(QDate(2026, 6, 3))
+    dlg._queue_since()
+
+    # On/after cutoff and not done → queued.
+    for g in ("e4", "e5"):
+        ep = ctx.state.get_episode(g)
+        assert ep["status"] == "pending"
+        assert ep["priority"] == PRIORITY_RUN_NEXT
+    # On cutoff but already done → never re-queued.
+    assert ctx.state.get_episode("e3")["status"] == "done"
+    # Pre-cutoff → untouched.
+    assert ctx.state.get_episode("e1")["status"] == "failed"
+    assert ctx.state.get_episode("e2")["status"] == "skipped"

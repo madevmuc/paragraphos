@@ -12,11 +12,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
+from PyQt6.QtCore import QDate, Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QFont, QPainter, QPainterPath, QPixmap
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDateEdit,
     QDialog,
     QFrame,
     QGridLayout,
@@ -758,6 +759,22 @@ class ShowDetailsDialog(QDialog):
 
         row.addStretch(1)
 
+        # Date-sweep: queue every not-yet-done episode published on or after
+        # the chosen date. Default the picker to ~1 year ago so the common
+        # "catch up the last year" sweep is one click away.
+        self._since_date_edit = QDateEdit()
+        self._since_date_edit.setCalendarPopup(True)
+        self._since_date_edit.setDisplayFormat("yyyy-MM-dd")
+        self._since_date_edit.setDate(QDate.currentDate().addYears(-1))
+        row.addWidget(self._since_date_edit)
+
+        queue_since_btn = QPushButton("Queue all since")
+        queue_since_btn.setToolTip(
+            "Queue every not-yet-done episode published on or after the chosen date."
+        )
+        queue_since_btn.clicked.connect(self._queue_since)
+        row.addWidget(queue_since_btn)
+
         queue_sel_btn = QPushButton("Queue selected")
         queue_sel_btn.setToolTip("Queue every selected episode for transcription.")
         queue_sel_btn.clicked.connect(self._queue_selected)
@@ -996,6 +1013,27 @@ class ShowDetailsDialog(QDialog):
     def _queue_selected(self) -> None:
         """Queue every currently-selected episode row."""
         self._queue_guids(self._selected_guids())
+
+    def _queue_since(self) -> None:
+        """Queue every not-yet-done episode published on/after the picker date.
+
+        A date sweep must NOT re-queue already-completed episodes, so `done`
+        rows are excluded. Runs a dedicated SELECT (independent of the active
+        status filter) so the sweep covers the whole back-catalogue, not just
+        the currently-visible subset. ISO date strings compare
+        lexicographically, so a plain ``>=`` on the ``YYYY-MM-DD`` prefix is a
+        correct on/after-cutoff test.
+        """
+        cutoff = self._since_date_edit.date().toString("yyyy-MM-dd")
+        with self.ctx.state._conn() as c:
+            rows = c.execute(
+                "SELECT guid FROM episodes "
+                "WHERE show_slug=? AND substr(pub_date, 1, 10) >= ? "
+                "AND status != 'done' "
+                "ORDER BY pub_date DESC",
+                (self.slug, cutoff),
+            ).fetchall()
+        self._queue_guids([r["guid"] for r in rows])
 
     def _bump(self, guid: str, priority: int) -> None:
         bump_priority(self.ctx, guid, priority)
