@@ -1559,6 +1559,15 @@ class AddShowDialog(QDialog):
         self.yt_progress.setVisible(True)
         self._yt_enum_cancel_btn.setVisible(True)
         self._yt_add_btn.setEnabled(False)
+        # Status text + 1 Hz elapsed counter so the user sees what's happening —
+        # full-metadata extraction of a large backfill can take a while.
+        self._yt_enum_started_at = time.monotonic()
+        self._refresh_yt_enum_status()
+        self.yt_status.set_kind("running")
+        self.yt_status.setVisible(True)
+        self._yt_enum_timer = QTimer(self)
+        self._yt_enum_timer.timeout.connect(self._refresh_yt_enum_status)
+        self._yt_enum_timer.start(1000)
 
         self._yt_enumerate_thread = _YoutubeEnumerateThread(
             cid, limit, date_after=date_after, include_shorts=False, parent=self
@@ -1567,9 +1576,16 @@ class AddShowDialog(QDialog):
         self._yt_enumerate_thread.error.connect(self._on_yt_enumerate_error)
         self._yt_enumerate_thread.start()
 
+    def _refresh_yt_enum_status(self) -> None:
+        elapsed = int(time.monotonic() - getattr(self, "_yt_enum_started_at", 0.0))
+        self.yt_status.setText(f"Fetching the video list… ({elapsed}s)")
+
     def _teardown_yt_enumerate_ui(self) -> None:
         """Hide the progress/cancel affordances and re-enable Add."""
         self._yt_enumerating = False
+        if getattr(self, "_yt_enum_timer", None) is not None:
+            self._yt_enum_timer.stop()
+            self._yt_enum_timer = None
         self.yt_progress.setVisible(False)
         self._yt_enum_cancel_btn.setVisible(False)
         self._yt_add_btn.setEnabled(True)
