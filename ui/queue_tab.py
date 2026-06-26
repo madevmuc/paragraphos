@@ -179,6 +179,15 @@ class QueueTab(QWidget):
         self.table.horizontalHeader().sectionClicked.connect(self._on_header_clicked)
         v.addWidget(self.table)
 
+        from ui.widgets.empty_state import EmptyState
+
+        self.empty_state = EmptyState(
+            title="Nothing in the queue",
+            hint="Run a check (Start) or queue episodes from a show to see them here.",
+        )
+        v.addWidget(self.empty_state)
+        self.empty_state.setVisible(False)
+
         # (Buttons already created above as the top toolbar — _update_btns
         # syncs their enabled/text state from the queue's current run-state.)
         self._update_btns()
@@ -560,6 +569,9 @@ class QueueTab(QWidget):
                 self.table.setItem(row, 7, _SortKeyItem("—", float("inf")))
         # Restore click-to-sort after the bulk insertion completes.
         self.table.setSortingEnabled(was_sorting)
+        empty = self.table.rowCount() == 0
+        self.empty_state.setVisible(empty)
+        self.table.setVisible(not empty)
         if selected_guids:
             self._reselect_guids(selected_guids)
 

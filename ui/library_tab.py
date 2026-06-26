@@ -105,6 +105,15 @@ class LibraryTab(QWidget):
         self.table.setSortingEnabled(True)
         hdr.setSortIndicatorShown(True)
         lp.addWidget(self.table)
+
+        from ui.widgets.empty_state import EmptyState
+
+        self.empty_state = EmptyState(
+            title="No transcripts yet",
+            hint="They'll appear here after the first run completes.",
+        )
+        lp.addWidget(self.empty_state)
+        self.empty_state.setVisible(False)
         self._splitter.addWidget(list_panel)
 
         # ── Panel 3 — preview ─────────────────────────────────────
@@ -400,6 +409,9 @@ class LibraryTab(QWidget):
             self._set_action_buttons_enabled(False)
         # Restore click-to-sort after the bulk insertion completes.
         self.table.setSortingEnabled(was_sorting)
+        empty = self.table.rowCount() == 0
+        self.empty_state.setVisible(empty)
+        self.table.setVisible(not empty)
         # Auto-select the top row (most recent episode by pub_date DESC)
         # when nothing is currently selected. Gives the user an immediate
         # preview when they switch shows, instead of an empty right pane.

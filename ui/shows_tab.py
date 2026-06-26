@@ -171,6 +171,17 @@ class ShowsTab(QWidget):
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
         layout.addWidget(self.table)
 
+        from ui.widgets.empty_state import EmptyState
+
+        self.empty_state = EmptyState(
+            title="No shows yet",
+            hint="Add a podcast or YouTube channel to start transcribing.",
+            action_text="Add show",
+            on_action=self._add,
+        )
+        layout.addWidget(self.empty_state)
+        self.empty_state.setVisible(False)
+
         # (Action + bulk button rows live at the top of the tab — see
         # the consolidation block above. The bottom button row that
         # used to live here was removed 2026-04-23 so Shows / Queue /
@@ -333,6 +344,10 @@ class ShowsTab(QWidget):
         if sb is not None:
             # Clamp in case the row count shrank below the old offset.
             sb.setValue(min(scroll_pos, sb.maximum()))
+        # Empty-state when there are no shows at all (not merely filtered-empty).
+        no_shows = len(self.ctx.watchlist.shows) == 0
+        self.empty_state.setVisible(no_shows)
+        self.table.setVisible(not no_shows)
 
     def _show_matches_filters(self, show) -> bool:
         f = self._active_filters

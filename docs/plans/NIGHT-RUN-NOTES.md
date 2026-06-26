@@ -123,6 +123,10 @@ per-test `_reset_event_bus` fixture was also added for subscriber isolation
   activity-log line instead of integrating a new state into the priority-ranked
   MainWindow banner (lower regression risk); remove-show/dequeue undo wiring
   deferred (delete-transcript + clear-queue cover the data-loss cases).
+- **Task 14 — empty-states + inline help (9.3)** ✅ `ui/widgets/empty_state.py`
+  `EmptyState` (icon/title/hint/optional action, theme-token styled). Wired into
+  Queue/Library/Failed/Shows tabs (toggle table↔empty in refresh; Shows keys on
+  watchlist emptiness + "Add show" action). 3 widget tests. **Tier 1 complete.**
 - **Task 11 — wire use_etag_cache (8.5)** ✅ `rss.conditional_validators`
   gates stored ETag/Last-Modified by the setting; worker uses it (off → sends
   no conditional headers). respx tests confirm header present/absent. Settings

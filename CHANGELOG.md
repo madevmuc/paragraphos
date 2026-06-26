@@ -24,6 +24,9 @@ people actually paste, and paired with a full per-show episode browser.
   a curated subset is mirrored into the activity-log dock.
 
 ### Added
+- **Friendly empty states.** The Queue, Library, Failed and Shows tabs now show
+  a clear placeholder (with a helpful hint, and an "Add show" button on Shows)
+  when there's nothing to display yet, instead of a blank table.
 - **Undo for destructive actions.** Deleting a transcript now moves it to a
   trash folder (recoverable) instead of an irreversible unlink, and clearing
   the queue snapshots the affected episodes — both undoable for 60 seconds via

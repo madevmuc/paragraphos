@@ -97,6 +97,15 @@ class FailedTab(QWidget):
         self.table.horizontalHeader().setSortIndicatorShown(True)
         v.addWidget(self.table)
 
+        from ui.widgets.empty_state import EmptyState
+
+        self.empty_state = EmptyState(
+            title="Nothing failed 🎉",
+            hint="Episodes that fail to download or transcribe will show up here.",
+        )
+        v.addWidget(self.empty_state)
+        self.empty_state.setVisible(False)
+
         # guid → raw error text, for Copy-error / Show-log handlers.
         self._errors: dict[str, str] = {}
 
@@ -149,6 +158,10 @@ class FailedTab(QWidget):
             self.table.setCellWidget(row, 5, btn)
         # Restore click-to-sort after the bulk insertion completes.
         self.table.setSortingEnabled(was_sorting)
+        # Empty-state: show the friendly placeholder when nothing failed.
+        empty = self.table.rowCount() == 0
+        self.empty_state.setVisible(empty)
+        self.table.setVisible(not empty)
 
     # --- Right-click context menu ----------------------------------------
 
