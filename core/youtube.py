@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Literal
 from urllib.parse import parse_qs, urlparse
 
-YoutubeKind = Literal["video", "channel_id", "handle"]
+YoutubeKind = Literal["video", "channel_id", "handle", "channel_url"]
 
 
 class YoutubeUrlError(ValueError):
@@ -53,6 +53,17 @@ def parse_youtube_url(url: str) -> YoutubeUrl:
             handle = path[2:].split("/", 1)[0]
             if handle:
                 return YoutubeUrl("handle", handle)
+        if path.startswith("/c/") or path.startswith("/user/"):
+            return YoutubeUrl("channel_url", url.strip())
+
+    # Bare "@handle" or bare "name" (no scheme, no host): only when urlparse
+    # produced no netloc, so real URLs that fail every branch still raise.
+    if not u.netloc:
+        remainder = url.strip()
+        if remainder.startswith("@"):
+            remainder = remainder[1:]
+        if remainder and "/" not in remainder and not any(c.isspace() for c in remainder):
+            return YoutubeUrl("channel_url", f"https://www.youtube.com/@{remainder}")
 
     raise YoutubeUrlError(f"unrecognised YouTube URL: {url!r}")
 

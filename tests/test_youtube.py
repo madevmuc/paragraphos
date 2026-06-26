@@ -38,3 +38,22 @@ def test_rss_url_for_channel_id():
         rss_url_for_channel_id("UC123")
         == "https://www.youtube.com/feeds/videos.xml?channel_id=UC123"
     )
+
+
+def test_parse_c_custom_url():
+    u = parse_youtube_url("https://www.youtube.com/c/Veritasium")
+    assert u.kind == "channel_url" and u.value == "https://www.youtube.com/c/Veritasium"
+
+
+def test_parse_user_legacy_url():
+    u = parse_youtube_url("https://www.youtube.com/user/Vsauce")
+    assert u.kind == "channel_url"
+
+
+def test_parse_bare_handle():
+    u = parse_youtube_url("@veritasium")
+    assert u.kind == "channel_url" and "veritasium" in u.value
+
+
+def test_parse_handle_still_works():
+    assert parse_youtube_url("https://www.youtube.com/@veritasium").kind == "handle"
