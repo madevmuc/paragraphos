@@ -242,6 +242,7 @@ def test_queue_since_queues_on_or_after_cutoff_skipping_done(qapp, tmp_path):
     _seed_one(ctx, "qd", "e1", 1, EpisodeStatus.FAILED)  # pre-cutoff
     _seed_one(ctx, "qd", "e2", 2, EpisodeStatus.SKIPPED)  # pre-cutoff
     _seed_one(ctx, "qd", "e3", 3, EpisodeStatus.DONE)  # on cutoff but done
+    _seed_one(ctx, "qd", "e3b", 3, EpisodeStatus.FAILED)  # on cutoff, not done
     _seed_one(ctx, "qd", "e4", 4, EpisodeStatus.FAILED)  # after cutoff
     _seed_one(ctx, "qd", "e5", 5, EpisodeStatus.SKIPPED)  # after cutoff
     dlg = ShowDetailsDialog(ctx, "qd")
@@ -250,8 +251,9 @@ def test_queue_since_queues_on_or_after_cutoff_skipping_done(qapp, tmp_path):
     dlg._since_date_edit.setDate(QDate(2026, 6, 3))
     dlg._queue_since()
 
-    # On/after cutoff and not done → queued.
-    for g in ("e4", "e5"):
+    # On/after cutoff and not done → queued. `e3b` (exactly on the cutoff)
+    # pins the inclusive `>=` boundary — a `>` regression would skip it.
+    for g in ("e3b", "e4", "e5"):
         ep = ctx.state.get_episode(g)
         assert ep["status"] == "pending"
         assert ep["priority"] == PRIORITY_RUN_NEXT
