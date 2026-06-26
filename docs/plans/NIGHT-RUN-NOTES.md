@@ -24,6 +24,16 @@ Plan: [`2026-06-26-roadmap-execution-plan.md`](2026-06-26-roadmap-execution-plan
 - Clean-tree baseline **green**: `720 passed, 1 deselected` (pytest, offscreen
   Qt, `--timeout=180`); `ruff check` + `ruff format --check` clean.
 
+## Run infrastructure note
+
+The pre-commit hook runs `pytest` **without** `QT_QPA_PLATFORM=offscreen`. Under
+a real Qt platform plugin the full suite occasionally aborts at interpreter
+teardown (`QThread: Destroyed while thread '' is still running` → SIGABRT /
+exit 134) even though all tests pass — a pre-existing, order-dependent flake.
+**Workaround:** commit with `QT_QPA_PLATFORM=offscreen` exported; the hook then
+exits cleanly. All commits this run do so. A per-test `_reset_event_bus`
+fixture was added for subscriber isolation (independent of the flake).
+
 ## Progress log
 
 - **Task 0 — run setup** ✅ baseline verified green; notes scaffold created.
@@ -58,3 +68,10 @@ Plan: [`2026-06-26-roadmap-execution-plan.md`](2026-06-26-roadmap-execution-plan
   episodes column + `set_detected_language`; pipeline stores it (defensive
   getattr for test fakes); episode.transcribed payload carries it; CLI JSON
   exposes it. Both language dropdowns already had "auto". 6 tests.
+- **Task 6 — auto-vocabulary prompt (1.2)** ✅ `core/vocab.py`:
+  `build_vocab` (capitalised non-sentence-initial tokens + bigrams, DE/EN
+  stopwords, freq-ranked, max_chars cap) + `resolve_whisper_prompt`
+  (manual>auto>none precedence; cache in `meta["vocab:{slug}"]` keyed by
+  transcript count). Worker `_resolve_prompt` reads up to 30 recent show
+  `.md` files lazily (only on cache miss). Show-details "Auto-vocabulary"
+  toggle. 7 tests.

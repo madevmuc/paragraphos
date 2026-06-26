@@ -24,6 +24,11 @@ people actually paste, and paired with a full per-show episode browser.
   a curated subset is mirrored into the activity-log dock.
 
 ### Added
+- **Auto-vocabulary prompt.** Toggle **Auto-vocabulary** on a show and
+  Paragraphos seeds whisper's `--prompt` with recurring proper nouns mined
+  from that show's past transcripts, so names and jargon spell consistently.
+  A manual prompt always overrides; the vocabulary is cached and rebuilt only
+  when the show gains new transcripts.
 - **Per-episode language auto-detect.** Set a show's language to **Auto-detect**
   and whisper picks the language per episode; the detected ISO code is captured,
   stored, written to the transcript frontmatter (`detected_language`), surfaced

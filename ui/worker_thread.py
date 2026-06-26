@@ -531,13 +531,52 @@ class CheckAllThread(QThread):
         self._stop = True
         self._stop_event.set()
 
+    def _resolve_prompt(self, show) -> str:
+        """Effective whisper prompt: manual wins, else auto-vocab (1.2), else ""."""
+        from core import vocab
+
+        output_root = Path(self.settings.output_root).expanduser()
+        show_dir = (
+            Path(show.output_override).expanduser()
+            if getattr(show, "output_override", None)
+            else output_root / show.slug
+        )
+
+        def _read_transcripts() -> list[str]:
+            texts: list[str] = []
+            try:
+                mds = sorted(show_dir.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True)[
+                    :30
+                ]
+            except Exception:
+                return texts
+            for p in mds:
+                try:
+                    texts.append(p.read_text(encoding="utf-8", errors="replace"))
+                except OSError:
+                    pass
+            return texts
+
+        auto_vocab = bool(getattr(show, "auto_vocab", False))
+        count = 0
+        if auto_vocab and not (show.whisper_prompt or "").strip():
+            count = len(self.ctx.state.list_by_status(show.slug, EpisodeStatus.DONE))
+        return vocab.resolve_whisper_prompt(
+            whisper_prompt=show.whisper_prompt or "",
+            auto_vocab=auto_vocab,
+            slug=show.slug,
+            state=self.ctx.state,
+            transcript_count=count,
+            build=_read_transcripts,
+        )
+
     def _pctx_for(self, show) -> PipelineContext:
         """Build a PipelineContext customised for a specific show."""
         kwargs = dict(
             state=self.ctx.state,
             library=self.ctx.library,
             output_root=Path(self.settings.output_root).expanduser(),
-            whisper_prompt=show.whisper_prompt,
+            whisper_prompt=self._resolve_prompt(show),
             retention_days=self.settings.mp3_retention_days,
             delete_mp3_after=self.settings.delete_mp3_after_transcribe,
             language=show.language,

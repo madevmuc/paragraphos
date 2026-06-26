@@ -810,6 +810,22 @@ class ShowDetailsDialog(QDialog):
         inner.addWidget(hint, r, 1)
         r += 1
 
+        # Auto-vocabulary: when on (and no manual prompt above), seed the
+        # whisper prompt from frequent proper nouns mined from past transcripts.
+        inner.addWidget(self._label("Auto-vocabulary"), r, 0)
+        self._auto_vocab_toggle = QCheckBox()
+        self._auto_vocab_toggle.setChecked(bool(getattr(self.show_, "auto_vocab", False)))
+        inner.addWidget(self._auto_vocab_toggle, r, 1)
+        r += 1
+
+        av_hint = QLabel(
+            "Build the prompt from recurring names in past transcripts (manual prompt wins)."
+        )
+        av_hint.setStyleSheet(f"color: {current_tokens()['ink_3']}; font-size: 11px;")
+        av_hint.setWordWrap(True)
+        inner.addWidget(av_hint, r, 1)
+        r += 1
+
         # YouTube-only: transcript-source preference (per-channel override of
         # the Settings default). Tuple form lets us decouple display labels
         # from the persisted internal value.
@@ -1631,6 +1647,8 @@ class ShowDetailsDialog(QDialog):
             self.show_.title = new_title
         self.show_.language = self._language_combo.currentData() or "de"
         self.show_.whisper_prompt = self._whisper_prompt_edit.toPlainText().strip()
+        if getattr(self, "_auto_vocab_toggle", None) is not None:
+            self.show_.auto_vocab = self._auto_vocab_toggle.isChecked()
         if self.transcript_pref_combo is not None:
             self.show_.youtube_transcript_pref = self.transcript_pref_combo.currentData() or ""
         if self._skip_shorts_toggle is not None:
