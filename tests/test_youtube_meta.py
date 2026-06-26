@@ -76,6 +76,26 @@ def test_enumerate_channel_videos_parses_flat_playlist(tmp_path, monkeypatch):
         assert vids[0]["title"] == "First"
 
 
+def test_enumerate_dateafter_arg(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(
+        "core.youtube_meta._run_ytdlp",
+        lambda args, timeout=300: (seen.setdefault("a", args), "")[1],
+    )
+    enumerate_channel_videos("UCabc", date_after="2020-01-01")
+    assert "--dateafter" in seen["a"] and "20200101" in seen["a"]
+
+
+def test_enumerate_excludes_shorts_via_videos_tab(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(
+        "core.youtube_meta._run_ytdlp",
+        lambda args, timeout=300: (seen.setdefault("a", args), "")[1],
+    )
+    enumerate_channel_videos("UCabc", include_shorts=False)
+    assert any(a.endswith("/videos") for a in seen["a"])
+
+
 def test_default_timeouts_are_generous():
     """Smoke: each public meta call must allow at least 90s for yt-dlp."""
     import inspect

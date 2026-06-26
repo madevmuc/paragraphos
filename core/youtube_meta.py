@@ -219,13 +219,29 @@ def fetch_channel_first_video_date(channel_id: str) -> str:
     return ""
 
 
-def enumerate_channel_videos(channel_id: str, *, limit: int | None = None) -> List[Dict]:
+def enumerate_channel_videos(
+    channel_id: str,
+    *,
+    limit: int | None = None,
+    date_after: str | None = None,
+    include_shorts: bool = False,
+) -> List[Dict]:
+    """Enumerate a channel's uploads via yt-dlp's flat playlist dump.
+
+    By default targets the ``/videos`` tab, which excludes Shorts; set
+    ``include_shorts=True`` to enumerate the channel root instead.
+    ``date_after`` (``YYYY-MM-DD``) limits to uploads on/after that date.
+    """
+    base = f"https://www.youtube.com/channel/{channel_id}"
+    target = base if include_shorts else f"{base}/videos"
     args = [
         "--flat-playlist",
         "--dump-json",
-        f"https://www.youtube.com/channel/{channel_id}",
+        target,
     ]
     if limit:
         args[1:1] = ["--playlist-end", str(limit)]
+    if date_after:
+        args[1:1] = ["--dateafter", date_after.replace("-", "")]
     out = _run_ytdlp(args, timeout=300)
     return [json.loads(line) for line in out.splitlines() if line.strip()]
