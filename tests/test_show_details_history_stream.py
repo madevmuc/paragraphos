@@ -129,6 +129,20 @@ def _statuses_by_guid(tbl) -> dict:
     return out
 
 
+def _select_rows_by_guid(tbl, *guids):
+    """Select the rows whose stashed guid is in ``guids`` (any row order)."""
+    from PyQt6.QtWidgets import QTableWidget
+
+    by_guid = {}
+    for i in range(tbl.rowCount()):
+        by_guid[tbl.item(i, 0).data(Qt.ItemDataRole.UserRole)] = i
+    tbl.clearSelection()
+    tbl.setSelectionMode(QTableWidget.SelectionMode.MultiSelection)
+    for g in guids:
+        tbl.selectRow(by_guid[g])
+    tbl.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
+
+
 # ── tests ────────────────────────────────────────────────────────────────
 
 
@@ -245,3 +259,100 @@ def test_non_youtube_show_no_stream(qapp, tmp_path, monkeypatch):
     ctx = _make_ctx(tmp_path, show)
     dlg = _dialog(ctx, "pod")
     assert getattr(dlg, "_history_thread", None) is None
+
+
+# ── follow-up hardening (review fixes) ───────────────────────────────────
+
+
+def test_status_filter_hides_and_restores_available_rows(qapp, tmp_path, monkeypatch):
+    """A status filter never shows synthetic ``available`` rows and pauses the
+    stream; clearing the filter re-materializes the parked entries. Appending
+    while filtered is a no-op that leaves the buffer intact."""
+    from core.state import EpisodeStatus
+
+    _patch_youtube(monkeypatch)
+    show = Show(slug="fa", title="Fa", rss=_YT_RSS, source="youtube")
+    ctx = _make_ctx(tmp_path, show)
+    _seed_one(ctx, "fa", "f1", 1)
+    ctx.state.set_status("f1", EpisodeStatus.FAILED)
+    dlg = _dialog(ctx, "fa")
+
+    dlg._on_history_loaded([_video("a1", 1700000200), _video("a2", 1700000300)])
+    while dlg._available_buffer:
+        dlg._append_next_batch()
+    assert dlg._episodes_tbl.rowCount() == 3  # f1 + a1 + a2
+    assert _statuses_by_guid(dlg._episodes_tbl)["a1"] == "available"
+
+    # Filter to "failed": only the real failed row, no synthetic rows; the
+    # timer is stopped and the available entries are parked in the buffer.
+    dlg._status_filter_combo.setCurrentText("failed")
+    assert dlg._episodes_tbl.rowCount() == 1
+    assert dlg._episodes_tbl.item(0, 0).data(Qt.ItemDataRole.UserRole) == "f1"
+    assert not dlg._history_timer.isActive()
+    assert set(m["guid"] for m in dlg._available_buffer) == {"a1", "a2"}
+
+    # Appending while filtered adds nothing and keeps the buffer intact.
+    before_rows = dlg._episodes_tbl.rowCount()
+    before_buf = len(dlg._available_buffer)
+    dlg._append_next_batch()
+    assert dlg._episodes_tbl.rowCount() == before_rows
+    assert len(dlg._available_buffer) == before_buf
+
+    # Back to All → the available rows re-materialize.
+    dlg._status_filter_combo.setCurrentText("All")
+    while dlg._available_buffer:
+        dlg._append_next_batch()
+    statuses = _statuses_by_guid(dlg._episodes_tbl)
+    assert dlg._episodes_tbl.rowCount() == 3
+    assert statuses["a1"] == "available"
+    assert statuses["a2"] == "available"
+
+
+def test_queue_selected_seeds_available_rows(qapp, tmp_path, monkeypatch):
+    """Bulk-queueing a selection that mixes a real failed row with a synthetic
+    available row seeds + queues BOTH: both end up pending @ PRIORITY_RUN_NEXT,
+    and the available one becomes a real DB row (no longer 'available')."""
+    from core.state import EpisodeStatus
+    from ui.prioritize import PRIORITY_RUN_NEXT
+
+    _patch_youtube(monkeypatch)
+    show = Show(slug="qa", title="Qa", rss=_YT_RSS, source="youtube")
+    ctx = _make_ctx(tmp_path, show)
+    _seed_one(ctx, "qa", "f1", 1)
+    ctx.state.set_status("f1", EpisodeStatus.FAILED)
+    dlg = _dialog(ctx, "qa")
+
+    dlg._on_history_loaded([_video("a1", 1700000200)])
+    while dlg._available_buffer:
+        dlg._append_next_batch()
+    assert ctx.state.get_episode("a1") is None  # not yet a real row
+
+    _select_rows_by_guid(dlg._episodes_tbl, "f1", "a1")
+    dlg._queue_selected()
+
+    f1 = ctx.state.get_episode("f1")
+    a1 = ctx.state.get_episode("a1")
+    assert f1["status"] == "pending"
+    assert f1["priority"] == PRIORITY_RUN_NEXT
+    assert a1 is not None  # the available row was seeded
+    assert a1["status"] == "pending"
+    assert a1["priority"] == PRIORITY_RUN_NEXT
+    assert _statuses_by_guid(dlg._episodes_tbl)["a1"] != "available"
+
+
+def test_cancelled_stream_ignores_late_load(qapp, tmp_path, monkeypatch):
+    """Once cancelled, a late `loaded` signal must not re-arm the stream — no
+    timer starts and no rows are appended."""
+    _patch_youtube(monkeypatch)
+    show = Show(slug="lc", title="Lc", rss=_YT_RSS, source="youtube")
+    ctx = _make_ctx(tmp_path, show)
+    dlg = _dialog(ctx, "lc")
+
+    dlg._cancel_history_stream()
+    before = dlg._episodes_tbl.rowCount()
+
+    dlg._on_history_loaded([_video("z1", 1700000000), _video("z2", 1700000100)])
+    assert dlg._episodes_tbl.rowCount() == before
+    assert dlg._available_buffer == []
+    timer = getattr(dlg, "_history_timer", None)
+    assert timer is None or not timer.isActive()

@@ -223,8 +223,15 @@ class ShowDetailsDialog(QDialog):
         # reference it. The cap is an instance attribute so it can be tuned
         # (and is lowered by tests) without touching the module constant.
         self._available_buffer: list = []
+        # guid → manifest entry for every synthetic "available" row currently
+        # known (on screen or buffered). Lets bulk-queue seed an available row
+        # that has no DB row yet, and survives filter toggles.
+        self._available_entries: dict[str, dict] = {}
         self._history_cap: int = _HISTORY_CAP
         self._history_session_count: int = 0
+        # Latched once the stream is cancelled (dialog closing): a late
+        # `loaded` signal or stray timer tick must not re-start appending.
+        self._history_cancelled: bool = False
         self.show_ = next((s for s in ctx.watchlist.shows if s.slug == slug), None)
         if self.show_ is None:
             self.reject()
@@ -922,9 +929,20 @@ class ShowDetailsDialog(QDialog):
 
     def _on_status_filter_changed(self, text: str) -> None:
         """Toolbar combo slot: ``"All"`` clears the filter, any other value
-        restricts the table to that status. Rebuilds the table in place."""
+        restricts the table to that status. Rebuilds the table in place and
+        keeps the back-catalogue stream filter-aware: a filter pauses paced
+        appending; clearing it resumes appending whatever is still buffered."""
         self._status_filter = None if text == "All" else text
         self._reload_episodes()
+        if self._history_cancelled:
+            return
+        if self._status_filter is None:
+            if self._available_buffer:
+                # Filter cleared with entries still pending → resume pacing.
+                self._ensure_history_timer().start(_HISTORY_TICK_MS)
+                self._append_next_batch()
+        else:
+            self._stop_history_timer()
 
     def _episode_rows(self) -> list:
         """Episodes for this show, newest first.
@@ -952,10 +970,11 @@ class ShowDetailsDialog(QDialog):
         resolve per-row identity without re-hitting the DB.
 
         A full rebuild would otherwise drop the synthetic ``available``
-        back-catalogue rows the history stream appended, so — when no status
-        filter is active — we harvest the currently-shown available rows
-        first and re-append the ones that haven't since been seeded. A status
-        filter hides synthetic rows entirely (they aren't real DB rows).
+        back-catalogue rows the history stream appended, so we harvest the
+        currently-shown available rows first. When no status filter is active
+        we re-append the ones that haven't since been seeded; when a filter IS
+        active we instead push them back onto the FRONT of the buffer (deduped)
+        so clearing the filter re-materializes them in their original order.
         """
         tbl = self._episodes_tbl
         # Harvest the available rows already on screen so the rebuild can
@@ -969,6 +988,7 @@ class ShowDetailsDialog(QDialog):
                 entry = item.data(Qt.ItemDataRole.UserRole + 2)
                 if entry:
                     shown_available.append(entry)
+                    self._available_entries[entry["guid"]] = entry
 
         rows = self._episode_rows()
         tbl.clearContents()
@@ -993,13 +1013,29 @@ class ShowDetailsDialog(QDialog):
             lay.addStretch(1)
             tbl.setCellWidget(i, 2, holder)
 
-        # Restore the harvested available rows that are still unseeded. Only
-        # when unfiltered — a status filter shows real DB rows of one status.
-        if self._status_filter is None and shown_available:
+        if shown_available:
             seeded = self._seeded_guids()
-            for entry in shown_available:
-                if entry.get("guid") not in seeded:
-                    self._append_available_row(entry)
+            # Drop any harvested entry that has since become a real DB row so
+            # the registry never points a seeded guid back at a synthetic one.
+            for g in seeded:
+                self._available_entries.pop(g, None)
+            if self._status_filter is None:
+                # Unfiltered: re-append the still-unseeded available rows.
+                for entry in shown_available:
+                    if entry.get("guid") not in seeded:
+                        self._append_available_row(entry)
+            else:
+                # Filtered: a filter hides synthetic rows, so park the still-
+                # unseeded entries back at the FRONT of the buffer (deduped by
+                # guid, original order) so clearing the filter restores them.
+                buffered = {m["guid"] for m in self._available_buffer}
+                restored = [
+                    e
+                    for e in shown_available
+                    if e.get("guid") not in seeded and e.get("guid") not in buffered
+                ]
+                if restored:
+                    self._available_buffer = restored + self._available_buffer
 
     def _selected_guids(self) -> list[str]:
         """Guids of every selected row, in row order.
@@ -1130,13 +1166,37 @@ class ShowDetailsDialog(QDialog):
         """Bulk-queue ``guids``: set each PENDING + bump to PRIORITY_RUN_NEXT,
         then nudge the worker once and refresh the table + backlog label.
 
+        Synthetic ``available`` rows have no DB row yet, so ``set_status`` would
+        silently hit zero rows. For each guid we first check the DB: if it's
+        unseeded but a known available entry, we seed it (upsert) and drop it
+        from the buffer/registry; if it's unseeded AND unknown, we skip it.
+        Then the normal pending + bump runs against a guaranteed-real row.
+
         Empty list → no-op (no DB writes, no worker nudge, no refresh).
         """
         if not guids:
             return
+        did_queue = False
         for guid in guids:
+            if self.ctx.state.get_episode(guid) is None:
+                entry = self._available_entries.get(guid)
+                if entry is None:
+                    # Unseeded and not a known available row — nothing to queue.
+                    continue
+                self.ctx.state.upsert_episode(
+                    show_slug=self.slug,
+                    guid=entry["guid"],
+                    title=entry["title"],
+                    pub_date=entry["pubDate"],
+                    mp3_url=entry["mp3_url"],
+                )
+                self._available_buffer = [m for m in self._available_buffer if m["guid"] != guid]
+                self._available_entries.pop(guid, None)
             self.ctx.state.set_status(guid, EpisodeStatus.PENDING)
             bump_priority(self.ctx, guid, PRIORITY_RUN_NEXT)
+            did_queue = True
+        if not did_queue:
+            return
         # Nudge once after the whole batch, not per-guid.
         self._nudge_worker()
         self._reload_episodes()
@@ -1202,6 +1262,10 @@ class ShowDetailsDialog(QDialog):
         thread.loaded.connect(self._on_history_loaded)
         thread.failed.connect(self._on_history_failed)
         thread.finished.connect(thread.deleteLater)
+        # Drop our reference once the C++ object is gone so a later
+        # `_cancel_history_stream` can't poke a deleted thread (mirrors the
+        # `_metadata_thread`/`_artwork_thread` pattern).
+        thread.finished.connect(lambda: setattr(self, "_history_thread", None))
         self._history_thread = thread
         thread.start()
 
@@ -1224,9 +1288,14 @@ class ShowDetailsDialog(QDialog):
         the table on a timer — appending the first batch immediately so the
         user sees results without waiting a tick.
         """
+        # A `loaded` signal can arrive after the dialog began closing (the
+        # thread finished its yt-dlp dump just as we cancelled); ignore it.
+        if self._history_cancelled:
+            return
         manifest = manifest_from_videos(videos)
         seeded = self._seeded_guids()
         self._available_buffer = [m for m in manifest if m["guid"] not in seeded]
+        self._available_entries = {m["guid"]: m for m in self._available_buffer}
         self._history_session_count = 0
         self._ensure_history_timer().start(_HISTORY_TICK_MS)
         # Show the first batch right away instead of waiting a full tick.
@@ -1253,7 +1322,18 @@ class ShowDetailsDialog(QDialog):
         the timer stops and the "Load more" button is hidden. When the cap is
         hit with entries still buffered, the timer stops and "Load more" is
         revealed so the user can pull the next window in on demand.
+
+        Synthetic rows must never leak into a filtered view, so this is a no-op
+        (without popping the buffer) while a status filter is active — the
+        entries stay buffered and re-materialize when the filter is cleared.
         """
+        if self._history_cancelled:
+            return
+        if self._status_filter is not None:
+            # Filtered view: don't append synthetic rows, keep the buffer
+            # intact, and stop ticking until the filter is cleared.
+            self._stop_history_timer()
+            return
         if not self._available_buffer:
             self._stop_history_timer()
             self._set_load_more_visible(False)
@@ -1289,6 +1369,8 @@ class ShowDetailsDialog(QDialog):
         date_item.setData(Qt.ItemDataRole.UserRole, entry["guid"])
         date_item.setData(Qt.ItemDataRole.UserRole + 1, "available")
         date_item.setData(Qt.ItemDataRole.UserRole + 2, entry)
+        # Register so bulk-queue can seed this row even though it has no DB row.
+        self._available_entries[entry["guid"]] = entry
         tbl.setItem(i, 0, date_item)
         tbl.setItem(i, 1, QTableWidgetItem(entry.get("title") or ""))
         pill = Pill("available", kind=_STATUS_PILL_KIND["available"])
@@ -1316,39 +1398,21 @@ class ShowDetailsDialog(QDialog):
     def _trigger_available(self, guid: str) -> None:
         """Seed + queue a single back-catalogue video.
 
-        Reads the manifest entry stashed on the row, upserts it (which seeds it
-        as ``pending``), bumps it to PRIORITY_RUN_NEXT, nudges the worker, drops
-        it from the buffer, and rebuilds the table — after which the row is a
-        real ``pending`` DB row rather than a synthetic ``available`` one.
+        Delegates to the bulk path, which now seeds an unseeded ``available``
+        row (upsert → ``pending``), bumps it to PRIORITY_RUN_NEXT, nudges the
+        worker, prunes it from the buffer/registry, and rebuilds the table —
+        after which the row is a real ``pending`` DB row, not a synthetic one.
         """
-        entry = None
-        tbl = self._episodes_tbl
-        for i in range(tbl.rowCount()):
-            item = tbl.item(i, 0)
-            if item is not None and item.data(Qt.ItemDataRole.UserRole) == guid:
-                entry = item.data(Qt.ItemDataRole.UserRole + 2)
-                break
-        if not entry:
-            return
-        self.ctx.state.upsert_episode(
-            show_slug=self.slug,
-            guid=entry["guid"],
-            title=entry["title"],
-            pub_date=entry["pubDate"],
-            mp3_url=entry["mp3_url"],
-        )
-        bump_priority(self.ctx, guid, PRIORITY_RUN_NEXT)
-        self._nudge_worker()
-        self._available_buffer = [m for m in self._available_buffer if m["guid"] != guid]
-        self._reload_episodes()
-        self.backlog_lbl.setText(self._fmt_backlog())
+        self._queue_guids([guid])
 
     def _cancel_history_stream(self) -> None:
         """Stop the paced timer, reap the enumeration thread, clear the buffer.
 
         Called from ``closeEvent`` so a dialog close can't leave a timer
-        ticking or a worker shelling out to yt-dlp in the background.
+        ticking or a worker shelling out to yt-dlp in the background. The latch
+        also ignores any `loaded`/tick that races in after this returns.
         """
+        self._history_cancelled = True
         self._stop_history_timer()
         thread = getattr(self, "_history_thread", None)
         if thread is not None:
@@ -1361,10 +1425,16 @@ class ShowDetailsDialog(QDialog):
                 if thread.isRunning():
                     thread.requestInterruption()
                     thread.quit()
+                    # A thread blocked in the yt-dlp subprocess (enumerate
+                    # timeout is 300 s) can outlive this 2 s wait and keep
+                    # running in the background until the dump returns; its
+                    # signals are disconnected and the latch is set, so it's
+                    # harmless. Consistent with the metadata/artwork threads.
                     thread.wait(2000)
             except (RuntimeError, AttributeError):
                 pass
         self._available_buffer = []
+        self._available_entries = {}
 
     # ── footer ───────────────────────────────────────────────
 
