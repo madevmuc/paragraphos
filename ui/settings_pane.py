@@ -402,6 +402,28 @@ class SettingsPane(QWidget):
             ),
             hint_kind="info",
         )
+        # Caption fallback mode (3.4): how the YouTube caption chain resolves.
+        self.caption_fallback_combo = QComboBox()
+        self.caption_fallback_combo.setObjectName("caption_fallback_combo")
+        self.caption_fallback_combo.addItem("Manual captions → whisper", "manual_whisper")
+        self.caption_fallback_combo.addItem(
+            "Manual → auto captions → whisper", "manual_auto_whisper"
+        )
+        _cur_cfb = getattr(self.ctx.settings, "caption_fallback_mode", "manual_whisper")
+        _cfb_idx = self.caption_fallback_combo.findData(_cur_cfb)
+        self.caption_fallback_combo.setCurrentIndex(_cfb_idx if _cfb_idx >= 0 else 0)
+        self.caption_fallback_combo.currentIndexChanged.connect(self._schedule_save)
+        self._add_field(
+            yt_form,
+            "Caption fallback",
+            self.caption_fallback_combo,
+            hint=(
+                "How a YouTube transcript is sourced. Auto captions are machine-"
+                "generated and lower quality, but avoid a full whisper run. A "
+                "show set to 'Always whisper' ignores this."
+            ),
+            hint_kind="info",
+        )
         # Keep references so the YouTube-source toggle can hide the
         # widgets together. _add_field returns None, so we wrap the form
         # in a container we can show/hide.
@@ -1102,6 +1124,7 @@ class SettingsPane(QWidget):
         s.sources_youtube = self.youtube_checkbox.isChecked()
         s.show_log_dock = self.show_log_dock_cb.isChecked()
         s.youtube_default_language = self.yt_default_lang_combo.currentData() or "de"
+        s.caption_fallback_mode = self.caption_fallback_combo.currentData() or "manual_whisper"
         s.watch_folder_enabled = self.watch_folder_enabled_cb.isChecked()
         s.watch_folder_root = self.watch_folder_root.text()
         s.watch_folder_post = self.watch_folder_post_combo.currentData() or "keep"

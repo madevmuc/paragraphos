@@ -24,6 +24,10 @@ people actually paste, and paired with a full per-show episode browser.
   a curated subset is mirrored into the activity-log dock.
 
 ### Added
+- **YouTube caption fallback mode.** Choose, in Settings → YouTube, whether a
+  YouTube transcript comes from manual captions then whisper, or manual → auto
+  captions → whisper (auto captions skip a whisper run at lower quality). A
+  show set to "Always whisper" still overrides.
 - **Per-show duration filters.** Set a min/max episode length in Show Details →
   episodes whose known duration falls outside the range are skipped
   (`duration-out-of-range`); unknown lengths always pass. Defaults come from

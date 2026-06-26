@@ -620,6 +620,9 @@ class CheckAllThread(QThread):
             kwargs["youtube_default_transcript_source"] = getattr(
                 self.settings, "youtube_default_transcript_source", "captions"
             )
+            kwargs["caption_fallback_mode"] = getattr(
+                self.settings, "caption_fallback_mode", "manual_whisper"
+            )
             # Per-show Shorts policy: prefer the show's own skip_shorts, else
             # the global Settings default. The getattr fallbacks keep legacy
             # shows/settings (written before these fields existed) working.

@@ -100,3 +100,8 @@ per-test `_reset_event_bus` fixture was also added for subscriber isolation
   `duration-out-of-range` (+ episode.skipped event). PipelineContext bounds;
   worker resolves per show. Show-details "Filters": min/max duration (minutes)
   spinboxes. 7 tests.
+- **Task 10 — caption fallback mode (3.4)** ✅ `pipeline.caption_source_chain`
+  (per-show whisper override wins; mode → manual[/auto]/whisper; unknown→
+  manual_whisper). `_process_youtube_episode` builds the chain + `auto_ok` from
+  it; legacy `auto-captions` pref preserved. PipelineContext + worker carry the
+  mode; Settings → YouTube combo. 4 tests.

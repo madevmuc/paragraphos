@@ -54,6 +54,8 @@ class PipelineContext:
     source: str = "podcast"
     youtube_transcript_pref: str = ""  # "" → fall back to default below
     youtube_default_transcript_source: str = "captions"
+    # Caption fallback chain (3.4): manual_whisper | manual_auto_whisper.
+    caption_fallback_mode: str = "manual_whisper"
     youtube_channel_id: str = ""
     # When True (the per-show default), a cheap probe runs before download
     # and a YouTube Short is marked SKIPPED instead of transcribed. When
@@ -66,6 +68,22 @@ class PipelineResult:
     action: Literal["transcribed", "skipped", "failed", "deferred"]
     guid: str
     detail: str = ""
+
+
+def caption_source_chain(pref: str, fallback_mode: str) -> list[str]:
+    """Ordered transcript sources for a YouTube episode (3.4).
+
+    A per-show ``pref`` of ``"whisper"`` forces audio (skips captions). Otherwise
+    the settings ``caption_fallback_mode`` decides the caption chain:
+    ``manual_whisper`` → manual captions then whisper; ``manual_auto_whisper`` →
+    manual then auto captions then whisper. Unknown modes fall back to
+    ``manual_whisper``.
+    """
+    if pref == "whisper":
+        return ["whisper"]
+    if fallback_mode == "manual_auto_whisper":
+        return ["manual", "auto", "whisper"]
+    return ["manual", "whisper"]
 
 
 def build_slug(pub_date: str, title: str, episode_number: str = "0000") -> str:
@@ -553,6 +571,14 @@ def _process_youtube_episode(
             ep["duration_sec"] = _dur
 
     pref = ctx.youtube_transcript_pref or ctx.youtube_default_transcript_source or "captions"
+    # Build the ordered source chain from the per-show pref + the settings
+    # caption-fallback mode (3.4). A legacy "auto-captions" pref keeps meaning
+    # "manual then auto then whisper".
+    if pref == "auto-captions":
+        chain = ["manual", "auto", "whisper"]
+    else:
+        chain = caption_source_chain(pref, ctx.caption_fallback_mode)
+    want_auto = "auto" in chain
 
     show_dir = ctx.output_root / ep["show_slug"]
     show_dir.mkdir(parents=True, exist_ok=True)
@@ -564,16 +590,16 @@ def _process_youtube_episode(
     transcript_source: str | None = None
     srt_path: Path | None = None
 
-    if pref in ("captions", "auto-captions"):
+    if "manual" in chain:
         ctx.state.set_status(guid, EpisodeStatus.DOWNLOADING)
         try:
             srt_path = youtube_captions.fetch_manual_captions(
                 vid,
                 work_dir / "video",
                 lang=ctx.language or "en",
-                auto_ok=(pref == "auto-captions"),
+                auto_ok=want_auto,
             )
-            transcript_source = pref
+            transcript_source = "auto-captions" if want_auto else "captions"
         except NoCaptionsAvailable:
             srt_path = None
 
