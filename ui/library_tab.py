@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMenu,
+    QMessageBox,
     QPushButton,
     QSplitter,
     QTableWidget,
@@ -68,6 +69,8 @@ class LibraryTab(QWidget):
         self.tree.setHeaderHidden(True)
         self.tree.setRootIsDecorated(False)
         self.tree.itemSelectionChanged.connect(self._on_tree_select)
+        self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._on_tree_context_menu)
         self._splitter.addWidget(self.tree)
 
         # ── Panel 2 — list ───────────────────────────────────────
@@ -546,12 +549,101 @@ class LibraryTab(QWidget):
         a_retr.triggered.connect(lambda: self._do_retranscribe(guid))
         menu.addAction(a_retr)
 
+        menu.addSeparator()
+        a_del = QAction("Delete transcript…", self)
+        a_del.triggered.connect(lambda: self._delete_transcript(guid))
+        menu.addAction(a_del)
+
         menu.exec(self.table.viewport().mapToGlobal(pos))
 
     def _do_retranscribe(self, guid: str) -> None:
         from ui.retranscribe import retranscribe_episode
 
         retranscribe_episode(self.ctx, guid)
+        self.refresh()
+
+    # --- Tree (folder) context menu + deletions --------------------------
+
+    def _on_tree_context_menu(self, pos) -> None:
+        item = self.tree.itemAt(pos)
+        if item is None:
+            return
+        slug = item.data(0, Qt.ItemDataRole.UserRole)
+        if not slug or slug == _ALL_KEY:
+            return  # the "All episodes" node has no folder of its own
+        folder = Path(self.ctx.settings.output_root).expanduser() / slug
+        menu = QMenu(self)
+        a_reveal = QAction("Reveal folder in Finder", self)
+        a_reveal.setEnabled(folder.is_dir())
+        a_reveal.triggered.connect(lambda: macopen.reveal_in_finder(folder))
+        menu.addAction(a_reveal)
+        menu.addSeparator()
+        a_del = QAction("Delete folder (all transcripts)…", self)
+        a_del.setEnabled(folder.is_dir())
+        a_del.triggered.connect(lambda s=slug: self._delete_show_folder(s))
+        menu.addAction(a_del)
+        menu.exec(self.tree.viewport().mapToGlobal(pos))
+
+    def _confirm_delete(self, title: str, body: str, second: str) -> bool:
+        """Two-step confirmation: a delete only proceeds when the user confirms
+        TWICE — a deliberate guard for irreversible filesystem deletes."""
+        yn = QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        no = QMessageBox.StandardButton.No
+        yes = QMessageBox.StandardButton.Yes
+        if QMessageBox.question(self, title, body, yn, no) != yes:
+            return False
+        if QMessageBox.question(self, "Final confirmation", second, yn, no) != yes:
+            return False
+        return True
+
+    def _delete_transcript(self, guid: str) -> None:
+        r = self._row_for_guid(guid)
+        if r is None:
+            return
+        md: Path = r["md_path"]
+        files = [p for p in (md, md.with_suffix(".srt")) if p.exists()]
+        if not files:
+            return
+        names = "\n".join(f"  • {p.name}" for p in files)
+        if not self._confirm_delete(
+            "Delete transcript",
+            f"Permanently delete this episode's transcript file(s)?\n\n{names}\n\n"
+            "This cannot be undone.",
+            f"Really delete {len(files)} file(s)? This is final.",
+        ):
+            return
+        for p in files:
+            try:
+                p.unlink()
+            except OSError:
+                pass
+        self.refresh()
+
+    def _delete_show_folder(self, slug: str) -> None:
+        import shutil
+
+        output_root = Path(self.ctx.settings.output_root).expanduser().resolve()
+        folder = (output_root / slug).resolve()
+        # Safety: refuse to delete the output root itself or anything outside it.
+        if not slug or folder == output_root or output_root not in folder.parents:
+            return
+        if not folder.is_dir():
+            return
+        n_md = len(list(folder.glob("*.md")))
+        if not self._confirm_delete(
+            "Delete folder",
+            f"Permanently delete the entire transcript folder for {slug!r}?\n\n"
+            f"{folder}\n\n"
+            f"This removes {n_md} transcript(s) and everything else inside it. "
+            "This cannot be undone.",
+            f"Really delete the folder and its {n_md} transcript(s)? This is final.",
+        ):
+            return
+        try:
+            shutil.rmtree(folder)
+        except OSError as e:
+            QMessageBox.warning(self, "Delete failed", str(e))
+            return
         self.refresh()
 
     @staticmethod
