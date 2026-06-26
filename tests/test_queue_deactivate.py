@@ -57,7 +57,7 @@ def _queue_guids(qt) -> set:
 def test_remove_from_queue_marks_skipped(tmp_path):
     qt, ctx = _make_queue(tmp_path)
     _seed(ctx, "g1")
-    qt._remove_from_queue("g1")
+    qt._remove_from_queue(["g1"])
     assert ctx.state.get_episode("g1")["status"] == "skipped"
     # And it has left the queue view.
     assert "g1" not in _queue_guids(qt)
@@ -66,10 +66,29 @@ def test_remove_from_queue_marks_skipped(tmp_path):
 def test_deactivate_pauses_then_reactivate(tmp_path):
     qt, ctx = _make_queue(tmp_path)
     _seed(ctx, "g2")
-    qt._set_episode_status("g2", EpisodeStatus.PAUSED)
+    qt._set_episode_status(["g2"], EpisodeStatus.PAUSED)
     assert ctx.state.get_episode("g2")["status"] == "paused"
-    qt._set_episode_status("g2", EpisodeStatus.PENDING)
+    qt._set_episode_status(["g2"], EpisodeStatus.PENDING)
     assert ctx.state.get_episode("g2")["status"] == "pending"
+
+
+def test_actions_apply_to_all_selected(tmp_path):
+    """Multi-select: an action applies to EVERY selected episode, not just one."""
+    qt, ctx = _make_queue(tmp_path)
+    for g in ("m1", "m2", "m3"):
+        _seed(ctx, g)
+    # Deactivate three at once.
+    qt._set_episode_status(["m1", "m2", "m3"], EpisodeStatus.PAUSED)
+    assert [ctx.state.get_episode(g)["status"] for g in ("m1", "m2", "m3")] == [
+        "paused",
+        "paused",
+        "paused",
+    ]
+    # Remove two of them from the queue.
+    qt._remove_from_queue(["m1", "m2"])
+    assert ctx.state.get_episode("m1")["status"] == "skipped"
+    assert ctx.state.get_episode("m2")["status"] == "skipped"
+    assert ctx.state.get_episode("m3")["status"] == "paused"
 
 
 def test_paused_visible_in_queue_but_not_claimable(tmp_path):

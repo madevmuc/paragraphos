@@ -129,6 +129,10 @@ class QueueTab(QWidget):
                 "Finish ≈",
             ]
         )
+        # Select whole rows (not single cells) and allow multi-select, so the
+        # context-menu actions can act on every selected episode at once.
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         from ui.widgets.resizable_header import make_resizable
 
         # Columns: 0 Show, 1 Pub Date, 2 Ep#, 3 Title (stretch),
@@ -540,6 +544,18 @@ class QueueTab(QWidget):
 
     # ── context menu ──────────────────────────────────────────
 
+    def _selected_guids(self) -> list[str]:
+        """Guids of every selected row (stashed on the col-0 item's UserRole)."""
+        guids: list[str] = []
+        seen: set[str] = set()
+        for idx in self.table.selectionModel().selectedRows():
+            it = self.table.item(idx.row(), 0)
+            g = it.data(Qt.ItemDataRole.UserRole) if it is not None else None
+            if g and g not in seen:
+                seen.add(g)
+                guids.append(g)
+        return guids
+
     def _on_context_menu(self, pos) -> None:
         index = self.table.indexAt(pos)
         if not index.isValid():
@@ -550,60 +566,62 @@ class QueueTab(QWidget):
         guid = item.data(Qt.ItemDataRole.UserRole)
         if not guid:
             return
+        # Act on the WHOLE selection when the right-clicked row is part of it;
+        # otherwise act on just the row under the cursor.
+        selected = self._selected_guids()
+        guids = selected if guid in selected else [guid]
         status_item = self.table.item(index.row(), 4)
         status = status_item.text() if status_item is not None else ""
         is_paused = status.lower().startswith("paused")
+        sfx = f" ({len(guids)})" if len(guids) > 1 else ""
         menu = QMenu(self)
         menu.addAction(
-            "Re-transcribe this episode",
-            lambda g=guid: self._retranscribe(g),
+            f"Re-transcribe{sfx}",
+            lambda gs=guids: self._retranscribe(gs),
         )
         if can_bump(status):
             menu.addSeparator()
-            menu.addAction(
-                "Run next",
-                lambda g=guid: self._bump(g, PRIORITY_RUN_NEXT),
-            )
-            menu.addAction(
-                "Run now",
-                lambda g=guid: self._bump(g, PRIORITY_RUN_NOW),
-            )
+            menu.addAction(f"Run next{sfx}", lambda gs=guids: self._bump(gs, PRIORITY_RUN_NEXT))
+            menu.addAction(f"Run now{sfx}", lambda gs=guids: self._bump(gs, PRIORITY_RUN_NOW))
         menu.addSeparator()
         if is_paused:
             menu.addAction(
-                "Activate (resume in queue)",
-                lambda g=guid: self._set_episode_status(g, EpisodeStatus.PENDING),
+                f"Activate (resume in queue){sfx}",
+                lambda gs=guids: self._set_episode_status(gs, EpisodeStatus.PENDING),
             )
         else:
             menu.addAction(
-                "Deactivate (keep in queue, don't process)",
-                lambda g=guid: self._set_episode_status(g, EpisodeStatus.PAUSED),
+                f"Deactivate (keep in queue, don't process){sfx}",
+                lambda gs=guids: self._set_episode_status(gs, EpisodeStatus.PAUSED),
             )
         menu.addAction(
-            "Remove from queue",
-            lambda g=guid: self._remove_from_queue(g),
+            f"Remove from queue{sfx}",
+            lambda gs=guids: self._remove_from_queue(gs),
         )
         menu.exec(self.table.viewport().mapToGlobal(pos))
 
-    def _set_episode_status(self, guid: str, status: EpisodeStatus) -> None:
-        """Flip an episode's status (e.g. pending↔paused) and refresh now."""
-        self.ctx.state.set_status(guid, status)
+    def _set_episode_status(self, guids: list[str], status: EpisodeStatus) -> None:
+        """Flip status (e.g. pending↔paused) on every given episode; refresh once."""
+        for g in guids:
+            self.ctx.state.set_status(g, status)
         self._last_table_refresh = 0.0
         self.refresh()
 
-    def _remove_from_queue(self, guid: str) -> None:
-        """Soft-delete from the queue: mark the episode ``skipped`` so it leaves
+    def _remove_from_queue(self, guids: list[str]) -> None:
+        """Soft-delete from the queue: mark each episode ``skipped`` so it leaves
         the active queue and the daily feed-poll won't re-queue it (upsert
-        preserves status). It stays in the per-show episode browser as
+        preserves status). They stay in the per-show episode browser as
         ``skipped`` and can be re-queued from there."""
-        self.ctx.state.set_status(guid, EpisodeStatus.SKIPPED)
+        for g in guids:
+            self.ctx.state.set_status(g, EpisodeStatus.SKIPPED)
         self._last_table_refresh = 0.0
         self.refresh()
 
-    def _retranscribe(self, guid: str) -> None:
-        retranscribe_episode(self.ctx, guid)
-        # Kick the worker so the bumped re-transcribe runs next instead
-        # of waiting for the next scheduled pass.
+    def _retranscribe(self, guids: list[str]) -> None:
+        for g in guids:
+            retranscribe_episode(self.ctx, g)
+        # Kick the worker so the bumped re-transcribes run next instead of
+        # waiting for the next scheduled pass.
         try:
             self._shows_tab().start_check(force=True)
         except Exception:
@@ -611,8 +629,9 @@ class QueueTab(QWidget):
         self._last_table_refresh = 0.0
         self.refresh()
 
-    def _bump(self, guid: str, priority: int) -> None:
-        bump_priority(self.ctx, guid, priority)
+    def _bump(self, guids: list[str], priority: int) -> None:
+        for g in guids:
+            bump_priority(self.ctx, g, priority)
         # Kick the worker so the bump takes effect immediately. Without
         # this, the priority is set in SQL but the worker only re-queries
         # on its next scheduled pass.
