@@ -939,6 +939,11 @@ class ShowDetailsDialog(QDialog):
         if self._status_filter is None:
             if self._available_buffer:
                 # Filter cleared with entries still pending → resume pacing.
+                # Reset the per-session cap counter so rows that were already
+                # visible (and got parked back into the buffer when the filter
+                # was applied) re-materialize immediately instead of hiding
+                # behind "Load more" at the >cap boundary.
+                self._history_session_count = 0
                 self._ensure_history_timer().start(_HISTORY_TICK_MS)
                 self._append_next_batch()
         else:
