@@ -50,6 +50,10 @@ from core.watchlist_io import save_watchlist
 # Sentinel pushed onto the queue to tell the transcribe worker "no more work".
 _SHUTDOWN = object()
 
+# Bound per-show per-check so a channel with many parked premieres can't
+# hammer yt-dlp by re-probing every deferred video on a single pass.
+_DEFERRED_REPROBE_CAP = 25
+
 
 def show_is_gated(state, slug: str) -> bool:
     """A show is skipped this pass if it is per-show paused OR has no backlog
@@ -572,6 +576,36 @@ class CheckAllThread(QThread):
             )
         return PipelineContext(**kwargs)
 
+    def _reprobe_deferred(self, show) -> int:
+        """Re-classify a youtube show's DEFERRED episodes; promote any that are
+        no longer live/premiere back to PENDING so this same check processes
+        them. Bounded by _DEFERRED_REPROBE_CAP per call. Returns promoted count."""
+        if getattr(show, "source", "podcast") != "youtube":
+            return 0
+        from core.youtube import parse_youtube_url
+        from core.youtube_audio import probe_video_meta
+        from core.youtube_classify import classify_video
+
+        deferred = self.ctx.state.list_by_status(show.slug, EpisodeStatus.DEFERRED)
+        promoted = 0
+        for ep in deferred[:_DEFERRED_REPROBE_CAP]:
+            if self._stop:
+                break
+            try:
+                parsed = parse_youtube_url(ep["mp3_url"])
+                if parsed.kind != "video":
+                    continue
+                meta = probe_video_meta(parsed.value)
+            except Exception:  # noqa: BLE001 — leave deferred; retry next check
+                continue
+            category, _msg = classify_video(meta)
+            if category != "live":
+                self.ctx.state.set_status(ep["guid"], EpisodeStatus.PENDING)
+                promoted += 1
+        if promoted:
+            self.progress.emit(f"{show.slug}: {promoted} deferred video(s) now ready")
+        return promoted
+
     def run(self) -> None:
         wl: Watchlist = self.ctx.watchlist
         targets = [
@@ -672,6 +706,10 @@ class CheckAllThread(QThread):
                 ep_num_map = {e["guid"]: e["episode_number"] for e in manifest}
             else:
                 ep_num_map = {}
+            # Re-probe parked live/premiere videos: any that have finished get
+            # promoted to PENDING *before* we gather pending below, so a
+            # just-finished stream is picked up by this very pass.
+            self._reprobe_deferred(show)
             pending = self.ctx.state.list_by_status(show.slug, EpisodeStatus.PENDING)
             if self.limit:
                 pending = pending[-self.limit :]
