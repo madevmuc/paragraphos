@@ -282,6 +282,69 @@ def cmd_add(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_backlog(args: argparse.Namespace) -> int:
+    """Deepen an existing YouTube show's back-catalogue: re-enumerate the
+    channel's uploads (depth from --backlog) and SEED + QUEUE the new ones
+    (new rows land pending; pre-existing rows keep their status via upsert).
+
+    Unlike ``add`` this never calls ``apply_backlog`` — the point is to queue
+    everything fetched. ``--backlog`` here means DEPTH (how far back to fetch),
+    reusing ``parse_backlog`` for a consistent CLI surface."""
+    from core.backlog import BacklogError, parse_backlog
+    from core.youtube import channel_id_from_feed_url, manifest_from_videos
+    from core.youtube_meta import enumerate_channel_videos
+
+    try:
+        mode = parse_backlog(args.backlog)
+    except BacklogError as e:
+        print(e, file=sys.stderr)
+        return 2
+
+    wl = _watchlist()
+    show = next((s for s in wl.shows if s.slug == args.slug), None)
+    if show is None:
+        print(f"no show with slug {args.slug!r}", file=sys.stderr)
+        return 2
+    if getattr(show, "source", "podcast") != "youtube":
+        print(
+            f"backlog only supports YouTube shows (got source={show.source!r})",
+            file=sys.stderr,
+        )
+        return 2
+
+    cid = channel_id_from_feed_url(show.rss)
+    if not cid:
+        print(f"could not derive a channel id from {show.rss!r}", file=sys.stderr)
+        return 2
+
+    include_shorts = not getattr(show, "skip_shorts", True)
+    kind, arg = mode
+    if kind == "last":
+        videos = enumerate_channel_videos(cid, limit=arg, include_shorts=include_shorts)
+    elif kind == "since":
+        videos = enumerate_channel_videos(cid, date_after=arg, include_shorts=include_shorts)
+    elif kind == "recent":
+        videos = enumerate_channel_videos(cid, limit=15, include_shorts=include_shorts)
+    else:  # "all"
+        videos = enumerate_channel_videos(cid, include_shorts=include_shorts)
+
+    manifest = manifest_from_videos(videos)
+    state = _state()
+    seeded = 0
+    for ep in manifest:
+        if state.get_episode(ep["guid"]) is None:
+            seeded += 1
+        state.upsert_episode(
+            show_slug=show.slug,
+            guid=ep["guid"],
+            title=ep["title"],
+            pub_date=ep["pubDate"],
+            mp3_url=ep["mp3_url"],
+        )
+    print(f"backlog {show.slug!r}: {seeded} new episode(s) queued ({len(manifest)} fetched)")
+    return 0
+
+
 def cmd_shows(args: argparse.Namespace) -> int:
     """List shows in the watchlist. Replaces the old ``list`` (which still
     works as an alias)."""
@@ -1169,6 +1232,13 @@ def main() -> int:
         help="(YouTube) include Shorts",
     )
     a.set_defaults(fn=cmd_add, youtube_transcript_pref="", skip_shorts=True)
+
+    bk = sub.add_parser(
+        "backlog", help="fetch more history for an existing YouTube show + queue it"
+    )
+    bk.add_argument("slug")
+    bk.add_argument("--backlog", required=True, help="all | recent | last:N | since:YYYY-MM-DD")
+    bk.set_defaults(fn=cmd_backlog)
 
     s_shows = sub.add_parser("shows", help="list all shows in the watchlist")
     s_shows.add_argument("--json", action="store_true")
