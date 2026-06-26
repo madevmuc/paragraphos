@@ -36,9 +36,11 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core import ytdlp
 from core.state import EpisodeStatus
 from core.stats import compute_show_stats
 from core.watchlist_io import save_watchlist
+from core.youtube import channel_id_from_feed_url, manifest_from_videos
 from ui.prioritize import (
     PRIORITY_RUN_NEXT,
     PRIORITY_RUN_NOW,
@@ -63,7 +65,18 @@ _STATUS_PILL_KIND = {
     "downloading": "running",
     "skipped": "idle",
     "deferred": "pausing",
+    # Synthetic back-catalogue rows discovered by the history stream — not
+    # yet seeded into the DB, so they read as neutral/idle until triggered.
+    "available": "idle",
 }
+
+# Paced back-catalogue streaming (Task 4.7). Appending the full channel
+# history all at once janks the UI on a long-running channel, so we drip the
+# not-yet-seeded videos into the table a batch at a time on a QTimer, and cap
+# how many we append per session behind a "Load more" button.
+_HISTORY_TICK_MS = 60  # interval between paced appends
+_HISTORY_BATCH = 25  # rows appended per tick
+_HISTORY_CAP = 300  # max synthetic rows appended before "Load more"
 
 # (display label, whisper language code) — mirrors the pre-restyle picker.
 _LANGUAGES = [
@@ -135,6 +148,36 @@ class _ArtworkFetchThread(QThread):
             self.ready.emit(path)
 
 
+class _YoutubeHistoryThread(QThread):
+    """Short-lived worker: enumerates a YouTube channel's full upload history
+    off the UI thread via yt-dlp's flat-playlist dump.
+
+    Emits ``loaded(list)`` with the flat-playlist dicts on success or
+    ``failed(str)`` on error. The dialog owns the instance (kept as
+    ``self._history_thread``) so it isn't GC'd mid-flight, and cancels it on
+    close. Mirrors the ``_FeedMetadataThread`` idiom — the import lives inside
+    ``run`` so tests can patch ``core.youtube_meta.enumerate_channel_videos``.
+    """
+
+    loaded = pyqtSignal(list)
+    failed = pyqtSignal(str)
+
+    def __init__(self, channel_id: str, include_shorts: bool, parent=None):
+        super().__init__(parent)
+        self._channel_id = channel_id
+        self._include_shorts = include_shorts
+
+    def run(self) -> None:  # noqa: D401 — QThread entry
+        from core.youtube_meta import enumerate_channel_videos
+
+        try:
+            videos = enumerate_channel_videos(self._channel_id, include_shorts=self._include_shorts)
+        except Exception as exc:  # noqa: BLE001 — surfaced via signal
+            self.failed.emit(str(exc))
+            return
+        self.loaded.emit(videos or [])
+
+
 def _rounded_pixmap(src: QPixmap, side: int, radius: int) -> QPixmap:
     """Crop ``src`` to a ``side``×``side`` square with rounded corners.
 
@@ -173,6 +216,15 @@ class ShowDetailsDialog(QDialog):
         # any widget builder runs so the first `_reload_episodes()` (inside
         # `_build_episodes_table`) sees it.
         self._status_filter: str | None = None
+        # Paced back-catalogue stream state (Task 4.7). The buffer is the
+        # queue of not-yet-appended "available" manifest entries; it is
+        # drained from the front by `_append_next_batch`. Initialised before
+        # any builder runs so the very first `_reload_episodes()` can safely
+        # reference it. The cap is an instance attribute so it can be tuned
+        # (and is lowered by tests) without touching the module constant.
+        self._available_buffer: list = []
+        self._history_cap: int = _HISTORY_CAP
+        self._history_session_count: int = 0
         self.show_ = next((s for s in ctx.watchlist.shows if s.slug == slug), None)
         if self.show_ is None:
             self.reject()
@@ -200,6 +252,10 @@ class ShowDetailsDialog(QDialog):
         root.addWidget(self._build_episode_toolbar())
         root.addWidget(self._build_episodes_table(), 1)
         root.addLayout(self._build_footer())
+
+        # Kick off the paced back-catalogue stream now that the table exists
+        # (no-op for non-YouTube shows or when yt-dlp isn't installed).
+        self._start_history_stream()
 
     # ── header ───────────────────────────────────────────────
 
@@ -404,6 +460,9 @@ class ShowDetailsDialog(QDialog):
 
     def closeEvent(self, event) -> None:  # noqa: N802 — Qt override
         """Ensure any in-flight metadata fetch is reaped before the dialog dies."""
+        # Cancel the paced back-catalogue stream first: stop the timer + reap
+        # the enumeration thread so nothing touches a tearing-down widget.
+        self._cancel_history_stream()
         thread = getattr(self, "_metadata_thread", None)
         if thread is not None and thread.isRunning():
             # Disconnect slots so the thread's result can't touch a widget
@@ -810,6 +869,17 @@ class ShowDetailsDialog(QDialog):
         queue_sel_btn.clicked.connect(self._queue_selected)
         row.addWidget(queue_sel_btn)
 
+        # "Load more" — hidden until the paced history stream hits its
+        # per-session cap with more back-catalogue still to show. Clicking it
+        # resumes appending the next cap-sized window.
+        self._load_more_btn = QPushButton("Load more")
+        self._load_more_btn.setToolTip(
+            "Append more back-catalogue videos discovered on the channel."
+        )
+        self._load_more_btn.clicked.connect(self._load_more)
+        self._load_more_btn.hide()
+        row.addWidget(self._load_more_btn)
+
         return bar
 
     # ── recent episodes ──────────────────────────────────────
@@ -880,8 +950,26 @@ class ShowDetailsDialog(QDialog):
         The Date cell stashes the guid at ``UserRole`` and the status at
         ``UserRole + 1`` so the context menu (and bulk-select helpers) can
         resolve per-row identity without re-hitting the DB.
+
+        A full rebuild would otherwise drop the synthetic ``available``
+        back-catalogue rows the history stream appended, so — when no status
+        filter is active — we harvest the currently-shown available rows
+        first and re-append the ones that haven't since been seeded. A status
+        filter hides synthetic rows entirely (they aren't real DB rows).
         """
         tbl = self._episodes_tbl
+        # Harvest the available rows already on screen so the rebuild can
+        # restore them; their full manifest entry is stashed at UserRole + 2.
+        shown_available = []
+        for i in range(tbl.rowCount()):
+            item = tbl.item(i, 0)
+            if item is None:
+                continue
+            if (item.data(Qt.ItemDataRole.UserRole + 1) or "") == "available":
+                entry = item.data(Qt.ItemDataRole.UserRole + 2)
+                if entry:
+                    shown_available.append(entry)
+
         rows = self._episode_rows()
         tbl.clearContents()
         tbl.setRowCount(len(rows))
@@ -904,6 +992,14 @@ class ShowDetailsDialog(QDialog):
             lay.addWidget(pill)
             lay.addStretch(1)
             tbl.setCellWidget(i, 2, holder)
+
+        # Restore the harvested available rows that are still unseeded. Only
+        # when unfiltered — a status filter shows real DB rows of one status.
+        if self._status_filter is None and shown_available:
+            seeded = self._seeded_guids()
+            for entry in shown_available:
+                if entry.get("guid") not in seeded:
+                    self._append_available_row(entry)
 
     def _selected_guids(self) -> list[str]:
         """Guids of every selected row, in row order.
@@ -938,6 +1034,17 @@ class ShowDetailsDialog(QDialog):
         if not guid:
             return
         status = date_item.data(Qt.ItemDataRole.UserRole + 1) or ""
+        # Synthetic back-catalogue row: the only meaningful action is to seed
+        # + queue this single video. Not a real DB row yet, so none of the
+        # re-transcribe / bump / diff actions apply.
+        if status == "available":
+            menu = QMenu(self)
+            menu.addAction(
+                "Queue this video",
+                lambda g=guid: self._trigger_available(g),
+            )
+            menu.exec(tbl.viewport().mapToGlobal(pos))
+            return
         menu = QMenu(self)
         menu.addAction(
             "Re-transcribe this episode",
@@ -1070,6 +1177,194 @@ class ShowDetailsDialog(QDialog):
         # bump doesn't visually reorder rows here — but the backlog label
         # (pending/failed counts) is what the user watches on this dialog.
         self.backlog_lbl.setText(self._fmt_backlog())
+
+    # ── paced back-catalogue stream (Task 4.7) ───────────────
+
+    def _start_history_stream(self) -> None:
+        """Begin enumerating the channel's full upload history off-thread.
+
+        No-op unless the show is a YouTube source AND yt-dlp is installed. The
+        enumeration runs in ``_YoutubeHistoryThread``; its result lands in
+        ``_on_history_loaded`` back on the UI thread, which then paces the
+        not-yet-seeded videos into the table.
+        """
+        if getattr(self.show_, "source", "podcast") != "youtube":
+            return
+        if not ytdlp.is_installed():
+            return
+        cid = channel_id_from_feed_url(self.show_.rss)
+        if not cid:
+            return
+        # `skip_shorts` True (the model default) → enumerate the /videos tab
+        # which excludes Shorts; invert it for enumerate's include_shorts.
+        include_shorts = not getattr(self.show_, "skip_shorts", True)
+        thread = _YoutubeHistoryThread(cid, include_shorts, parent=self)
+        thread.loaded.connect(self._on_history_loaded)
+        thread.failed.connect(self._on_history_failed)
+        thread.finished.connect(thread.deleteLater)
+        self._history_thread = thread
+        thread.start()
+
+    def _on_history_failed(self, message: str) -> None:
+        """A failed back-catalogue enumeration is non-fatal — the DB-seeded
+        rows are already on screen, so we swallow the error silently."""
+        return
+
+    def _seeded_guids(self) -> set[str]:
+        """Every guid already persisted for this show (any status)."""
+        with self.ctx.state._conn() as c:
+            rows = c.execute("SELECT guid FROM episodes WHERE show_slug=?", (self.slug,)).fetchall()
+        return {r["guid"] for r in rows}
+
+    def _on_history_loaded(self, videos: list) -> None:
+        """Receive the full flat-playlist list and start paced appending.
+
+        Converts the videos to manifest entries, drops the ones already seeded
+        in the DB (those are already real rows), and drips the remainder into
+        the table on a timer — appending the first batch immediately so the
+        user sees results without waiting a tick.
+        """
+        manifest = manifest_from_videos(videos)
+        seeded = self._seeded_guids()
+        self._available_buffer = [m for m in manifest if m["guid"] not in seeded]
+        self._history_session_count = 0
+        self._ensure_history_timer().start(_HISTORY_TICK_MS)
+        # Show the first batch right away instead of waiting a full tick.
+        self._append_next_batch()
+
+    def _ensure_history_timer(self) -> QTimer:
+        timer = getattr(self, "_history_timer", None)
+        if timer is None:
+            timer = QTimer(self)
+            timer.timeout.connect(self._append_next_batch)
+            self._history_timer = timer
+        return timer
+
+    def _stop_history_timer(self) -> None:
+        timer = getattr(self, "_history_timer", None)
+        if timer is not None:
+            timer.stop()
+
+    def _append_next_batch(self) -> None:
+        """Append up to ``_HISTORY_BATCH`` available rows from the front of the
+        buffer, stopping once the per-session cap is reached.
+
+        Drains the buffer (newest-first as enumerated). When the buffer empties
+        the timer stops and the "Load more" button is hidden. When the cap is
+        hit with entries still buffered, the timer stops and "Load more" is
+        revealed so the user can pull the next window in on demand.
+        """
+        if not self._available_buffer:
+            self._stop_history_timer()
+            self._set_load_more_visible(False)
+            return
+        appended = 0
+        while (
+            self._available_buffer
+            and appended < _HISTORY_BATCH
+            and self._history_session_count < self._history_cap
+        ):
+            self._append_available_row(self._available_buffer.pop(0))
+            appended += 1
+            self._history_session_count += 1
+        if not self._available_buffer:
+            self._stop_history_timer()
+            self._set_load_more_visible(False)
+        elif self._history_session_count >= self._history_cap:
+            self._stop_history_timer()
+            self._set_load_more_visible(True)
+
+    def _append_available_row(self, entry: dict) -> None:
+        """Append one synthetic ``available`` row for a back-catalogue video.
+
+        The Date cell stashes the guid at ``UserRole``, the ``"available"``
+        marker at ``UserRole + 1`` (matching the DB-row convention), and the
+        full manifest entry at ``UserRole + 2`` so triggering can seed it.
+        """
+        tbl = self._episodes_tbl
+        i = tbl.rowCount()
+        tbl.insertRow(i)
+        date_item = QTableWidgetItem((entry.get("pubDate") or "")[:10])
+        date_item.setFont(QFont("Menlo"))
+        date_item.setData(Qt.ItemDataRole.UserRole, entry["guid"])
+        date_item.setData(Qt.ItemDataRole.UserRole + 1, "available")
+        date_item.setData(Qt.ItemDataRole.UserRole + 2, entry)
+        tbl.setItem(i, 0, date_item)
+        tbl.setItem(i, 1, QTableWidgetItem(entry.get("title") or ""))
+        pill = Pill("available", kind=_STATUS_PILL_KIND["available"])
+        holder = QWidget()
+        lay = QHBoxLayout(holder)
+        lay.setContentsMargins(4, 2, 4, 2)
+        lay.addWidget(pill)
+        lay.addStretch(1)
+        tbl.setCellWidget(i, 2, holder)
+
+    def _set_load_more_visible(self, visible: bool) -> None:
+        btn = getattr(self, "_load_more_btn", None)
+        if btn is not None:
+            btn.setVisible(visible)
+
+    def _load_more(self) -> None:
+        """Resume paced appending for the next cap-sized window of videos."""
+        self._history_session_count = 0
+        self._set_load_more_visible(False)
+        if not self._available_buffer:
+            return
+        self._ensure_history_timer().start(_HISTORY_TICK_MS)
+        self._append_next_batch()
+
+    def _trigger_available(self, guid: str) -> None:
+        """Seed + queue a single back-catalogue video.
+
+        Reads the manifest entry stashed on the row, upserts it (which seeds it
+        as ``pending``), bumps it to PRIORITY_RUN_NEXT, nudges the worker, drops
+        it from the buffer, and rebuilds the table — after which the row is a
+        real ``pending`` DB row rather than a synthetic ``available`` one.
+        """
+        entry = None
+        tbl = self._episodes_tbl
+        for i in range(tbl.rowCount()):
+            item = tbl.item(i, 0)
+            if item is not None and item.data(Qt.ItemDataRole.UserRole) == guid:
+                entry = item.data(Qt.ItemDataRole.UserRole + 2)
+                break
+        if not entry:
+            return
+        self.ctx.state.upsert_episode(
+            show_slug=self.slug,
+            guid=entry["guid"],
+            title=entry["title"],
+            pub_date=entry["pubDate"],
+            mp3_url=entry["mp3_url"],
+        )
+        bump_priority(self.ctx, guid, PRIORITY_RUN_NEXT)
+        self._nudge_worker()
+        self._available_buffer = [m for m in self._available_buffer if m["guid"] != guid]
+        self._reload_episodes()
+        self.backlog_lbl.setText(self._fmt_backlog())
+
+    def _cancel_history_stream(self) -> None:
+        """Stop the paced timer, reap the enumeration thread, clear the buffer.
+
+        Called from ``closeEvent`` so a dialog close can't leave a timer
+        ticking or a worker shelling out to yt-dlp in the background.
+        """
+        self._stop_history_timer()
+        thread = getattr(self, "_history_thread", None)
+        if thread is not None:
+            try:
+                thread.loaded.disconnect()
+                thread.failed.disconnect()
+            except (TypeError, RuntimeError, AttributeError):
+                pass
+            try:
+                if thread.isRunning():
+                    thread.requestInterruption()
+                    thread.quit()
+                    thread.wait(2000)
+            except (RuntimeError, AttributeError):
+                pass
+        self._available_buffer = []
 
     # ── footer ───────────────────────────────────────────────
 
