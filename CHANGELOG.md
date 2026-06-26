@@ -5,6 +5,12 @@
 The original "Add YouTube Channel" feature, hardened against the channels
 people actually paste, and paired with a full per-show episode browser.
 
+### Platform & reliability (roadmap)
+- **Internal event bus** — a typed, in-process event bus (`core/events.py`)
+  publishes episode/run/feed/show/settings lifecycle events. Synchronous
+  dispatch, subscriber failures isolated, no GUI dependency. Backbone for the
+  notifications, webhooks, timeline, logs and stats features below.
+
 ### Added
 - **Add a channel by any URL form.** `/channel/UC…`, `/@handle`, `/c/Name`,
   `/user/Name`, and a bare `@handle` all resolve to the right channel. Paste a

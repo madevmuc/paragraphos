@@ -27,3 +27,7 @@ Plan: [`2026-06-26-roadmap-execution-plan.md`](2026-06-26-roadmap-execution-plan
 ## Progress log
 
 - **Task 0 — run setup** ✅ baseline verified green; notes scaffold created.
+- **Task 1 — event bus core (0.1)** ✅ `core/events.py`: `Event`/`EventType`,
+  `subscribe`/`emit`/`reset`/`now_iso`. Matcher = exact / prefix (`"x."`) /
+  match-all (`""`) / predicate. Synchronous, lock-guarded, subscriber failures
+  swallowed+logged. 7 unit tests.
