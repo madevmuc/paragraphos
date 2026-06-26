@@ -94,3 +94,9 @@ per-test `_reset_event_bus` fixture was also added for subscriber isolation
   (oldest/newest/shortest, NULL-duration-last, unknown→oldest). `_DownloadPool`
   takes `queue_order`, applies it to the pending-claim ORDER BY. Queue-tab
   toolbar combo persists the setting (worker reads per claim). 5 tests.
+- **Task 9 — duration filters (3.3)** ✅ `core/filters.py`
+  (`resolve_duration_bounds` show>settings, `duration_filter_reason` —
+  unknown/0 never filters). `download_phase` skips out-of-range with reason
+  `duration-out-of-range` (+ episode.skipped event). PipelineContext bounds;
+  worker resolves per show. Show-details "Filters": min/max duration (minutes)
+  spinboxes. 7 tests.

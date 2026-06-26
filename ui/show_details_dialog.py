@@ -31,6 +31,7 @@ from PyQt6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSizePolicy,
+    QSpinBox,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -824,6 +825,27 @@ class ShowDetailsDialog(QDialog):
         av_hint.setStyleSheet(f"color: {current_tokens()['ink_3']}; font-size: 11px;")
         av_hint.setWordWrap(True)
         inner.addWidget(av_hint, r, 1)
+        r += 1
+
+        # ── Filters group (3.3): min/max duration (0 = no limit). ──
+        inner.addWidget(self._label("Min duration (min)"), r, 0)
+        self._min_dur_spin = QSpinBox()
+        self._min_dur_spin.setRange(0, 1440)
+        self._min_dur_spin.setValue(int(getattr(self.show_, "min_duration_sec", 0) or 0) // 60)
+        inner.addWidget(self._min_dur_spin, r, 1)
+        r += 1
+
+        inner.addWidget(self._label("Max duration (min)"), r, 0)
+        self._max_dur_spin = QSpinBox()
+        self._max_dur_spin.setRange(0, 1440)
+        self._max_dur_spin.setValue(int(getattr(self.show_, "max_duration_sec", 0) or 0) // 60)
+        inner.addWidget(self._max_dur_spin, r, 1)
+        r += 1
+
+        dur_hint = QLabel("Skip episodes outside this length (0 = no limit). Unknown lengths pass.")
+        dur_hint.setStyleSheet(f"color: {current_tokens()['ink_3']}; font-size: 11px;")
+        dur_hint.setWordWrap(True)
+        inner.addWidget(dur_hint, r, 1)
         r += 1
 
         # YouTube-only: transcript-source preference (per-channel override of
@@ -1649,6 +1671,9 @@ class ShowDetailsDialog(QDialog):
         self.show_.whisper_prompt = self._whisper_prompt_edit.toPlainText().strip()
         if getattr(self, "_auto_vocab_toggle", None) is not None:
             self.show_.auto_vocab = self._auto_vocab_toggle.isChecked()
+        if getattr(self, "_min_dur_spin", None) is not None:
+            self.show_.min_duration_sec = int(self._min_dur_spin.value()) * 60
+            self.show_.max_duration_sec = int(self._max_dur_spin.value()) * 60
         if self.transcript_pref_combo is not None:
             self.show_.youtube_transcript_pref = self.transcript_pref_combo.currentData() or ""
         if self._skip_shorts_toggle is not None:

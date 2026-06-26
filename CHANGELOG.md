@@ -24,6 +24,11 @@ people actually paste, and paired with a full per-show episode browser.
   a curated subset is mirrored into the activity-log dock.
 
 ### Added
+- **Per-show duration filters.** Set a min/max episode length in Show Details →
+  episodes whose known duration falls outside the range are skipped
+  (`duration-out-of-range`); unknown lengths always pass. Defaults come from
+  the new settings-level defaults. Also settable via `cli.py set <slug>
+  min_duration_sec=… / max_duration_sec=…`.
 - **Queue order toggle.** A control in the Queue toolbar picks **oldest first**,
   **newest first**, or **shortest first**; the worker honours it on the next
   claim (priority bumps still win). Also settable via

@@ -592,6 +592,16 @@ class CheckAllThread(QThread):
             confidence_marking=bool(getattr(self.settings, "confidence_marking_enabled", False)),
             confidence_threshold=float(getattr(self.settings, "confidence_threshold", 0.5)),
         )
+        from core.filters import resolve_duration_bounds
+
+        emin, emax = resolve_duration_bounds(
+            show_min=int(getattr(show, "min_duration_sec", 0) or 0),
+            show_max=int(getattr(show, "max_duration_sec", 0) or 0),
+            def_min=int(getattr(self.settings, "default_min_duration_sec", 0) or 0),
+            def_max=int(getattr(self.settings, "default_max_duration_sec", 0) or 0),
+        )
+        kwargs["min_duration_sec"] = emin
+        kwargs["max_duration_sec"] = emax
         if getattr(show, "source", "podcast") == "youtube":
             # Pull the channel id straight off the canonical channel-RSS URL
             # (`…?channel_id=UC…`). The Watchlist always stores YouTube shows

@@ -42,6 +42,10 @@ class PipelineContext:
     # sub-threshold words in ==highlight== in the transcript body.
     confidence_marking: bool = False
     confidence_threshold: float = 0.5
+    # Duration filters (3.3): effective bounds in seconds (0 = no limit).
+    # Resolved per show (show value over settings default) in the worker.
+    min_duration_sec: int = 0
+    max_duration_sec: int = 0
     # YouTube-source dispatch (Theme A). When ``source == "youtube"`` the
     # pipeline routes the episode through the captions-first / whisper-
     # fallback branch instead of the standard MP3-download path. The
@@ -156,6 +160,17 @@ def download_phase(
     ep = ctx.state.get_episode(guid)
     if ep is None:
         raise ValueError(f"unknown guid {guid}")
+
+    # Duration filter (3.3): skip episodes whose KNOWN length is out of the
+    # configured range. Unknown duration passes through to normal processing.
+    from core.filters import duration_filter_reason
+
+    _reason = duration_filter_reason(
+        ep.get("duration_sec"), ctx.min_duration_sec, ctx.max_duration_sec
+    )
+    if _reason:
+        ctx.state.set_status(guid, EpisodeStatus.SKIPPED, error_text=_reason)
+        return DownloadOutcome(guid=guid, result=PipelineResult("skipped", guid, _reason))
 
     base_slug = build_slug(ep["pub_date"], ep["title"], episode_number)
     # Reserve a unique-per-guid slug up front. build_slug is NOT unique —
