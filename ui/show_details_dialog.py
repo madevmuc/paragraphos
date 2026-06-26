@@ -749,10 +749,16 @@ class ShowDetailsDialog(QDialog):
         tbl = QTableWidget(0, 3)
         tbl.setHorizontalHeaderLabels(["Date", "Title", "Status"])
         tbl.verticalHeader().setVisible(False)
-        tbl.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        # Row multi-select: bulk actions (next task) operate on every
+        # selected episode. ExtendedSelection enables shift/ctrl ranges;
+        # SelectRows keeps the whole row highlighted, not single cells.
+        tbl.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
+        tbl.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         tbl.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         tbl.setShowGrid(False)
-        tbl.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        # Allow click/keyboard selection (the old NoFocus blocked it) while
+        # keeping the table out of the tab-order via ClickFocus.
+        tbl.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
 
         hh = tbl.horizontalHeader()
         hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
@@ -820,6 +826,27 @@ class ShowDetailsDialog(QDialog):
             lay.addWidget(pill)
             lay.addStretch(1)
             tbl.setCellWidget(i, 2, holder)
+
+    def _selected_guids(self) -> list[str]:
+        """Guids of every selected row, in row order.
+
+        Bulk actions read each selected row's Date cell ``UserRole`` (where
+        the per-row guid is stashed). Uses ``selectionModel().selectedRows()``
+        so each row is counted once regardless of how many cells it spans.
+        """
+        tbl = self._episodes_tbl
+        model = tbl.selectionModel()
+        if model is None:
+            return []
+        guids: list[str] = []
+        for index in sorted(model.selectedRows(), key=lambda i: i.row()):
+            item = tbl.item(index.row(), 0)
+            if item is None:
+                continue
+            guid = item.data(Qt.ItemDataRole.UserRole)
+            if guid:
+                guids.append(guid)
+        return guids
 
     def _on_episode_context_menu(self, pos) -> None:
         tbl = self._episodes_tbl

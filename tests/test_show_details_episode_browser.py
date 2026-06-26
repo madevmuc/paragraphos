@@ -16,7 +16,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QTableWidget
 
 from core.models import Settings, Show, Watchlist
 from core.state import StateStore
@@ -100,3 +100,49 @@ def test_window_is_resizable_maximizable(qapp, tmp_path):
     # Not fixed: max size is the Qt 'unbounded' sentinel, not the min.
     assert dlg.maximumWidth() > dlg.minimumWidth()
     assert bool(dlg.windowFlags() & Qt.WindowType.WindowMaximizeButtonHint)
+
+
+# ── Task 4.2 ─────────────────────────────────────────────────────────────
+
+
+def test_table_is_row_multiselect(qapp, tmp_path):
+    show = Show(slug="ms", title="Ms", rss="https://feed", source="podcast")
+    dlg = _make_dialog(show, tmp_path)
+    tbl = dlg._episodes_tbl
+    assert tbl.selectionMode() == QTableWidget.SelectionMode.ExtendedSelection
+    assert tbl.selectionBehavior() == QTableWidget.SelectionBehavior.SelectRows
+
+
+def test_selected_guids_returns_selected_rows(qapp, tmp_path):
+    show = Show(slug="sel", title="Sel", rss="https://feed", source="podcast")
+    from ui.show_details_dialog import ShowDetailsDialog
+
+    ctx = _make_ctx(tmp_path, show)
+    guids = _seed_episodes(ctx, "sel", 5)
+    dlg = ShowDetailsDialog(ctx, "sel")
+    _keepalive.append(dlg)
+
+    tbl = dlg._episodes_tbl
+    tbl.clearSelection()
+    tbl.selectRow(0)
+    # Extend the selection to row 2 without clearing row 0.
+    tbl.setSelectionMode(QTableWidget.SelectionMode.MultiSelection)
+    tbl.selectRow(2)
+    tbl.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
+
+    assert set(dlg._selected_guids()) == {guids[0], guids[2]}
+
+
+def test_per_row_guid_stash_survives_refactor(qapp, tmp_path):
+    """The Date cell still carries its guid at UserRole after the
+    multi-select refactor (the context menu relies on it)."""
+    show = Show(slug="stash", title="Stash", rss="https://feed", source="podcast")
+    from ui.show_details_dialog import ShowDetailsDialog
+
+    ctx = _make_ctx(tmp_path, show)
+    guids = _seed_episodes(ctx, "stash", 5)
+    dlg = ShowDetailsDialog(ctx, "stash")
+    _keepalive.append(dlg)
+
+    item = dlg._episodes_tbl.item(0, 0)
+    assert item.data(Qt.ItemDataRole.UserRole) == guids[0]
