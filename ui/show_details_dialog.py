@@ -262,6 +262,7 @@ class ShowDetailsDialog(QDialog):
         root.addWidget(self._build_feed_health_panel())
         root.addWidget(self._build_advanced_group())
         root.addWidget(self._build_episode_toolbar())
+        root.addWidget(self._build_episode_search_bar())
         root.addWidget(self._build_episodes_table(), 1)
         root.addLayout(self._build_footer())
 
@@ -867,22 +868,7 @@ class ShowDetailsDialog(QDialog):
         self._status_filter_combo.currentTextChanged.connect(self._on_status_filter_changed)
         row.addWidget(self._status_filter_combo)
 
-        # Shown while the full back-catalogue is being enumerated off-thread, so
-        # the user knows more episodes than the DB-seeded ones are on the way.
-        self._history_status = QLabel("")
-        self._history_status.setStyleSheet("color: palette(mid); padding-left: 6px;")
-        self._history_status.hide()
-        row.addWidget(self._history_status)
-
-        # Free-text search over episode titles. Typing pulls in the full
-        # back-catalogue (flushes the paced buffer) so a match is never hidden
-        # behind the cap / "Load more", then hides the non-matching rows. Its
-        # stretch pushes the date-sweep + queue buttons to the right edge.
-        self._ep_search = QLineEdit()
-        self._ep_search.setPlaceholderText("Search episodes…")
-        self._ep_search.setClearButtonEnabled(True)
-        self._ep_search.textChanged.connect(self._on_episode_search)
-        row.addWidget(self._ep_search, 1)
+        row.addStretch(1)
 
         # Date-sweep: queue every not-yet-done episode published on or after
         # the chosen date. Default the picker to ~1 year ago so the common
@@ -918,6 +904,30 @@ class ShowDetailsDialog(QDialog):
 
         return bar
 
+    def _build_episode_search_bar(self) -> QWidget:
+        """A dedicated, full-width search row directly above the episode table —
+        kept off the crowded toolbar so it's always visible and usable."""
+        bar = QWidget()
+        row = QHBoxLayout(bar)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(8)
+        row.addWidget(QLabel("Search:"))
+        # Free-text search over episode titles. Typing pulls in the full
+        # back-catalogue (flushes the paced buffer) so a match is never hidden
+        # behind the cap / "Load more", then hides the non-matching rows.
+        self._ep_search = QLineEdit()
+        self._ep_search.setPlaceholderText("Filter episodes by title…")
+        self._ep_search.setClearButtonEnabled(True)
+        self._ep_search.textChanged.connect(self._on_episode_search)
+        row.addWidget(self._ep_search, 1)
+        # Shown while the full back-catalogue is being enumerated off-thread, so
+        # the user knows more episodes than the DB-seeded ones are on the way.
+        self._history_status = QLabel("")
+        self._history_status.setStyleSheet("color: palette(mid); padding-left: 6px;")
+        self._history_status.hide()
+        row.addWidget(self._history_status)
+        return bar
+
     # ── recent episodes ──────────────────────────────────────
 
     def _build_episodes_table(self) -> QTableWidget:
@@ -940,7 +950,9 @@ class ShowDetailsDialog(QDialog):
         hh.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         hh.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
         tbl.setColumnWidth(0, 90)
-        tbl.setColumnWidth(2, 90)
+        # Wide enough for the longest status pill ("transcribing"/"downloading")
+        # incl. its padding — the old 90 px clipped "downloading" to "downloadin".
+        tbl.setColumnWidth(2, 130)
 
         # Size so several rows are visible within the dialog.
         tbl.setMinimumHeight(140)
