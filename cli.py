@@ -157,8 +157,18 @@ def cmd_add(args: argparse.Namespace) -> int:
             from core import youtube_meta
 
             cid = youtube_meta.resolve_handle_to_channel_id(parsed.value)
-        else:  # "channel_id"
+        elif parsed.kind == "channel_url":
+            from core import youtube_meta
+
+            cid = youtube_meta.resolve_channel_url_to_id(parsed.value)
+        elif parsed.kind == "channel_id":
             cid = parsed.value
+        else:
+            print(f"unsupported YouTube URL kind: {parsed.kind}", file=sys.stderr)
+            return 2
+        if not cid:
+            print("couldn't resolve that URL to a YouTube channel", file=sys.stderr)
+            return 2
         rss = rss_url_for_channel_id(cid)
         yt_source = True
     elif inp.startswith("http"):

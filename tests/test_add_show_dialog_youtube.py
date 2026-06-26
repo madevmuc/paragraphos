@@ -100,6 +100,31 @@ def test_handle_url_resolves_then_previews(tmp_path, monkeypatch):
     assert seen.get("cid") == "UCabc1234567890123456789"
 
 
+def test_channel_url_routes_through_resolver(tmp_path, monkeypatch):
+    """A /c/ or /user/ URL (kind "channel_url") must resolve via
+    resolve_channel_url_to_id, not be mistaken for a literal channel id."""
+    monkeypatch.setattr("core.ytdlp.is_installed", lambda: True)
+    monkeypatch.setattr(
+        "core.youtube_meta.resolve_channel_url_to_id",
+        lambda u: "UCabc1234567890123456789",
+    )
+    seen = {}
+    monkeypatch.setattr(
+        "core.youtube_meta.fetch_channel_preview",
+        lambda cid: (
+            seen.update(cid=cid),
+            {"channel_id": cid, "title": "Veritasium", "video_count": 1, "artwork_url": ""},
+        )[1],
+    )
+    dlg = _make_dialog(tmp_path, Settings(sources_youtube=True))
+    dlg._activate_youtube_mode()
+    dlg.youtube_url_input.setText("https://www.youtube.com/c/Veritasium")
+    dlg._on_youtube_url_resolve()
+    _wait_for_resolve(dlg)
+    assert seen.get("cid") == "UCabc1234567890123456789"
+    assert dlg._loaded_yt_preview["title"] == "Veritasium"
+
+
 def test_add_yt_channel_persists_show(tmp_path, monkeypatch):
     monkeypatch.setattr("core.ytdlp.is_installed", lambda: True)
     cid = "UCabc1234567890123456789"

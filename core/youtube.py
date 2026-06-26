@@ -17,7 +17,9 @@ class YoutubeUrlError(ValueError):
 @dataclass(frozen=True)
 class YoutubeUrl:
     kind: YoutubeKind
-    value: str  # video id, channel id, or handle (without @)
+    # video id; channel id; handle without @; or, for kind "channel_url",
+    # a full channel URL (resolved to an id via resolve_channel_url_to_id).
+    value: str
 
 
 _VIDEO_ID_RE = re.compile(r"^[\w-]{11}$")

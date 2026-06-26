@@ -39,10 +39,10 @@ def test_resolve_handle_falls_back_to_ytdlp_when_http_fails(tmp_path, monkeypatc
         lambda url, timeout=10.0: (_ for _ in ()).throw(RuntimeError("network down")),
     )
     # yt-dlp now prints the bare id via `%(channel_id)s` (plain, not JSON).
-    fake_proc = MagicMock(returncode=0, stdout="UCabc\n", stderr="")
+    fake_proc = MagicMock(returncode=0, stdout="UCabc1234567890123456789\n", stderr="")
     with patch("subprocess.run", return_value=fake_proc) as run:
         cid = resolve_handle_to_channel_id("MrBeast")
-        assert cid == "UCabc"
+        assert cid == "UCabc1234567890123456789"
         args = run.call_args[0][0]
         assert "https://www.youtube.com/@MrBeast" in args
 
@@ -54,11 +54,47 @@ def test_resolve_channel_url_scrapes_canonical(monkeypatch):
 
 
 def test_resolve_video_to_channel_id(monkeypatch):
-    monkeypatch.setattr(
-        "core.youtube_meta._run_ytdlp",
-        lambda args, timeout=120: "UCabc1234567890123456789\n",
-    )
+    seen = {}
+
+    def fake(args, timeout=120):
+        seen["args"] = args
+        return "UCabc1234567890123456789\n"
+
+    monkeypatch.setattr("core.youtube_meta._run_ytdlp", fake)
     assert resolve_video_to_channel_id("dQw4w9WgXcQ") == "UCabc1234567890123456789"
+    # Behaviour, not mock identity: it must query the watch URL with the
+    # plain channel-id print template.
+    assert "https://www.youtube.com/watch?v=dQw4w9WgXcQ" in seen["args"]
+    assert "%(channel_id)s" in seen["args"]
+
+
+def test_resolve_video_returns_empty_when_channel_missing(monkeypatch):
+    # yt-dlp prints the literal "NA" when channel_id can't be extracted —
+    # that must collapse to "" rather than propagate a fake id.
+    monkeypatch.setattr("core.youtube_meta._run_ytdlp", lambda args, timeout=120: "NA\n")
+    assert resolve_video_to_channel_id("badid") == ""
+
+
+def test_resolve_channel_url_falls_back_to_ytdlp(monkeypatch):
+    # No canonical link in the HTML → yt-dlp fallback prints the id.
+    monkeypatch.setattr(
+        "core.youtube_meta._http_get_text", lambda url, timeout=10.0: "<html></html>"
+    )
+    seen = {}
+
+    def fake(args, timeout=120):
+        seen["args"] = args
+        return "UCabc1234567890123456789\n"
+
+    monkeypatch.setattr("core.youtube_meta._run_ytdlp", fake)
+    assert resolve_channel_url_to_id("https://www.youtube.com/c/X") == "UCabc1234567890123456789"
+    assert "https://www.youtube.com/c/X" in seen["args"]
+
+
+def test_resolve_channel_url_returns_empty_on_na(monkeypatch):
+    monkeypatch.setattr("core.youtube_meta._http_get_text", lambda url, timeout=10.0: "")
+    monkeypatch.setattr("core.youtube_meta._run_ytdlp", lambda args, timeout=120: "NA\n")
+    assert resolve_channel_url_to_id("https://www.youtube.com/c/Nope") == ""
 
 
 def test_enumerate_channel_videos_parses_flat_playlist(tmp_path, monkeypatch):
@@ -94,6 +130,17 @@ def test_enumerate_excludes_shorts_via_videos_tab(monkeypatch):
     )
     enumerate_channel_videos("UCabc", include_shorts=False)
     assert any(a.endswith("/videos") for a in seen["a"])
+
+
+def test_enumerate_include_shorts_uses_channel_root(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(
+        "core.youtube_meta._run_ytdlp",
+        lambda args, timeout=300: (seen.setdefault("a", args), "")[1],
+    )
+    enumerate_channel_videos("UCabc", include_shorts=True)
+    assert any(a.endswith("/channel/UCabc") for a in seen["a"])
+    assert not any(a.endswith("/videos") for a in seen["a"])
 
 
 def test_default_timeouts_are_generous():

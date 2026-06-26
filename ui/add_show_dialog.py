@@ -130,8 +130,14 @@ class _YoutubeResolveThread(QThread):
             self.step.emit(1, 2, "Resolving channel ID…")
             if self.parsed_kind == "handle":
                 cid = _youtube_meta.resolve_handle_to_channel_id(self.parsed_value)
-            else:  # "channel_id"
+            elif self.parsed_kind == "channel_url":
+                cid = _youtube_meta.resolve_channel_url_to_id(self.parsed_value)
+            elif self.parsed_kind == "channel_id":
                 cid = self.parsed_value
+            else:
+                raise ValueError(f"unsupported YouTube URL kind: {self.parsed_kind!r}")
+            if not cid:
+                raise ValueError("Couldn't resolve that URL to a YouTube channel.")
             self.step.emit(2, 2, "Fetching channel info…")
             preview = _youtube_meta.fetch_channel_preview(cid)
             out.update({"ok": True, "preview": preview})

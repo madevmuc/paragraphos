@@ -57,3 +57,11 @@ def test_parse_bare_handle():
 
 def test_parse_handle_still_works():
     assert parse_youtube_url("https://www.youtube.com/@veritasium").kind == "handle"
+
+
+@pytest.mark.parametrize("bad", ["", "@", "foo/bar", "foo bar", "@foo bar", "   "])
+def test_parse_bare_handle_rejects_garbage(bad):
+    # The bare-name branch must not swallow empty/slash/whitespace tokens —
+    # those still raise so the caller can report a real error.
+    with pytest.raises(YoutubeUrlError):
+        parse_youtube_url(bad)

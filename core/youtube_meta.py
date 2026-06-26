@@ -1,7 +1,7 @@
 """yt-dlp metadata wrappers for channel preview + video enumeration.
 
 Fast path: handle resolution + preview fetch use plain HTTP (httpx)
-because yt-dlp's `--print %(channel_id)j` takes 12-90+ seconds on
+because yt-dlp's `--print %(channel_id)s` takes 12-90+ seconds on
 many networks (rate-limited, missing JS-runtime fallbacks). The
 canonical channel URL lives in `<link rel="canonical">` of the
 @handle page; the channel's hidden RSS feed gives title + recent
@@ -30,6 +30,22 @@ class YoutubeMetaError(RuntimeError):
 _CANONICAL_RE = re.compile(
     r'<link rel="canonical" href="https://www\.youtube\.com/channel/(UC[\w-]{22})"'
 )
+_CHANNEL_ID_RE = re.compile(r"^UC[\w-]{22}$")
+
+
+def _first_channel_id(out: str) -> str:
+    """Return the first ``UC…`` channel id in yt-dlp output, else "".
+
+    ``--print %(channel_id)s`` prints the literal ``NA`` when the field
+    is missing, and a bare non-``UC`` token is likewise not a usable id.
+    Both collapse to "" so callers hit the documented empty-on-failure
+    path instead of propagating a fake id downstream.
+    """
+    for line in out.splitlines():
+        line = line.strip()
+        if _CHANNEL_ID_RE.match(line):
+            return line
+    return ""
 
 
 def _run_ytdlp(args: List[str], timeout: int = 120) -> str:
@@ -90,11 +106,7 @@ def resolve_channel_url_to_id(url: str) -> str:
         ["--skip-download", "--print", "%(channel_id)s", url],
         timeout=120,
     )
-    for line in out.splitlines():
-        line = line.strip()
-        if line:
-            return line
-    return ""
+    return _first_channel_id(out)
 
 
 def resolve_handle_to_channel_id(handle: str) -> str:
@@ -118,11 +130,7 @@ def resolve_video_to_channel_id(video_id: str) -> str:
         ],
         timeout=120,
     )
-    for line in out.splitlines():
-        line = line.strip()
-        if line:
-            return line
-    return ""
+    return _first_channel_id(out)
 
 
 def fetch_channel_preview(channel_id: str) -> Dict[str, object]:

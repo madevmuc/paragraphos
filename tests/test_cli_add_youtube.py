@@ -94,6 +94,44 @@ def test_handle_url_resolves_then_adds(tmp_path, monkeypatch):
     assert show.rss == f"https://www.youtube.com/feeds/videos.xml?channel_id={_CID}"
 
 
+def test_channel_url_resolves_then_adds(tmp_path, monkeypatch):
+    """A /c/ (or /user/) custom URL parses to kind "channel_url" and must be
+    resolved to a channel id, not treated as the id itself."""
+    _wire(tmp_path, monkeypatch, _yt_manifest(3))
+    import core.youtube_meta as ym
+
+    monkeypatch.setattr(ym, "resolve_channel_url_to_id", lambda u: _CID)
+    ns = argparse.Namespace(
+        name_or_url="https://www.youtube.com/c/Veritasium",
+        backlog="all",
+        slug="c-show",
+        lang="en",
+        yes=True,
+    )
+    assert cli.cmd_add(ns) == 0
+    wl = Watchlist.load(tmp_path / "watchlist.yaml")
+    show = next(s for s in wl.shows if s.slug == "c-show")
+    assert show.source == "youtube"
+    assert show.rss == f"https://www.youtube.com/feeds/videos.xml?channel_id={_CID}"
+
+
+def test_unresolvable_channel_url_exits_2(tmp_path, monkeypatch):
+    """An unresolvable channel URL must fail cleanly (exit 2), not write a
+    show with a garbage feed URL."""
+    _wire(tmp_path, monkeypatch, _yt_manifest(1))
+    import core.youtube_meta as ym
+
+    monkeypatch.setattr(ym, "resolve_channel_url_to_id", lambda u: "")
+    ns = argparse.Namespace(
+        name_or_url="https://www.youtube.com/c/Nope",
+        backlog="all",
+        slug=None,
+        lang="de",
+        yes=True,
+    )
+    assert cli.cmd_add(ns) == 2
+
+
 def test_single_video_url_is_rejected(tmp_path, monkeypatch):
     _wire(tmp_path, monkeypatch, _yt_manifest(1))
     ns = argparse.Namespace(
