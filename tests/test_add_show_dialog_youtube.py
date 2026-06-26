@@ -227,7 +227,7 @@ def test_install_gate_when_ytdlp_missing(tmp_path, monkeypatch):
 _CID = "UCabc1234567890123456789"
 
 
-def _resolve(dlg, monkeypatch, title="Mr Beast", artwork="", videos=None):
+def _resolve(dlg, monkeypatch, title="Mr Beast", artwork="", videos=None, first_video=""):
     """Drive a channel URL through resolve and wait for the worker thread."""
     monkeypatch.setattr(
         "core.youtube_meta.fetch_channel_preview",
@@ -242,11 +242,11 @@ def _resolve(dlg, monkeypatch, title="Mr Beast", artwork="", videos=None):
         "core.youtube_meta.enumerate_channel_videos",
         lambda c, limit=None: list(videos or []),
     )
-    # Default: no real yt-dlp subprocess for the first-video lookup. Tests
-    # that exercise the 'since date' default override this.
+    # The first-video date is fetched eagerly on resolve (no real yt-dlp here).
+    # Tests exercising the 'since date' default pass first_video="YYYY-MM-DD".
     monkeypatch.setattr(
         "core.youtube_meta.fetch_channel_first_video_date",
-        lambda c: "",
+        lambda c: first_video,
     )
     dlg._activate_youtube_mode()
     dlg.youtube_url_input.setText(f"https://www.youtube.com/channel/{_CID}")
@@ -262,6 +262,12 @@ def _resolve(dlg, monkeypatch, title="Mr Beast", artwork="", videos=None):
     while not dlg._loaded_yt_preview and time.monotonic() - start < 5.0:
         _app_ref.processEvents()
         time.sleep(0.01)
+    # The eager first-video fetch starts on resolve-done — settle it so the
+    # 'since' field reflects its result (or the empty default).
+    ft = getattr(dlg, "_yt_first_video_thread", None)
+    if ft is not None:
+        ft.wait(5000)
+    _app_ref.processEvents()
 
 
 def _vids(n):
@@ -395,27 +401,25 @@ def test_since_date_filters_to_videos_on_or_after_cutoff(tmp_path, monkeypatch):
 
 
 def test_since_date_defaults_to_channel_first_video(tmp_path, monkeypatch):
-    import time
-
     monkeypatch.setattr("core.ytdlp.is_installed", lambda: True)
     dlg = _make_dialog(tmp_path, Settings(sources_youtube=True))
-    _resolve(dlg, monkeypatch, title="Old Chan", videos=_vids(3))
-    # The field advertises its default up front.
-    assert "first video" in dlg._yt_since_hint.text()
-    # Override the no-op stub: this channel's first upload is 2012-05-04.
-    monkeypatch.setattr("core.youtube_meta.fetch_channel_first_video_date", lambda c: "2012-05-04")
-    dlg._yt_since_chk.setChecked(True)
-    t = dlg._yt_first_video_thread
-    if t is not None:
-        t.wait(5000)
-    start = time.monotonic()
-    while (
-        dlg._yt_since_date.date().toString("yyyy-MM-dd") != "2012-05-04"
-        and time.monotonic() - start < 5.0
-    ):
-        _app_ref.processEvents()
-        time.sleep(0.01)
+    # This channel's first upload is 2012-05-04; it's fetched EAGERLY on
+    # resolve (_resolve waits for that worker), so the field defaults to it.
+    _resolve(dlg, monkeypatch, title="Old Chan", videos=_vids(3), first_video="2012-05-04")
+    # Defaults to the first video WITHOUT the user enabling the checkbox, and
+    # the hint shows the concrete date.
     assert dlg._yt_since_date.date().toString("yyyy-MM-dd") == "2012-05-04"
+    assert "2012-05-04" in dlg._yt_since_hint.text()
+
+
+def test_since_date_empty_first_video_keeps_placeholder(tmp_path, monkeypatch):
+    """If the channel's first-video lookup yields nothing, the field keeps its
+    placeholder and the hint stays generic (no crash, no bogus date)."""
+    monkeypatch.setattr("core.ytdlp.is_installed", lambda: True)
+    dlg = _make_dialog(tmp_path, Settings(sources_youtube=True))
+    _resolve(dlg, monkeypatch, title="No Date", videos=_vids(2), first_video="")
+    assert "first video" in dlg._yt_since_hint.text()
+    assert dlg._yt_first_video_date == ""
 
 
 def test_initial_mode_youtube_hides_switcher(tmp_path, monkeypatch):

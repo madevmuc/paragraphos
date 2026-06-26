@@ -1301,7 +1301,9 @@ class AddShowDialog(QDialog):
     def _refresh_yt_resolve_status(self) -> None:
         elapsed = int(time.monotonic() - self._yt_resolve_started_at)
         cur, total = self._yt_resolve_step_idx
-        self.yt_status.setText(f"Step {cur}/{total}: {self._yt_resolve_step_label} ({elapsed}s)")
+        self.yt_status.setText(
+            f"Step {cur}/{total}: {self._yt_resolve_step_label} ({elapsed}s — usually under 20 s)"
+        )
 
     def _on_youtube_resolve_done(self, out: dict) -> None:
         # Resolve finished (ok or error) → release the re-entrancy guard so a
@@ -1322,10 +1324,13 @@ class AddShowDialog(QDialog):
             return
         preview = out["preview"]
         self._loaded_yt_preview = preview
-        # New channel — drop any cached first-video date from a prior resolve.
+        # New channel — drop any cached first-video date + manual override from
+        # a prior resolve, then eagerly fetch THIS channel's first-video date in
+        # the background so the "since a specific date" field shows it (its
+        # documented default) instead of the placeholder.
         self._yt_first_video_date = ""
-        if hasattr(self, "_yt_since_hint"):
-            self._yt_since_hint.setText("defaults to the channel's first video")
+        self._yt_since_user_set = False
+        self._start_first_video_fetch(preview.get("channel_id") or "")
         title = preview.get("title") or "(untitled)"
         self.yt_card_title.setText(title)
         # Default the slug to the channel name, but never clobber an edit the
@@ -1367,8 +1372,9 @@ class AddShowDialog(QDialog):
         return self._yt_since_date.date().toString("yyyy-MM-dd")
 
     def _on_yt_since_toggled(self, checked: bool) -> None:
-        """Enabling the 'since date' picker deselects the count radios and
-        defaults the date to the channel's first upload (fetched lazily)."""
+        """Enabling the 'since date' picker deselects the count radios. The
+        field already defaults to the channel's first upload (fetched eagerly
+        on resolve); only (re)start the fetch if it isn't cached yet."""
         self._yt_since_date.setEnabled(checked)
         if not checked:
             return
@@ -1376,13 +1382,16 @@ class AddShowDialog(QDialog):
         for b in self._yt_backfill_grp.buttons():
             b.setChecked(False)
         self._yt_backfill_grp.setExclusive(True)
-        # Default to the channel's first video. Use the cached date if we
-        # already have it; otherwise fetch it in the background.
-        self._yt_since_user_set = False
         if self._yt_first_video_date:
-            self._apply_first_video_date(self._yt_first_video_date)
+            if not self._yt_since_user_set:
+                self._apply_first_video_date(self._yt_first_video_date)
             return
-        cid = (self._loaded_yt_preview or {}).get("channel_id") or ""
+        # Not cached yet (eager fetch failed or still running) — (re)start it.
+        self._start_first_video_fetch((self._loaded_yt_preview or {}).get("channel_id") or "")
+
+    def _start_first_video_fetch(self, cid: str) -> None:
+        """Fetch the channel's oldest-upload date off-thread; cached on arrival
+        and applied to the 'since' field unless the user picked a date."""
         if not cid:
             return
         if self._yt_first_video_thread is not None and self._yt_first_video_thread.isRunning():
@@ -1394,13 +1403,14 @@ class AddShowDialog(QDialog):
 
     def _on_yt_first_video_date(self, iso: str) -> None:
         self._yt_first_video_date = iso
-        self._yt_since_hint.setText("defaults to the channel's first video")
-        # Only override the field if the user hasn't picked a date themselves.
-        if (
-            iso
-            and self._yt_since_chk.isChecked()
-            and not getattr(self, "_yt_since_user_set", False)
-        ):
+        if iso:
+            self._yt_since_hint.setText(f"defaults to the channel's first video ({iso})")
+        else:
+            self._yt_since_hint.setText("defaults to the channel's first video")
+        # Default the field to the first video unless the user picked a date
+        # themselves. Applied even while the checkbox is off, so the shown
+        # default matches the hint.
+        if iso and not getattr(self, "_yt_since_user_set", False):
             self._apply_first_video_date(iso)
 
     def _apply_first_video_date(self, iso: str) -> None:
