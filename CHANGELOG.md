@@ -24,6 +24,11 @@ people actually paste, and paired with a full per-show episode browser.
   a curated subset is mirrored into the activity-log dock.
 
 ### Added
+- **Pre-transcribe integrity checks.** Before whisper runs, the audio file is
+  verified non-empty with a valid container header and the model file's
+  SHA-256 is checked against its Trust-On-First-Use pin; a truncated download
+  or a drifted model fails the episode fast with a clear reason instead of a
+  cryptic whisper error.
 - **YouTube caption fallback mode.** Choose, in Settings → YouTube, whether a
   YouTube transcript comes from manual captions then whisper, or manual → auto
   captions → whisper (auto captions skip a whisper run at lower quality). A

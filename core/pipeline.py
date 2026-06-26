@@ -331,6 +331,18 @@ def transcribe_phase(outcome: DownloadOutcome, ctx: PipelineContext) -> Pipeline
 
     model_path = _P.home() / ".config/open-wispr/models" / f"ggml-{ctx.model_name}.bin"
 
+    # Pre-transcribe integrity checks (6.5): a truncated audio file or a model
+    # whose hash drifted from its TOFU pin fails fast with a clear reason rather
+    # than a cryptic whisper error much later.
+    from core import integrity
+
+    _ireason = integrity.check_audio_integrity(mp3_path) or integrity.check_model_integrity(
+        model_path, ctx.model_name
+    )
+    if _ireason:
+        ctx.state.set_status(guid, EpisodeStatus.FAILED, error_text=f"integrity: {_ireason}")
+        return PipelineResult("failed", guid, f"integrity: {_ireason}")
+
     # Write % progress into state.meta so the Queue tab can render
     # "transcribing · X%" on the active row. The transcriber uses a
     # subprocess.run + stdout→file + background poller chain that

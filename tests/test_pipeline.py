@@ -54,10 +54,10 @@ def test_full_pipeline_success(tmp_path: Path):
 
     def fake_download(url, dest, **kw):
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(b"\x00" * 1024)
+        dest.write_bytes(b"ID3" + b"\x00" * 1024)  # valid audio magic for integrity check
         from core.downloader import DownloadResult
 
-        return DownloadResult(1024, False, 1024)
+        return DownloadResult(1027, False, 1027)
 
     def fake_whisper(cmd, *a, **kw):
         import re

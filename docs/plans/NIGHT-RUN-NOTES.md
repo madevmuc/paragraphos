@@ -105,6 +105,15 @@ per-test `_reset_event_bus` fixture was also added for subscriber isolation
   manual_whisper). `_process_youtube_episode` builds the chain + `auto_ok` from
   it; legacy `auto-captions` pref preserved. PipelineContext + worker carry the
   mode; Settings → YouTube combo. 4 tests.
+- **Task 12 — integrity checks (6.5)** ✅ `core/integrity.py`
+  (`check_audio_integrity` size>0 + `looks_like_audio` magic;
+  `check_model_integrity` reuses TOFU `verify_model`, mismatch→reason). Pipeline
+  runs both before whisper; failure → FAILED + episode.failed. 7 tests. Updated
+  three pipeline test fixtures to write valid audio magic. **Side fix:** made
+  the timing-fragile `test_resizable_header::test_persists_and_restores` fire
+  its debounce QTimer deterministically — it was being starved by the
+  pre-existing lingering-QThread issue under full-suite ordering (the same root
+  as the teardown SIGABRT). Suite back to fully green (792 passed).
 - **Task 11 — wire use_etag_cache (8.5)** ✅ `rss.conditional_validators`
   gates stored ETag/Last-Modified by the setting; worker uses it (off → sends
   no conditional headers). respx tests confirm header present/absent. Settings
