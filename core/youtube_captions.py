@@ -66,8 +66,9 @@ def _list_available_sub_langs(video_id: str, *, auto_ok: bool = False) -> list[s
 
     Returns the language codes in YouTube's listed order (typically the
     uploader's chosen primary first). Empty list if yt-dlp errors out.
-    Used by fetch_manual_captions to pick a viable language when the
-    requested one isn't available.
+    Used by fetch_manual_captions ONLY for ``lang == "auto"`` — to accept
+    the channel's default manual track. A specific language is strict and
+    never consults this list.
     """
     if not ytdlp.is_installed():
         return []
