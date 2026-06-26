@@ -951,6 +951,14 @@ def cmd_set(args: argparse.Namespace) -> int:
     except ValueError as e:
         print(f"bad value: {e}", file=sys.stderr)
         return 2
+    # auto-captions is no longer user-selectable (legacy stored values are
+    # still tolerated on read by the pipeline, but never freshly set here).
+    if key == "youtube_transcript_pref" and coerced not in ("", "captions", "whisper"):
+        print(
+            f"bad value for youtube_transcript_pref: {coerced!r}; allowed: captions, whisper",
+            file=sys.stderr,
+        )
+        return 2
     setattr(show, key, coerced)
     wl.save(DATA / "watchlist.yaml")
     print(f"{args.slug}.{key} = {coerced!r}")

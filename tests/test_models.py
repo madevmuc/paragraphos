@@ -106,3 +106,19 @@ def test_youtube_skip_shorts_default_migration_safe():
     assert "youtube_skip_shorts_default" not in data
     s = Settings.model_validate(data)
     assert s.youtube_skip_shorts_default is True
+
+
+def test_legacy_auto_captions_pref_still_loads():
+    # auto-captions is no longer user-selectable, but a watchlist that
+    # already stored it must still load (pydantic accepts the free string)
+    # and the pipeline keeps routing it down the captions path.
+    s = Show(
+        slug="ch",
+        title="Channel",
+        rss="https://www.youtube.com/feeds/videos.xml?channel_id=UCabc",
+        source="youtube",
+        youtube_transcript_pref="auto-captions",
+    )
+    assert s.youtube_transcript_pref == "auto-captions"
+    # The captions branch in core.pipeline is keyed on this membership test.
+    assert s.youtube_transcript_pref in ("captions", "auto-captions")

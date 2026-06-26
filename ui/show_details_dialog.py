@@ -790,7 +790,6 @@ class ShowDetailsDialog(QDialog):
             options = [
                 ("Captions first, whisper fallback", "captions"),
                 ("Always whisper", "whisper"),
-                ("Use auto-captions if no manual", "auto-captions"),
             ]
             for label, value in options:
                 combo.addItem(label, value)

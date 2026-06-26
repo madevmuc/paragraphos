@@ -110,6 +110,22 @@ def test_skip_shorts_toggle_absent_for_podcast(qapp, tmp_path):
     assert persisted.skip_shorts is True
 
 
+def test_transcript_pref_combo_has_no_auto_captions(qapp, tmp_path):
+    """auto-captions is a dead option: the combo must offer exactly the two
+    live codes (captions, whisper) and nothing else."""
+    show = Show(
+        slug="ch",
+        title="Channel",
+        rss="https://www.youtube.com/feeds/videos.xml?channel_id=UCabcdef",
+        source="youtube",
+    )
+    dlg = _make_dialog(show, tmp_path)
+    combo = dlg.transcript_pref_combo
+    assert combo is not None
+    codes = {combo.itemData(i) for i in range(combo.count())}
+    assert codes == {"captions", "whisper"}
+
+
 def test_skip_shorts_defaults_checked(qapp, tmp_path):
     """Toggle initial state mirrors the show's skip_shorts flag."""
     on = Show(

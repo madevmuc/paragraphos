@@ -35,7 +35,9 @@ class Show(BaseModel):
     # watchlist.yaml files.
     source: str = "podcast"
     # Per-show YouTube transcript preference. Empty string = inherit from
-    # Settings default. Otherwise one of: "captions" | "whisper" | "auto-captions".
+    # Settings default. Otherwise one of: "captions" | "whisper". A legacy
+    # "auto-captions" value is still tolerated on read (pipeline routes it
+    # down the captions path) but is no longer user-selectable.
     youtube_transcript_pref: str = ""
     # YouTube: skip Shorts on backfill + as a per-video pipeline safety net.
     # Default True. include_shorts on enumeration is the inverse.
@@ -144,8 +146,9 @@ class Settings(BaseModel):
     # than 7 days. See ui.main_window.maybe_self_update_ytdlp.
     ytdlp_last_self_update_at: str = ""
     # Default YouTube transcript source for shows that don't override
-    # via Show.youtube_transcript_pref. One of:
-    # "captions" | "whisper" | "auto-captions".
+    # via Show.youtube_transcript_pref. One of: "captions" | "whisper".
+    # A legacy "auto-captions" value is still tolerated on read but is no
+    # longer user-selectable.
     youtube_default_transcript_source: str = "captions"
     # Default expected caption language (whisper.cpp + yt-dlp lang code)
     # for newly-added YouTube channels. The Add-YouTube dialog seeds the
