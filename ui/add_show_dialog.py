@@ -1079,7 +1079,7 @@ class AddShowDialog(QDialog):
         )
         self.youtube_url_input.editingFinished.connect(self._on_youtube_url_resolve)
         row.addWidget(self.youtube_url_input, 1)
-        self._yt_resolve_btn = QPushButton("Resolve")
+        self._yt_resolve_btn = QPushButton("Analyze")
         self._yt_resolve_btn.clicked.connect(self._on_youtube_url_resolve)
         row.addWidget(self._yt_resolve_btn)
         v.addLayout(row)
