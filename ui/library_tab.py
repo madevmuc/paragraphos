@@ -580,21 +580,30 @@ class LibraryTab(QWidget):
         menu.addSeparator()
         a_del = QAction("Delete folder (all transcripts)…", self)
         a_del.setEnabled(folder.is_dir())
-        a_del.triggered.connect(lambda s=slug: self._delete_show_folder(s))
+        # NB: QAction.triggered emits a `checked` bool — capture slug via the
+        # enclosing scope (no default arg) so the bool can't shadow it.
+        a_del.triggered.connect(lambda: self._delete_show_folder(slug))
         menu.addAction(a_del)
         menu.exec(self.tree.viewport().mapToGlobal(pos))
 
+    def _confirm_once(self, title: str, text: str) -> bool:
+        """A single Abort/Confirm prompt — Abort is the default (pre-selected)
+        button, so a stray Return/Escape cancels rather than deletes."""
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle(title)
+        box.setText(text)
+        abort = box.addButton("Abort", QMessageBox.ButtonRole.RejectRole)
+        confirm = box.addButton("Confirm", QMessageBox.ButtonRole.AcceptRole)
+        box.setDefaultButton(abort)
+        box.setEscapeButton(abort)
+        box.exec()
+        return box.clickedButton() is confirm
+
     def _confirm_delete(self, title: str, body: str, second: str) -> bool:
-        """Two-step confirmation: a delete only proceeds when the user confirms
-        TWICE — a deliberate guard for irreversible filesystem deletes."""
-        yn = QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        no = QMessageBox.StandardButton.No
-        yes = QMessageBox.StandardButton.Yes
-        if QMessageBox.question(self, title, body, yn, no) != yes:
-            return False
-        if QMessageBox.question(self, "Final confirmation", second, yn, no) != yes:
-            return False
-        return True
+        """Two-step confirmation — a deliberate guard for irreversible deletes:
+        proceeds only when the user clicks Confirm on BOTH prompts."""
+        return self._confirm_once(title, body) and self._confirm_once("Final confirmation", second)
 
     def _delete_transcript(self, guid: str) -> None:
         r = self._row_for_guid(guid)
