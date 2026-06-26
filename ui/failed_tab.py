@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -71,6 +72,11 @@ class FailedTab(QWidget):
             ["Show", "Episode", "Reason", "Tries", "Last attempt", ""]
         )
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        # Right-click context menu (mirrors the per-row ⋯ button; acts on every
+        # selected row for the bulk-friendly actions).
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._on_context_menu)
 
         from ui.widgets.resizable_header import make_resizable
 
@@ -143,6 +149,58 @@ class FailedTab(QWidget):
             self.table.setCellWidget(row, 5, btn)
         # Restore click-to-sort after the bulk insertion completes.
         self.table.setSortingEnabled(was_sorting)
+
+    # --- Right-click context menu ----------------------------------------
+
+    def _selected_guids(self) -> list[str]:
+        guids: list[str] = []
+        seen: set[str] = set()
+        for idx in self.table.selectionModel().selectedRows():
+            it = self.table.item(idx.row(), 0)
+            g = it.data(Qt.ItemDataRole.UserRole) if it is not None else None
+            if g and g not in seen:
+                seen.add(g)
+                guids.append(g)
+        return guids
+
+    def _on_context_menu(self, pos) -> None:
+        index = self.table.indexAt(pos)
+        if not index.isValid():
+            return
+        item = self.table.item(index.row(), 0)
+        guid = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+        if not guid:
+            return
+        # Act on the whole selection when the right-clicked row is part of it.
+        selected = self._selected_guids()
+        guids = selected if guid in selected else [guid]
+        sfx = f" ({len(guids)})" if len(guids) > 1 else ""
+        menu = QMenu(self)
+        menu.addAction(f"Retry{sfx}", lambda gs=guids: self._retry_guids(gs))
+        menu.addAction(f"Mark resolved{sfx}", lambda gs=guids: self._mark_resolved_many(gs))
+        menu.addSeparator()
+        # Per-episode error views act on the row under the cursor only.
+        menu.addAction("Show log", lambda g=guid: self._show_log(g))
+        menu.addAction("Copy error", lambda g=guid: self._copy_error(g))
+        menu.addSeparator()
+        menu.addAction(f"Skip forever{sfx}", lambda gs=guids: self._skip_forever_many(gs))
+        menu.exec(self.table.viewport().mapToGlobal(pos))
+
+    def _retry_guids(self, guids: list[str]) -> None:
+        for g in guids:
+            self.ctx.state.set_status(g, EpisodeStatus.PENDING)
+        self.refresh()
+
+    def _mark_resolved_many(self, guids: list[str]) -> None:
+        for g in guids:
+            self.ctx.state.set_status(g, "skipped")  # type: ignore[arg-type]
+        self.refresh()
+
+    def _skip_forever_many(self, guids: list[str]) -> None:
+        for g in guids:
+            self.ctx.state.set_meta(f"skip_forever:{g}", "1")
+            self.ctx.state.set_status(g, "skipped")  # type: ignore[arg-type]
+        self.refresh()
 
     # --- Per-row handlers -------------------------------------------------
 
