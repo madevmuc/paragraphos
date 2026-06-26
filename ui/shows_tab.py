@@ -754,11 +754,16 @@ class ShowsTab(QWidget):
         reply = QMessageBox.question(
             self,
             "Delete shows",
-            f"Remove {len(slugs)} show(s) from the watchlist?\nOn-disk transcripts are kept.",
+            f"Remove {len(slugs)} show(s) from the watchlist?\n"
+            "Their episode history is cleared (re-adding starts fresh); "
+            "on-disk transcripts are kept.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
         self.ctx.watchlist.shows = [s for s in self.ctx.watchlist.shows if s.slug not in slugs]
         save_watchlist(self.ctx)
+        # Purge each removed show's episode rows so re-adding re-queues cleanly.
+        for slug in slugs:
+            self.ctx.state.delete_episodes_for_show(slug)
         self.refresh()

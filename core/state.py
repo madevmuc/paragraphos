@@ -208,6 +208,25 @@ class StateStore:
         with self._conn() as c:
             c.execute("UPDATE episodes SET priority=? WHERE guid=?", (priority, guid))
 
+    def delete_episodes_for_show(self, show_slug: str) -> int:
+        """Purge all episode rows for a show (used when the show is removed) so
+        re-adding the same channel starts from a clean slate instead of finding
+        its old episodes still marked ``done`` (and thus never re-queued). Also
+        drops the show's slug reservations. Transcripts on disk are untouched.
+        Returns the number of episode rows deleted."""
+        with self._conn() as c:
+            guids = [
+                r["guid"]
+                for r in c.execute(
+                    "SELECT guid FROM episodes WHERE show_slug=?", (show_slug,)
+                ).fetchall()
+            ]
+            cur = c.execute("DELETE FROM episodes WHERE show_slug=?", (show_slug,))
+            if guids:
+                ph = ",".join("?" for _ in guids)
+                c.execute(f"DELETE FROM slug_reservations WHERE guid IN ({ph})", tuple(guids))
+            return cur.rowcount or 0
+
     def set_mp3_path(self, guid: str, mp3_path: str) -> None:
         """Persist the actual on-disk MP3 path so the orphan-recovery
         path (next launch after a crash between download and transcribe)

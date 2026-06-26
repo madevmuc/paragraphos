@@ -1513,7 +1513,8 @@ class ShowDetailsDialog(QDialog):
             self,
             "Remove show",
             f"Remove '{self.show_.title}' from the watchlist?\n"
-            "Existing transcripts on disk are not deleted.",
+            "Its episode history is cleared (so re-adding starts fresh); "
+            "transcript files already on disk are kept.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -1521,4 +1522,7 @@ class ShowDetailsDialog(QDialog):
             return
         self.ctx.watchlist.shows = [s for s in self.ctx.watchlist.shows if s.slug != self.slug]
         save_watchlist(self.ctx)
+        # Purge the episode rows so re-adding the same channel re-queues from a
+        # clean slate instead of finding its old episodes still marked done.
+        self.ctx.state.delete_episodes_for_show(self.slug)
         self.accept()
