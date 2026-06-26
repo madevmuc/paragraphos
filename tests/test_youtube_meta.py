@@ -8,6 +8,7 @@ from core.youtube_meta import (
     fetch_channel_preview,
     resolve_channel_url_to_id,
     resolve_handle_to_channel_id,
+    resolve_video_to_channel_id,
 )
 
 
@@ -50,6 +51,14 @@ def test_resolve_channel_url_scrapes_canonical(monkeypatch):
     html = '<link rel="canonical" href="https://www.youtube.com/channel/UCabc1234567890123456789">'
     monkeypatch.setattr("core.youtube_meta._http_get_text", lambda url, timeout=10.0: html)
     assert resolve_channel_url_to_id("https://www.youtube.com/c/X") == "UCabc1234567890123456789"
+
+
+def test_resolve_video_to_channel_id(monkeypatch):
+    monkeypatch.setattr(
+        "core.youtube_meta._run_ytdlp",
+        lambda args, timeout=120: "UCabc1234567890123456789\n",
+    )
+    assert resolve_video_to_channel_id("dQw4w9WgXcQ") == "UCabc1234567890123456789"
 
 
 def test_enumerate_channel_videos_parses_flat_playlist(tmp_path, monkeypatch):

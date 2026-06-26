@@ -107,6 +107,24 @@ def resolve_handle_to_channel_id(handle: str) -> str:
     return resolve_channel_url_to_id(f"https://www.youtube.com/@{handle}")
 
 
+def resolve_video_to_channel_id(video_id: str) -> str:
+    """Resolve a video id to the channel id that published it (yt-dlp)."""
+    out = _run_ytdlp(
+        [
+            "--skip-download",
+            "--print",
+            "%(channel_id)s",
+            f"https://www.youtube.com/watch?v={video_id}",
+        ],
+        timeout=120,
+    )
+    for line in out.splitlines():
+        line = line.strip()
+        if line:
+            return line
+    return ""
+
+
 def fetch_channel_preview(channel_id: str) -> Dict[str, object]:
     """Return {title, video_count, artwork_url, channel_id}.
 
