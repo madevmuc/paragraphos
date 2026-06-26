@@ -55,6 +55,24 @@ If a show *does* slip in via a raw edit, the app gates it (its episodes aren't q
 shows a "new show detected" banner offering a per-show backlog choice. Left unanswered, the
 **full-history default is auto-applied after 24h**, so the app keeps running unattended.
 
+## Tuning shows & settings
+
+```
+cli.py set <slug> auto_vocab=true            # seed --prompt from past transcripts
+cli.py set <slug> min_duration_sec=600       # skip episodes shorter than 10 min
+cli.py set <slug> max_duration_sec=0         # 0 = no upper limit
+cli.py set <slug> notify=false               # silence desktop notifications for a show
+cli.py set-setting queue_order newest_first  # oldest_first | newest_first | shortest_first
+cli.py set-setting caption_fallback_mode manual_auto_whisper  # YouTube caption chain
+cli.py set-setting confidence_marking_enabled true           # mark low-confidence words
+cli.py set-setting disk_guard_min_free_gb 10  # auto-pause when free space drops below
+```
+
+Per-show settable keys: `enabled`, `language`, `whisper_prompt`, `output_override`,
+`youtube_transcript_pref`, `source`, `title`, `rss`, `artwork_url`, `auto_vocab`,
+`min_duration_sec`, `max_duration_sec`, `notify`. Any top-level field in `settings.yaml`
+is settable via `cli.py set-setting <key> <value>`.
+
 ## Verifying
 
 ```

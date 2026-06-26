@@ -6,6 +6,14 @@ The original "Add YouTube Channel" feature, hardened against the channels
 people actually paste, and paired with a full per-show episode browser.
 
 ### Platform & reliability (roadmap)
+- **Expanded settings + per-show schema** — new tunables (queue order,
+  duration filters, caption-fallback mode, confidence marking, quiet hours,
+  granular notifications, webhooks, scheduling windows, battery budget,
+  Metal/model auto-pick, disk guard, event retention) plus per-show
+  `auto_vocab` / `min_duration_sec` / `max_duration_sec` / `notify`. All
+  additive with safe defaults — existing `settings.yaml` / `watchlist.yaml`
+  load unchanged. Settable from the CLI (`set` / `set-setting`); saving
+  settings now emits a `settings.changed` event.
 - **Internal event bus** — a typed, in-process event bus (`core/events.py`)
   publishes episode/run/feed/show/settings lifecycle events. Synchronous
   dispatch, subscriber failures isolated, no GUI dependency. Every event is

@@ -981,6 +981,11 @@ _SHOW_SETTABLE = {
     "title": "",
     "rss": "",
     "artwork_url": "",
+    # roadmap per-show fields (0.2)
+    "auto_vocab": False,
+    "min_duration_sec": 0,
+    "max_duration_sec": 0,
+    "notify": True,
 }
 
 

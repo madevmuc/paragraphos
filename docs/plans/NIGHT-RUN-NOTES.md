@@ -44,3 +44,11 @@ Plan: [`2026-06-26-roadmap-execution-plan.md`](2026-06-26-roadmap-execution-plan
   show add/remove/enable/disable emit show.* events. Activity-log bridge
   (`install_event_bridge`, idempotent via new `events.subscribe_once`)
   installed in MainWindow. 5 unit tests.
+- **Task 4 — settings + Show schema (0.2)** ✅ all spec §0.2 Settings fields
+  (mutable defaults via `Field(default_factory=...)`) + Show `auto_vocab`/
+  `min_duration_sec`/`max_duration_sec`/`notify`. `Settings.save` emits
+  `settings.changed`. CLI: `_SHOW_SETTABLE` extended; `set-setting` already
+  accepts any field via `hasattr`. AGENTS.md "Tuning" section added. 10 tests.
+  **Best-assumption:** settings-pane UI controls deferred to each feature's own
+  task (queue_order→T8, caption_fallback→T10, use_etag→T11, confidence→T7,
+  disk_guard→T22) to avoid double-work; Task 4 is schema + CLI only.
