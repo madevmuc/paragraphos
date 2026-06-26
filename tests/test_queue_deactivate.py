@@ -12,7 +12,7 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QItemSelection, QItemSelectionModel, Qt
 from PyQt6.QtWidgets import QApplication
 
 from core.state import EpisodeStatus
@@ -89,6 +89,35 @@ def test_actions_apply_to_all_selected(tmp_path):
     assert ctx.state.get_episode("m1")["status"] == "skipped"
     assert ctx.state.get_episode("m2")["status"] == "skipped"
     assert ctx.state.get_episode("m3")["status"] == "paused"
+
+
+def _select(qt, guids: set):
+    qt._last_table_refresh = 0.0
+    qt._refresh_table()
+    model = qt.table.model()
+    last = qt.table.columnCount() - 1
+    sel = QItemSelection()
+    for row in range(qt.table.rowCount()):
+        it = qt.table.item(row, 0)
+        if it is not None and it.data(Qt.ItemDataRole.UserRole) in guids:
+            sel.select(model.index(row, 0), model.index(row, last))
+    qt.table.selectionModel().select(
+        sel, QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows
+    )
+
+
+def test_selection_survives_periodic_refresh(tmp_path):
+    """The queue rebuilds itself periodically; a row selection the user made
+    must NOT vanish on the next rebuild."""
+    qt, ctx = _make_queue(tmp_path)
+    for g in ("s1", "s2", "s3"):
+        _seed(ctx, g)
+    _select(qt, {"s1", "s3"})
+    assert set(qt._selected_guids()) == {"s1", "s3"}
+    # Simulate the periodic rebuild.
+    qt._last_table_refresh = 0.0
+    qt._refresh_table()
+    assert set(qt._selected_guids()) == {"s1", "s3"}
 
 
 def test_paused_visible_in_queue_but_not_claimable(tmp_path):

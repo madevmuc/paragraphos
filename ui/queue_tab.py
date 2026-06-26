@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import QItemSelection, QItemSelectionModel, Qt, QTimer
 from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -451,6 +451,10 @@ class QueueTab(QWidget):
                 "  END, "
                 "  priority DESC, pub_date ASC"
             ).fetchall()
+        # Preserve the user's row selection across this periodic rebuild — the
+        # table is wiped + repopulated, which would otherwise silently drop it
+        # after a few seconds even though the user hasn't clicked away.
+        selected_guids = set(self._selected_guids())
         # Sorting must be off during repopulation — Qt re-sorts on every
         # setItem when enabled, scrambling row indices and leaving cells
         # past column 0 empty. Restore at the end.
@@ -509,6 +513,24 @@ class QueueTab(QWidget):
                 self.table.setItem(row, 7, _SortKeyItem("—", float("inf")))
         # Restore click-to-sort after the bulk insertion completes.
         self.table.setSortingEnabled(was_sorting)
+        if selected_guids:
+            self._reselect_guids(selected_guids)
+
+    def _reselect_guids(self, guids: set[str]) -> None:
+        """Re-apply a row selection (by guid) after the table was rebuilt."""
+        model = self.table.model()
+        last_col = self.table.columnCount() - 1
+        sel = QItemSelection()
+        for row in range(self.table.rowCount()):
+            it = self.table.item(row, 0)
+            g = it.data(Qt.ItemDataRole.UserRole) if it is not None else None
+            if g in guids:
+                sel.select(model.index(row, 0), model.index(row, last_col))
+        if not sel.isEmpty():
+            self.table.selectionModel().select(
+                sel,
+                QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+            )
 
     # ── status column 3-way sort ──────────────────────────────
 
