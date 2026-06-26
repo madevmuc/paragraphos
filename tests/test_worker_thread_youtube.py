@@ -93,12 +93,20 @@ def test_reprobe_skips_non_youtube_show(tmp_path, monkeypatch):
     th, state = _make_thread_with_state(tmp_path)
     _seed_deferred(state)
 
-    def _boom(*a, **k):
-        raise AssertionError("probe must not be called for a podcast show")
+    # Count calls instead of raising: a raised AssertionError would be
+    # swallowed by the method's `except Exception`, so the test would pass
+    # even if the youtube-only guard were removed. A call counter proves the
+    # probe is genuinely never reached for a podcast show.
+    calls = {"n": 0}
 
-    monkeypatch.setattr("core.youtube_audio.probe_video_meta", _boom)
+    def _count(*a, **k):
+        calls["n"] += 1
+        return {}
+
+    monkeypatch.setattr("core.youtube_audio.probe_video_meta", _count)
     show = Show(slug="ch", title="P", rss="https://example.com/feed.rss")
     assert th._reprobe_deferred(show) == 0
+    assert calls["n"] == 0
 
 
 def test_reprobe_probe_error_leaves_deferred(tmp_path, monkeypatch):
