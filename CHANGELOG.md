@@ -76,6 +76,9 @@ people actually paste, and paired with a full per-show episode browser.
   history beyond the RSS window and queues the newly fetched videos.
 
 ### Changed
+- **The `use_etag_cache` setting is now honoured.** When off, feeds are always
+  re-fetched in full instead of sending conditional `ETag` /
+  `If-Modified-Since` headers. Toggle in Settings → Processing & reliability.
 - **Shorts, live, and restricted videos are handled deliberately, not as
   generic failures.** Shorts are excluded by default (enumeration uses the
   channel's `/videos` tab); an **Include Shorts** per-show option opts in, and

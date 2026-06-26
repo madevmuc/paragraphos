@@ -372,6 +372,23 @@ class SettingsPane(QWidget):
         conf_hint.setWordWrap(True)
         root.addWidget(conf_hint)
 
+        self.use_etag_cache_cb = QCheckBox(
+            "Use conditional feed fetches (ETag / If-Modified-Since)"
+        )
+        self.use_etag_cache_cb.setObjectName("use_etag_cache_checkbox")
+        self.use_etag_cache_cb.setChecked(bool(getattr(self.ctx.settings, "use_etag_cache", True)))
+        self.use_etag_cache_cb.toggled.connect(self._schedule_save)
+        root.addWidget(self.use_etag_cache_cb)
+
+        etag_hint = QLabel(
+            "<span style='color: palette(placeholder-text); font-size: 11px;'>"
+            "Skips re-downloading a feed the server says is unchanged. Turn off "
+            "to always re-fetch in full (useful when a feed mis-reports caching)."
+            "</span>"
+        )
+        etag_hint.setWordWrap(True)
+        root.addWidget(etag_hint)
+
         # ── YouTube ────────────────────────────────────────────
         # Visible only when Sources → YouTube channels is checked. The
         # whole group hides/shows live as the Sources toggle flips.
@@ -1120,6 +1137,7 @@ class SettingsPane(QWidget):
         s.log_retention_days = self.log_retention.value()
         s.save_srt = self.save_srt_cb.isChecked()
         s.confidence_marking_enabled = self.confidence_marking_cb.isChecked()
+        s.use_etag_cache = self.use_etag_cache_cb.isChecked()
         s.sources_podcasts = self.podcasts_checkbox.isChecked()
         s.sources_youtube = self.youtube_checkbox.isChecked()
         s.show_log_dock = self.show_log_dock_cb.isChecked()

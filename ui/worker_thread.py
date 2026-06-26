@@ -45,7 +45,7 @@ from core.pipeline import (
     process_episode,
     transcribe_phase,
 )
-from core.rss import build_manifest_with_url
+from core.rss import build_manifest_with_url, conditional_validators
 from core.state import EpisodeStatus, claim_order_by
 from core.watchlist_io import save_watchlist
 
@@ -712,8 +712,11 @@ class CheckAllThread(QThread):
                 for show in fetch_targets:
                     if self._stop:
                         break
-                    stored_etag = self.ctx.state.get_meta(f"feed_etag:{show.slug}")
-                    stored_modified = self.ctx.state.get_meta(f"feed_modified:{show.slug}")
+                    stored_etag, stored_modified = conditional_validators(
+                        self.ctx.state.get_meta(f"feed_etag:{show.slug}"),
+                        self.ctx.state.get_meta(f"feed_modified:{show.slug}"),
+                        use_cache=bool(getattr(self.settings, "use_etag_cache", True)),
+                    )
                     future_to_show[
                         ex.submit(
                             build_manifest_with_url,

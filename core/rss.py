@@ -125,6 +125,17 @@ def build_manifest(feed_url: str, *, timeout: float = 30.0) -> List[Dict[str, An
     return episodes or []
 
 
+def conditional_validators(
+    etag: Optional[str], modified: Optional[str], *, use_cache: bool
+) -> tuple[Optional[str], Optional[str]]:
+    """Gate stored ETag / Last-Modified validators by the ``use_etag_cache``
+    setting (8.5). When caching is off, return ``(None, None)`` so the next
+    fetch sends no conditional headers and re-fetches in full."""
+    if not use_cache:
+        return None, None
+    return etag, modified
+
+
 def build_manifest_with_url(
     feed_url: str,
     *,

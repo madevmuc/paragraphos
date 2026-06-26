@@ -105,3 +105,7 @@ per-test `_reset_event_bus` fixture was also added for subscriber isolation
   manual_whisper). `_process_youtube_episode` builds the chain + `auto_ok` from
   it; legacy `auto-captions` pref preserved. PipelineContext + worker carry the
   mode; Settings → YouTube combo. 4 tests.
+- **Task 11 — wire use_etag_cache (8.5)** ✅ `rss.conditional_validators`
+  gates stored ETag/Last-Modified by the setting; worker uses it (off → sends
+  no conditional headers). respx tests confirm header present/absent. Settings
+  "Processing & reliability" toggle. 3 tests.
