@@ -1,8 +1,8 @@
 """Per-show details dialog — opens on row-double-click in Shows tab.
 
-Restyled for v1.0 ship: fixed 620×440 dialog with an artwork header, a
-120 px / flex form grid, a last-10 recent-episodes table with status
-`Pill`s, and a footer row (Remove · Mark stale · Save).
+A resizable/maximizable dialog (min 620×560) with an artwork header, a
+120 px / flex form grid, the full episode list (multi-select table with
+status `Pill`s), and a footer row (Remove · Mark stale · Save).
 
 Save / remove / mark-stale logic is preserved from the previous revision
 — only the layout and widget composition changed.
