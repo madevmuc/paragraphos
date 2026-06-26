@@ -262,23 +262,30 @@ def enumerate_channel_videos(
     limit: int | None = None,
     date_after: str | None = None,
     include_shorts: bool = False,
+    full: bool = False,
 ) -> List[Dict]:
-    """Enumerate a channel's uploads via yt-dlp's flat playlist dump.
+    """Enumerate a channel's uploads via yt-dlp.
 
     By default targets the ``/videos`` tab, which excludes Shorts; set
     ``include_shorts=True`` to enumerate the channel root instead.
     ``date_after`` (``YYYY-MM-DD``) limits to uploads on/after that date.
+
+    ``full=False`` (default) uses ``--flat-playlist`` — fast, but yt-dlp
+    returns ``upload_date``/``timestamp``/``duration`` as ``None`` (the
+    history-streaming browser relies on this fast path). ``full=True`` DROPS
+    ``--flat-playlist`` so each entry is fully extracted, yielding real
+    ``upload_date`` + ``duration`` — and making ``--dateafter`` actually bite.
     """
     base = f"https://www.youtube.com/channel/{channel_id}"
     target = base if include_shorts else f"{base}/videos"
-    args = [
-        "--flat-playlist",
-        "--dump-json",
-        target,
-    ]
+    args: List[str] = []
+    if not full:
+        args.append("--flat-playlist")
+    args.append("--dump-json")
     if limit:
-        args[1:1] = ["--playlist-end", str(limit)]
+        args += ["--playlist-end", str(limit)]
     if date_after:
-        args[1:1] = ["--dateafter", date_after.replace("-", "")]
+        args += ["--dateafter", date_after.replace("-", "")]
+    args.append(target)
     out = _run_ytdlp(args, timeout=300)
     return [json.loads(line) for line in out.splitlines() if line.strip()]

@@ -79,3 +79,26 @@ def test_channel_id_from_feed_url_empty_for_non_channel_feed():
     from core.youtube import channel_id_from_feed_url
 
     assert channel_id_from_feed_url("https://example.com/podcast.rss") == ""
+
+
+def test_manifest_from_videos_captures_duration():
+    from core.youtube import manifest_from_videos
+
+    out = manifest_from_videos(
+        [
+            {"id": "v1", "title": "A", "upload_date": "20260601", "duration": 615},
+            {"id": "v2", "title": "B", "upload_date": "20260602", "duration": 42.0},
+        ]
+    )
+    assert out[0]["duration_sec"] == 615
+    assert out[1]["duration_sec"] == 42
+
+
+def test_manifest_from_videos_duration_none_when_missing():
+    from core.youtube import manifest_from_videos
+
+    out = manifest_from_videos([{"id": "v1", "title": "A", "upload_date": "20260601"}])
+    assert out[0]["duration_sec"] is None
+    # A non-numeric duration (e.g. the flat path's None) also collapses to None.
+    out2 = manifest_from_videos([{"id": "v2", "title": "B", "duration": None}])
+    assert out2[0]["duration_sec"] is None

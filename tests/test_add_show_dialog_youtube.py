@@ -160,7 +160,20 @@ def test_add_yt_channel_persists_show(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(
         "core.youtube_meta.enumerate_channel_videos",
-        lambda c, limit=None: _vids(1),
+        lambda c, *, limit=None, date_after=None, include_shorts=False, full=False: _vids(1),
+    )
+    # The worker also builds the RSS feed window; mock it (1 dated video).
+    monkeypatch.setattr(
+        "core.rss.build_manifest",
+        lambda url, **kw: [
+            {
+                "guid": "v00",
+                "title": "Ep 0",
+                "pubDate": "2026-06-01",
+                "mp3_url": "https://www.youtube.com/watch?v=v00",
+                "description": "",
+            }
+        ],
     )
     dlg = _make_dialog(tmp_path, Settings(sources_youtube=True))
     dlg._activate_youtube_mode()
@@ -227,21 +240,56 @@ def test_install_gate_when_ytdlp_missing(tmp_path, monkeypatch):
 _CID = "UCabc1234567890123456789"
 
 
-def _resolve(dlg, monkeypatch, title="Mr Beast", artwork="", videos=None, first_video=""):
-    """Drive a channel URL through resolve and wait for the worker thread."""
+def _window(videos):
+    """Shape a list of yt-dlp video dicts like ``core.rss.build_manifest`` of a
+    YouTube channel feed: guid (bare id) + dated pubDate + watch URL, no
+    duration_sec (YouTube Atom feeds carry no duration)."""
+    out = []
+    for v in videos:
+        ud = str(v.get("upload_date") or "")
+        pub = f"{ud[:4]}-{ud[4:6]}-{ud[6:8]}" if len(ud) == 8 and ud.isdigit() else ud
+        out.append(
+            {
+                "guid": v["id"],
+                "title": v.get("title") or v["id"],
+                "pubDate": pub,
+                "mp3_url": f"https://www.youtube.com/watch?v={v['id']}",
+                "description": "",
+                "duration": "00:00:00",
+            }
+        )
+    return out
+
+
+def _resolve(
+    dlg, monkeypatch, title="Mr Beast", artwork="", videos=None, window=None, first_video=""
+):
+    """Drive a channel URL through resolve and wait for the worker thread.
+
+    The off-thread enumerate worker now ALSO calls ``core.rss.build_manifest``
+    for the feed window and merges it with the deep full-extraction enumerate,
+    so both seams are mocked here. ``window`` defaults to the same ``videos``
+    (total overlap — the common case); pass it explicitly to model a feed
+    window that differs from the deep enumeration. The enumerate mock accepts
+    the new ``full=`` / ``date_after=`` kwargs so the worker call doesn't
+    TypeError."""
+    videos = list(videos or [])
+    win = _window(videos if window is None else window)
     monkeypatch.setattr(
         "core.youtube_meta.fetch_channel_preview",
         lambda c: {
             "channel_id": c,
             "title": title,
-            "video_count": len(videos or []),
+            "video_count": len(videos),
             "artwork_url": artwork,
         },
     )
-    monkeypatch.setattr(
-        "core.youtube_meta.enumerate_channel_videos",
-        lambda c, limit=None: list(videos or []),
-    )
+
+    def _fake_enum(c, *, limit=None, date_after=None, include_shorts=False, full=False):
+        return list(videos)
+
+    monkeypatch.setattr("core.youtube_meta.enumerate_channel_videos", _fake_enum)
+    monkeypatch.setattr("core.rss.build_manifest", lambda url, **kw: list(win))
     # The first-video date is fetched eagerly on resolve (no real yt-dlp here).
     # Tests exercising the 'since date' default pass first_video="YYYY-MM-DD".
     monkeypatch.setattr(
@@ -488,21 +536,99 @@ def test_enumerate_empty_shows_info_and_does_not_save(tmp_path, monkeypatch):
     assert info  # the "No videos" dialog fired
 
 
-def test_since_filter_empties_manifest_shows_info(tmp_path, monkeypatch):
-    """Videos all before the cutoff → manifest empties → info, no save."""
+def test_since_marks_predate_window_done(tmp_path, monkeypatch):
+    """'Since <cutoff>' baselines the feed window: pre-cutoff window videos are
+    marked done (even when the deep date-filtered enumerate omits them), and
+    on/after-cutoff videos stay pending.
+
+    The deep enumerate honours date_after (returns only on/after the cutoff);
+    the always-fetched RSS window still carries the pre-cutoff videos, so the
+    merged manifest seeds them and the baseline marks them done."""
+    from PyQt6.QtCore import QDate
+
     monkeypatch.setattr("core.ytdlp.is_installed", lambda: True)
     dlg = _make_dialog(tmp_path, Settings(sources_youtube=True))
-    # videos pubDates 2026-06-01 .. 2026-06-05.
-    _resolve(dlg, monkeypatch, title="Future Cut", videos=_vids(5))
-    info = _record_information(monkeypatch)
+    # 5 dated videos 2026-06-01 .. 2026-06-05; window carries all five.
+    _resolve(dlg, monkeypatch, title="Since Win", videos=_vids(5))
+
+    # Re-wire the deep enumerate to honour date_after, so the pre-cutoff videos
+    # arrive ONLY via the feed window — proving the window is what gets them
+    # marked done.
+    def _enum_after(c, *, limit=None, date_after=None, include_shorts=False, full=False):
+        out = _vids(5)
+        if date_after:
+            cut = date_after.replace("-", "")
+            out = [v for v in out if v["upload_date"] >= cut]
+        return out
+
+    monkeypatch.setattr("core.youtube_meta.enumerate_channel_videos", _enum_after)
+
     dlg._yt_since_chk.setChecked(True)
-    # Cut off at the latest allowed date (today) — well after every video.
-    dlg._yt_since_date.setDate(dlg._yt_since_date.maximumDate())
-    n_before = len(dlg.updated_watchlist.shows)
+    dlg._yt_since_date.setDate(QDate(2026, 6, 3))
     dlg._add_from_youtube()
     _wait_for_enumerate(dlg)
-    assert len(dlg.updated_watchlist.shows) == n_before
-    assert info  # the "No videos" dialog fired
+    pending, done = _counts(dlg, "since-win")
+    # 06-03, -04, -05 pending; the two pre-cutoff (window-only) ones done.
+    assert pending == 3
+    assert done == 2
+
+
+def test_last5_seeds_exactly_five_pending_rest_done(tmp_path, monkeypatch):
+    """Headline regression for bug 2: 'Last 5' must seed exactly 5 pending and
+    the rest done — the feed window (~15) is part of the seeded baseline, so the
+    daily feed-poll can't later queue the other ~10 as pending."""
+    monkeypatch.setattr("core.ytdlp.is_installed", lambda: True)
+    dlg = _make_dialog(tmp_path, Settings(sources_youtube=True))
+    # 15 dated videos — the same set seen by the feed window AND the deep
+    # enumerate (total overlap), mirroring a real channel's recent window.
+    _resolve(dlg, monkeypatch, title="Last Five", videos=_vids(15))
+    for b in dlg._yt_backfill_grp.buttons():
+        if b.text() == "Last 5":
+            b.setChecked(True)
+            break
+    dlg._add_from_youtube()
+    _wait_for_enumerate(dlg)
+    pending, done = _counts(dlg, "last-five")
+    assert pending == 5
+    assert done == 10
+
+
+def test_backfill_episodes_have_dates(tmp_path, monkeypatch):
+    """Bug 1 fix: seeded episodes carry real pub dates (full extraction +
+    dated feed window), not the empty pubDate the flat path produced."""
+    monkeypatch.setattr("core.ytdlp.is_installed", lambda: True)
+    dlg = _make_dialog(tmp_path, Settings(sources_youtube=True))
+    _resolve(dlg, monkeypatch, title="Dated", videos=_vids(3))
+    for b in dlg._yt_backfill_grp.buttons():
+        if b.text() == "Last 5":
+            b.setChecked(True)
+            break
+    dlg._add_from_youtube()
+    _wait_for_enumerate(dlg)
+    # Read the seeded episodes back from state — every one has a non-empty date.
+    from core.state import EpisodeStatus
+
+    eps = dlg.ctx.state.list_by_status("dated", EpisodeStatus.PENDING)
+    assert eps  # something was seeded
+    assert all(e["pub_date"] for e in eps)
+    # The exact mocked dates survive (v00 → 2026-06-01).
+    v00 = dlg.ctx.state.get_episode("v00")
+    assert v00 is not None and v00["pub_date"] == "2026-06-01"
+
+
+def test_duration_seeded(tmp_path, monkeypatch):
+    """A deep-extracted video with a numeric duration seeds duration_sec on the
+    episode row (the merge keeps the deep duration over the duration-less feed
+    window)."""
+    monkeypatch.setattr("core.ytdlp.is_installed", lambda: True)
+    dlg = _make_dialog(tmp_path, Settings(sources_youtube=True))
+    vids = [{"id": "v00", "title": "Ep 0", "upload_date": "20260601", "duration": 615}]
+    _resolve(dlg, monkeypatch, title="Has Dur", videos=vids)
+    dlg._add_from_youtube()
+    _wait_for_enumerate(dlg)
+    ep = dlg.ctx.state.get_episode("v00")
+    assert ep is not None
+    assert ep["duration_sec"] == 615
 
 
 # --------------------------------------------------------------------------- #

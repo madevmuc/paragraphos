@@ -144,6 +144,34 @@ def test_enumerate_include_shorts_uses_channel_root(monkeypatch):
     assert not any(a.endswith("/videos") for a in seen["a"])
 
 
+def test_enumerate_full_drops_flat_playlist(monkeypatch):
+    """``full=True`` fully extracts each entry (no --flat-playlist) so yt-dlp
+    returns real upload_date/duration; ``full=False`` keeps the fast flat path."""
+    seen = {}
+    monkeypatch.setattr(
+        "core.youtube_meta._run_ytdlp",
+        lambda args, timeout=300: (seen.update(a=args), "")[1],
+    )
+    enumerate_channel_videos("UCabc", full=True)
+    assert "--flat-playlist" not in seen["a"]
+
+    enumerate_channel_videos("UCabc", full=False)
+    assert "--flat-playlist" in seen["a"]
+
+
+def test_enumerate_full_dateafter_still_passed(monkeypatch):
+    """With ``full=True`` the --dateafter filter is still forwarded (and now
+    actually bites because dates are extracted)."""
+    seen = {}
+    monkeypatch.setattr(
+        "core.youtube_meta._run_ytdlp",
+        lambda args, timeout=300: (seen.update(a=args), "")[1],
+    )
+    enumerate_channel_videos("UCabc", date_after="2020-01-01", full=True)
+    assert "--flat-playlist" not in seen["a"]
+    assert "--dateafter" in seen["a"] and "20200101" in seen["a"]
+
+
 def test_default_timeouts_are_generous():
     """Smoke: each public meta call must allow at least 90s for yt-dlp."""
     import inspect

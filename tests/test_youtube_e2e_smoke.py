@@ -44,15 +44,31 @@ def test_add_youtube_channel_writes_watchlist_and_enqueues(tmp_path, monkeypatch
             "artwork_url": "https://example.com/x.jpg",
         },
     )
+    _vids = [
+        {
+            "id": f"v{i:02d}",
+            "title": f"Ep {i}",
+            "upload_date": f"202601{i + 1:02d}",
+        }
+        for i in range(20)
+    ]
     monkeypatch.setattr(
         "core.youtube_meta.enumerate_channel_videos",
-        lambda c, limit=None: [
+        lambda c, *, limit=None, date_after=None, include_shorts=False, full=False: list(_vids),
+    )
+    # The enumerate worker now also fetches the RSS feed window and merges it in;
+    # mock it as the same 20 dated entries (total overlap → 20 unique guids).
+    monkeypatch.setattr(
+        "core.rss.build_manifest",
+        lambda url, **kw: [
             {
-                "id": f"v{i:02d}",
-                "title": f"Ep {i}",
-                "upload_date": f"2026010{i % 10}",
+                "guid": v["id"],
+                "title": v["title"],
+                "pubDate": f"2026-01-{int(v['upload_date'][-2:]):02d}",
+                "mp3_url": f"https://www.youtube.com/watch?v={v['id']}",
+                "description": "",
             }
-            for i in range(20)
+            for v in _vids
         ],
     )
 

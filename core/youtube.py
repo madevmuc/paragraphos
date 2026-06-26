@@ -102,6 +102,13 @@ def manifest_from_videos(videos: list[dict]) -> list[dict]:
                 pub = f"{ud[:4]}-{ud[4:6]}-{ud[6:8]}"
             else:
                 pub = ud
+        # Full extraction (enumerate full=True) carries a numeric `duration`
+        # in seconds; the flat path leaves it None. Bool is excluded so a
+        # stray True/False never coerces to 1/0.
+        dur = v.get("duration")
+        duration_sec = (
+            int(dur) if isinstance(dur, (int, float)) and not isinstance(dur, bool) else None
+        )
         manifest.append(
             {
                 "guid": vid,
@@ -109,6 +116,7 @@ def manifest_from_videos(videos: list[dict]) -> list[dict]:
                 "pubDate": pub,
                 "mp3_url": f"https://www.youtube.com/watch?v={vid}",
                 "description": "",
+                "duration_sec": duration_sec,
             }
         )
     return manifest

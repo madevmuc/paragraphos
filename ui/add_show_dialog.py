@@ -33,8 +33,10 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core import rss as _rss
 from core import youtube_meta as _youtube_meta
 from core import ytdlp as _ytdlp
+from core.backlog import apply_backlog
 from core.discovery import find_rss_from_url, search_itunes
 from core.models import Show
 from core.prompt_gen import suggest_whisper_prompt
@@ -173,29 +175,86 @@ class _YtFirstVideoThread(QThread):
         self.done.emit(iso)
 
 
-class _YoutubeEnumerateThread(QThread):
-    """Enumerate a channel's videos off-thread.
+def _merge_window_and_deep(window: list[dict], deep: list[dict]) -> list[dict]:
+    """Merge the RSS feed window with the deep full-extraction backfill by guid.
 
-    ``enumerate_channel_videos`` shells out to yt-dlp and can take many
-    seconds on a large channel. Running it on the GUI thread freezes the app
-    (and macOS then SIGTERMs the unresponsive process), so it runs here.
+    The window (``core.rss.build_manifest`` of the channel feed) is the exact
+    set the daily feed-poll sees and carries authoritative dates; the deep list
+    (``manifest_from_videos(enumerate(..., full=True))``) carries the chosen
+    backfill depth plus per-video ``duration_sec``. For overlapping guids the
+    window's date/title/url win, but the deep entry's ``duration_sec`` is kept
+    when the window has none (YouTube feeds carry no duration). Deep-only
+    entries are preserved so the chosen depth is fully seeded.
+    """
+    by_guid: dict[str, dict] = {}
+    order: list[str] = []
+    for ep in deep:
+        g = ep.get("guid")
+        if not g:
+            continue
+        by_guid[g] = dict(ep)
+        order.append(g)
+    for ep in window:
+        g = ep.get("guid")
+        if not g:
+            continue
+        merged = dict(ep)
+        if g in by_guid:
+            if merged.get("duration_sec") is None:
+                merged["duration_sec"] = by_guid[g].get("duration_sec")
+        else:
+            order.append(g)
+        by_guid[g] = merged
+    return [by_guid[g] for g in order]
+
+
+class _YoutubeEnumerateThread(QThread):
+    """Build a dated backfill manifest off-thread.
+
+    Off the GUI thread (``enumerate_channel_videos`` shells out to yt-dlp and
+    can take many seconds; running it on the GUI thread freezes the app and
+    macOS SIGTERMs the unresponsive process), this fetches BOTH:
+
+    - the RSS feed window (``core.rss.build_manifest`` — the ~15 dated episodes
+      the daily poll will later see), and
+    - the deep, dated, duration-bearing backfill at the chosen depth
+      (``enumerate_channel_videos(..., full=True)`` → ``manifest_from_videos``).
+
+    It merges them by guid and emits the finished manifest (not raw videos), so
+    the feed window is always part of the seeded baseline and the daily poll can
+    never queue beyond the chosen depth.
     """
 
-    done = pyqtSignal(list)  # list[dict] of video entries
+    done = pyqtSignal(list)  # merged manifest (list[dict])
     error = pyqtSignal(str)  # message on failure
 
-    def __init__(self, channel_id: str, limit, parent=None):
+    def __init__(self, channel_id: str, limit, date_after=None, include_shorts=False, parent=None):
         super().__init__(parent)
         self.channel_id = channel_id
         self.limit = limit
+        self.date_after = date_after
+        self.include_shorts = include_shorts
 
     def run(self) -> None:
         try:
-            videos = _youtube_meta.enumerate_channel_videos(self.channel_id, limit=self.limit)
+            try:
+                window = _rss.build_manifest(rss_url_for_channel_id(self.channel_id))
+            except Exception:  # noqa: BLE001
+                window = []
+            deep = manifest_from_videos(
+                _youtube_meta.enumerate_channel_videos(
+                    self.channel_id,
+                    limit=self.limit,
+                    date_after=self.date_after,
+                    include_shorts=self.include_shorts,
+                    full=True,
+                )
+            )
+            manifest = _merge_window_and_deep(window, deep)
         except Exception as e:  # noqa: BLE001
             self.error.emit(str(e))
             return
-        self.done.emit(videos)
+        self.done.emit(manifest)
 
 
 class _CoverSignals(QObject):
@@ -1448,31 +1507,39 @@ class AddShowDialog(QDialog):
             return
         slug = self._yt_slug_input.text().strip() or slugify(title)
 
-        # Decide enumeration depth. A "since" date overrides the count radios
-        # (mutually exclusive in the UI): fetch everything and filter by date.
+        # Decide enumeration depth + the baseline mode the worker's manifest
+        # gets seeded under. A "since" date overrides the count radios
+        # (mutually exclusive in the UI). The worker ALWAYS also fetches the
+        # RSS feed window, so the baseline can mark the daily-poll window items
+        # done/pending and the poll can never queue beyond the chosen depth.
         since_iso = self._yt_since_date_iso()
         choice = self._yt_backfill_choice()
 
         if since_iso is not None:
-            limit = None  # fetch all; client-side date filter below
-        elif choice == "Last 100":
-            limit = 100
-        elif choice == "Last 20":
-            limit = 20
-        elif choice == "Last 5":
-            limit = 5
-        else:  # "Only new" — seed the current feed window as a done baseline
-            # so only genuinely new uploads transcribe. The channel Atom feed
-            # returns ~15 entries; 30 covers it with margin.
-            limit = 30
+            # Deep-extract on/after the cutoff; the window (always fetched)
+            # supplies the pre-date entries the baseline will mark done.
+            limit = None
+            date_after = since_iso
+            mode = ("since", since_iso)
+        elif choice.startswith("Last "):
+            n = int(choice.split()[1])
+            # max(N, 30) guarantees the ~15-entry feed window is covered so it
+            # can be baselined alongside the chosen depth.
+            limit = max(n, 30)
+            date_after = None
+            mode = ("last", n)
+        else:  # "Only new" — mark the whole seeded baseline done so only
+            # genuinely-new uploads (discovered later by the feed poll) run.
+            limit = None
+            date_after = None
+            mode = ("only_new", None)
 
         # Stash the prep so the worker's done handler can finish the save.
         self._yt_pending = {
             "title": title,
             "cid": cid,
             "slug": slug,
-            "since_iso": since_iso,
-            "choice": choice,
+            "mode": mode,
             "preview": preview,
         }
 
@@ -1484,7 +1551,9 @@ class AddShowDialog(QDialog):
         self._yt_enum_cancel_btn.setVisible(True)
         self._yt_add_btn.setEnabled(False)
 
-        self._yt_enumerate_thread = _YoutubeEnumerateThread(cid, limit, self)
+        self._yt_enumerate_thread = _YoutubeEnumerateThread(
+            cid, limit, date_after=date_after, include_shorts=False, parent=self
+        )
         self._yt_enumerate_thread.done.connect(self._on_yt_enumerate_done)
         self._yt_enumerate_thread.error.connect(self._on_yt_enumerate_error)
         self._yt_enumerate_thread.start()
@@ -1517,14 +1586,16 @@ class AddShowDialog(QDialog):
         self._teardown_yt_enumerate_ui()
         QMessageBox.warning(self, "Error", f"Failed to enumerate videos: {msg}")
 
-    def _on_yt_enumerate_done(self, videos: list) -> None:
-        """Build the manifest from the enumerated videos and save the show.
+    def _on_yt_enumerate_done(self, manifest: list) -> None:
+        """Seed the show from the worker's merged, dated manifest.
 
-        Empty enumeration → "No videos" info, no save. The since-date filter
-        can also empty the manifest even when ``videos`` was non-empty; that
-        too surfaces the info dialog and saves nothing."""
+        The worker now does the manifest assembly off-thread (RSS feed window
+        merged with the deep full-extraction backfill), so this just guards the
+        empty case and hands the manifest + structured backlog mode to
+        ``_do_save``, which applies the real baseline. The OLD client-side
+        since-filter is gone — the baseline marks pre-date window videos done."""
         self._teardown_yt_enumerate_ui()
-        if not videos:
+        if not manifest:
             QMessageBox.information(self, "No videos", "0 videos match this selection.")
             return
 
@@ -1532,37 +1603,8 @@ class AddShowDialog(QDialog):
         title = pending.get("title") or "channel"
         cid = pending.get("cid") or ""
         slug = pending.get("slug") or ""
-        since_iso = pending.get("since_iso")
-        choice = pending.get("choice") or "Only new"
+        mode = pending.get("mode") or ("only_new", None)
         preview = pending.get("preview") or {}
-
-        # Build a manifest the existing _do_save funnel understands. Shared
-        # with the CLI (core.youtube.manifest_from_videos) so GUI-add and
-        # CLI-add seed the SAME guid (bare video id) + watch-URL shape — the
-        # seam feed-poll dedup relies on.
-        manifest = manifest_from_videos(videos)
-
-        # A "since" date keeps only videos published on/after the cutoff
-        # (ISO date strings compare lexicographically). Unknown-date videos
-        # are dropped to avoid silently dragging in the whole back-catalogue.
-        if since_iso is not None:
-            manifest = [m for m in manifest if m["pubDate"] and m["pubDate"] >= since_iso]
-
-        # The since-date filter (or videos with no usable id) can empty the
-        # manifest even though enumeration returned entries — never save an
-        # empty show; surface the same "no videos" notice instead.
-        if not manifest:
-            QMessageBox.information(self, "No videos", "0 videos match this selection.")
-            return
-
-        # Backlog mode controls which seeded items transcribe. "Only new"
-        # marks the entire seeded baseline done so only future uploads run;
-        # every other choice keeps the seeded videos pending. The "since"
-        # filter already trimmed the manifest, so its remainder stays pending.
-        if choice == "Only new" and since_iso is None:
-            backlog_mode = "Only new"
-        else:
-            backlog_mode = "All"
 
         # Caption preference: checked → import uploader subtitles per video
         # (manual only; whisper fallback). Unchecked → always whisper. Auto-
@@ -1575,7 +1617,9 @@ class AddShowDialog(QDialog):
             "rss": rss_url_for_channel_id(cid),
             "whisper_prompt": "",
             "manifest": manifest,
-            "backlog": backlog_mode,
+            # Structured baseline instruction consumed by _do_save:
+            #   ("only_new", None) | ("last", N) | ("since", "YYYY-MM-DD")
+            "backlog": mode,
             "artwork_url": preview.get("artwork_url", "") or "",
             "source": "youtube",
             "youtube_transcript_pref": transcript_pref,
@@ -1654,10 +1698,26 @@ class AddShowDialog(QDialog):
                 title=ep["title"],
                 pub_date=ep["pubDate"],
                 mp3_url=ep["mp3_url"],
+                duration_sec=ep.get("duration_sec"),
             )
 
         mode = show.get("backlog") or "Last 5"
-        if mode == "Only new":
+        # YouTube modes arrive as a structured (kind, arg) tuple and apply the
+        # real, tested baseline via core.backlog.apply_backlog (which orders by
+        # pub_date DESC — now meaningful because the manifest is dated). Podcast
+        # modes still arrive as the legacy strings handled below.
+        if isinstance(mode, tuple):
+            kind = mode[0]
+            if kind == "only_new":
+                # apply_backlog has no "only_new"; mark the whole seeded
+                # baseline done so only future uploads transcribe.
+                with self.ctx.state._conn() as c:
+                    c.execute("UPDATE episodes SET status='done' WHERE show_slug=?", (slug,))
+            elif kind == "all":
+                pass  # leave everything pending
+            else:  # ("last", N) | ("since", date) | ("recent", None)
+                apply_backlog(self.ctx.state, slug, mode, manifest)
+        elif mode == "Only new":
             # Baseline mode (YouTube "Only new"): mark every seeded video done
             # so the back-catalogue is skipped and only future uploads — new
             # entries the feed poll discovers later — get transcribed.
