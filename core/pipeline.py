@@ -518,6 +518,12 @@ def _process_youtube_episode(
         if category == "short":
             ctx.state.set_status(guid, EpisodeStatus.SKIPPED)
             return PipelineResult("skipped", guid, message or "YouTube Short")
+        # The probe already knows the duration — persist it (cheap) so the
+        # Queue's Audio/Whisper/Finish columns + the live % work for this video.
+        _dur = int(meta.get("duration") or 0)
+        if _dur > 0 and not int(ep.get("duration_sec") or 0):
+            ctx.state.set_duration_sec(guid, _dur)
+            ep["duration_sec"] = _dur
 
     pref = ctx.youtube_transcript_pref or ctx.youtube_default_transcript_source or "captions"
 
@@ -585,6 +591,29 @@ def _process_youtube_episode(
         from pathlib import Path as _P
 
         model_path = _P.home() / ".config/open-wispr/models" / f"ggml-{ctx.model_name}.bin"
+
+        # Live transcription % for the Queue (mirrors transcribe_phase). Make
+        # sure we know the audio length first — probe once if the backfill
+        # didn't record it — so the % and the Queue Audio/Whisper/Finish
+        # columns have a real length to work from.
+        audio_sec = int(ep.get("duration_sec") or 0)
+        if not audio_sec:
+            try:
+                _m = youtube_audio.probe_video_meta(vid)
+                audio_sec = int(_m.get("duration") or 0)
+            except Exception:
+                audio_sec = 0
+            if audio_sec > 0:
+                ctx.state.set_duration_sec(guid, audio_sec)
+                ep["duration_sec"] = audio_sec
+
+        def _write_progress(elapsed_audio_sec: int) -> None:
+            pct = max(0, min(99, int(100 * elapsed_audio_sec / (audio_sec or 1))))
+            try:
+                ctx.state.set_meta(f"transcribe_pct:{guid}", str(pct))
+            except Exception:
+                pass
+
         try:
             wresult = transcribe_episode(
                 mp3_path=mp3_path,
@@ -599,6 +628,7 @@ def _process_youtube_episode(
                 threads=ctx.threads,
                 launch_prefix=ctx.launch_prefix,
                 save_srt=True,  # always need SRT for YouTube re-render
+                progress_cb=_write_progress,
             )
         except TranscriptionError as e:
             err = f"transcribe failed: {e}"

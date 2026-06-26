@@ -180,6 +180,16 @@ class StateStore:
             else:
                 c.execute("UPDATE episodes SET word_count=? WHERE guid=?", (word_count, guid))
 
+    def set_duration_sec(self, guid: str, duration_sec: int) -> None:
+        """Persist a video's known audio length mid-flight (before transcription
+        completes) so the Queue's Audio / Whisper / Finish columns + the live
+        transcribe % have a real audio length to work from."""
+        with self._conn() as c:
+            c.execute(
+                "UPDATE episodes SET duration_sec=? WHERE guid=?",
+                (duration_sec, guid),
+            )
+
     def get_episode(self, guid: str) -> Optional[Dict[str, Any]]:
         with self._conn() as c:
             row = c.execute("SELECT * FROM episodes WHERE guid = ?", (guid,)).fetchone()

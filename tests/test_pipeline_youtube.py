@@ -201,6 +201,56 @@ def test_youtube_episode_whisper_pref_skips_captions(tmp_path: Path):
     assert r.action == "transcribed"
 
 
+def test_youtube_whisper_writes_progress_and_persists_duration(tmp_path: Path):
+    """Bug 3: the YouTube whisper path must feed the Queue — persist the audio
+    duration (Audio / Whisper / Finish columns) and write the live transcribe %
+    (Status column) via progress_cb, like the podcast path."""
+    ctx = _yt_ctx(tmp_path, pref="whisper")
+    _seed_yt_episode(ctx, guid="ytp")
+    captured: dict = {}
+
+    def fake_audio(video_id, target_mp3, **kw):
+        target_mp3.parent.mkdir(parents=True, exist_ok=True)
+        target_mp3.write_bytes(b"\x00" * 1024)
+        return target_mp3
+
+    class _R:
+        word_count = 5
+
+        def __init__(self, md, srt):
+            self.md_path = md
+            self.srt_path = srt
+
+    def fake_whisper(*, mp3_path, output_dir, slug, progress_cb=None, **kw):
+        # Capture the live state DURING transcription (record_completion later
+        # overwrites duration_sec with the SRT's real length, as it should).
+        captured["dur_during"] = ctx.state.get_episode("ytp")["duration_sec"]
+        # Simulate whisper reporting it has processed 300s of the 600s audio.
+        if progress_cb is not None:
+            progress_cb(300)
+            captured["pct"] = ctx.state.get_meta("transcribe_pct:ytp")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        srt = output_dir / f"{slug}.srt"
+        srt.write_text(_FAKE_SRT, encoding="utf-8")
+        md = output_dir / f"{slug}.md"
+        md.write_text('---\nguid: "ytp"\n---\n', encoding="utf-8")
+        return _R(md, srt)
+
+    with (
+        patch("core.youtube_audio.probe_video_meta", return_value=_OK_META),
+        patch("core.youtube_audio.download_audio", side_effect=fake_audio),
+        patch("core.pipeline.transcribe_episode", side_effect=fake_whisper),
+    ):
+        r = process_episode("ytp", ctx)
+
+    assert r.action == "transcribed"
+    # Duration persisted from the probe BEFORE transcription → the Queue
+    # Audio/Whisper/Finish columns have a real length while it runs.
+    assert captured.get("dur_during") == 600
+    # progress_cb wired → live % written mid-transcription (300/600 = 50%).
+    assert captured.get("pct") == "50"
+
+
 # ── Task 2.4: routing Shorts / live / restricted videos ───────────────
 
 
