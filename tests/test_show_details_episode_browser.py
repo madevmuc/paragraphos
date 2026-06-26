@@ -146,3 +146,81 @@ def test_per_row_guid_stash_survives_refactor(qapp, tmp_path):
 
     item = dlg._episodes_tbl.item(0, 0)
     assert item.data(Qt.ItemDataRole.UserRole) == guids[0]
+
+
+# ── shared seed helper for mixed-status tests ────────────────────────────
+
+
+def _seed_one(ctx, slug, guid, day, status=None):
+    """Seed a single episode on 2026-06-<day>; optionally set its status."""
+    from core.state import EpisodeStatus  # noqa: F401  (type hint clarity)
+
+    ctx.state.upsert_episode(
+        show_slug=slug,
+        guid=guid,
+        title=guid,
+        pub_date=f"2026-06-{day:02d}T00:00:00+00:00",
+        mp3_url=f"https://example.com/{guid}.mp3",
+    )
+    if status is not None:
+        ctx.state.set_status(guid, status)
+
+
+def _select_rows_by_guid(tbl, *guids):
+    """Select the rows whose stashed guid is in ``guids`` (any row order)."""
+    by_guid = {}
+    for i in range(tbl.rowCount()):
+        by_guid[tbl.item(i, 0).data(Qt.ItemDataRole.UserRole)] = i
+    tbl.clearSelection()
+    tbl.setSelectionMode(QTableWidget.SelectionMode.MultiSelection)
+    for g in guids:
+        tbl.selectRow(by_guid[g])
+    tbl.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
+
+
+# ── Task 4.3 ─────────────────────────────────────────────────────────────
+
+
+def test_queue_selected_sets_pending_and_priority(qapp, tmp_path):
+    """Selecting a failed + skipped row and queueing them sets both to
+    pending @ PRIORITY_RUN_NEXT; an unselected done episode is untouched."""
+    from core.state import EpisodeStatus
+    from ui.prioritize import PRIORITY_RUN_NEXT
+    from ui.show_details_dialog import ShowDetailsDialog
+
+    show = Show(slug="qs", title="Qs", rss="https://feed", source="podcast")
+    ctx = _make_ctx(tmp_path, show)
+    _seed_one(ctx, "qs", "f1", 1, EpisodeStatus.FAILED)
+    _seed_one(ctx, "qs", "s1", 2, EpisodeStatus.SKIPPED)
+    _seed_one(ctx, "qs", "d1", 3, EpisodeStatus.DONE)
+    dlg = ShowDetailsDialog(ctx, "qs")
+    _keepalive.append(dlg)
+
+    _select_rows_by_guid(dlg._episodes_tbl, "f1", "s1")
+    dlg._queue_selected()
+
+    f1 = ctx.state.get_episode("f1")
+    s1 = ctx.state.get_episode("s1")
+    d1 = ctx.state.get_episode("d1")
+    assert f1["status"] == "pending"
+    assert f1["priority"] == PRIORITY_RUN_NEXT
+    assert s1["status"] == "pending"
+    assert s1["priority"] == PRIORITY_RUN_NEXT
+    assert d1["status"] == "done"
+
+
+def test_queue_selected_empty_is_noop(qapp, tmp_path):
+    """No selection → _queue_guids is a no-op (no crash, status unchanged)."""
+    from core.state import EpisodeStatus
+    from ui.show_details_dialog import ShowDetailsDialog
+
+    show = Show(slug="qe", title="Qe", rss="https://feed", source="podcast")
+    ctx = _make_ctx(tmp_path, show)
+    _seed_one(ctx, "qe", "d1", 1, EpisodeStatus.DONE)
+    dlg = ShowDetailsDialog(ctx, "qe")
+    _keepalive.append(dlg)
+
+    dlg._episodes_tbl.clearSelection()
+    dlg._queue_selected()  # must not raise
+
+    assert ctx.state.get_episode("d1")["status"] == "done"

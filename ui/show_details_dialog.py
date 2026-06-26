@@ -35,6 +35,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core.state import EpisodeStatus
 from core.stats import compute_show_stats
 from core.watchlist_io import save_watchlist
 from ui.prioritize import (
@@ -191,6 +192,7 @@ class ShowDetailsDialog(QDialog):
         root.addLayout(self._build_form())
         root.addWidget(self._build_feed_health_panel())
         root.addWidget(self._build_advanced_group())
+        root.addWidget(self._build_episode_toolbar())
         root.addWidget(self._build_episodes_table(), 1)
         root.addLayout(self._build_footer())
 
@@ -743,6 +745,26 @@ class ShowDetailsDialog(QDialog):
         _toggle(False)
         return container
 
+    # ── episode toolbar ──────────────────────────────────────
+
+    def _build_episode_toolbar(self) -> QWidget:
+        """Compact controls row that sits directly above the episode table:
+        a status filter (left), then the date-sweep + selection bulk-queue
+        actions (right)."""
+        bar = QWidget()
+        row = QHBoxLayout(bar)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(8)
+
+        row.addStretch(1)
+
+        queue_sel_btn = QPushButton("Queue selected")
+        queue_sel_btn.setToolTip("Queue every selected episode for transcription.")
+        queue_sel_btn.clicked.connect(self._queue_selected)
+        row.addWidget(queue_sel_btn)
+
+        return bar
+
     # ── recent episodes ──────────────────────────────────────
 
     def _build_episodes_table(self) -> QTableWidget:
@@ -926,30 +948,61 @@ class ShowDetailsDialog(QDialog):
         # Refresh backlog label so the user sees the bump take effect.
         self.backlog_lbl.setText(self._fmt_backlog())
 
+    def _nudge_worker(self) -> None:
+        """Kick the background worker + force-refresh the Queue tab so a
+        priority change takes effect immediately instead of sitting idle
+        until the next scheduled check (could be hours away).
+
+        Shared by `_bump` (single episode) and `_queue_guids` (bulk). Every
+        step is best-effort and guarded — in tests the dialog has no parent,
+        so this short-circuits to a no-op.
+        """
+        shows_tab = self.parent()
+        if shows_tab is None or not hasattr(shows_tab, "start_check"):
+            return
+        try:
+            shows_tab.start_check(only_slug=self.slug, force=True)
+        except Exception:
+            pass
+        # Force-refresh the Queue tab table NOW (instead of waiting for its
+        # 3 s tick) so the user sees the bumped row jump to the top
+        # immediately. Reach the queue tab via the main window —
+        # shows_tab.parent() is the main window, which has `queue_tab`.
+        try:
+            main_win = shows_tab.window()
+            queue_tab = getattr(main_win, "queue_tab", None)
+            if queue_tab is not None and hasattr(queue_tab, "refresh"):
+                queue_tab._last_table_refresh = 0.0
+                queue_tab.refresh()
+        except Exception:
+            pass
+
+    def _queue_guids(self, guids: list[str]) -> None:
+        """Bulk-queue ``guids``: set each PENDING + bump to PRIORITY_RUN_NEXT,
+        then nudge the worker once and refresh the table + backlog label.
+
+        Empty list → no-op (no DB writes, no worker nudge, no refresh).
+        """
+        if not guids:
+            return
+        for guid in guids:
+            self.ctx.state.set_status(guid, EpisodeStatus.PENDING)
+            bump_priority(self.ctx, guid, PRIORITY_RUN_NEXT)
+        # Nudge once after the whole batch, not per-guid.
+        self._nudge_worker()
+        self._reload_episodes()
+        self.backlog_lbl.setText(self._fmt_backlog())
+
+    def _queue_selected(self) -> None:
+        """Queue every currently-selected episode row."""
+        self._queue_guids(self._selected_guids())
+
     def _bump(self, guid: str, priority: int) -> None:
         bump_priority(self.ctx, guid, priority)
         # Kick the worker so the bump takes effect immediately. Without
         # this, set_priority just updates SQL and the episode sits idle
-        # until the next scheduled check (could be hours away).
-        shows_tab = self.parent()
-        if shows_tab is not None and hasattr(shows_tab, "start_check"):
-            try:
-                shows_tab.start_check(only_slug=self.slug, force=True)
-            except Exception:
-                pass
-            # Force-refresh the Queue tab table NOW (instead of waiting
-            # for its 3 s tick) so the user sees the bumped row jump to
-            # the top immediately. Reach the queue tab via the main
-            # window — shows_tab.parent() is the main window, which has
-            # `queue_tab`.
-            try:
-                main_win = shows_tab.window()
-                queue_tab = getattr(main_win, "queue_tab", None)
-                if queue_tab is not None and hasattr(queue_tab, "refresh"):
-                    queue_tab._last_table_refresh = 0.0
-                    queue_tab.refresh()
-            except Exception:
-                pass
+        # until the next scheduled check.
+        self._nudge_worker()
         # The recent-episodes table is ordered by pub_date so a priority
         # bump doesn't visually reorder rows here — but the backlog label
         # (pending/failed counts) is what the user watches on this dialog.
