@@ -227,6 +227,11 @@ per-test `_reset_event_bus` fixture was also added for subscriber isolation
   playlist like a channel (playlist RSS feed for polling; channel dedup
   no-ops). 4 tests. **Best-assumption:** CLI add covers it; GUI add-dialog
   playlist field not added (the dialog's YouTube tab is channel-oriented).
+- **Task 31 — bulk export (4.1)** ✅ `core/bulk_export.py` (`export` md/json
+  full; pdf via optional fpdf2 → clean `BulkExportError` if absent). `fpdf2`
+  added to requirements. New `cli.py export <slug> --format`. 4 tests.
+  **Best-assumption:** CLI export (reads the show's `.md` files); GUI
+  multi-select export action deferred. PDF uses core fonts (latin-1 fallback).
 - **Task 11 — wire use_etag_cache (8.5)** ✅ `rss.conditional_validators`
   gates stored ETag/Last-Modified by the setting; worker uses it (off → sends
   no conditional headers). respx tests confirm header present/absent. Settings

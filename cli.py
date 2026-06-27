@@ -1263,6 +1263,33 @@ def cmd_watch_list(args: argparse.Namespace) -> int:
 # ────────────────────────────────────────────────────────────────────────
 
 
+def cmd_export(args: argparse.Namespace) -> int:
+    """Bulk-export a show's transcripts to md/json/pdf (4.1)."""
+    from core.bulk_export import BulkExportError, export
+
+    settings = _settings()
+    show_dir = Path(settings.output_root).expanduser() / args.slug
+    if not show_dir.is_dir():
+        print(f"no transcripts dir for {args.slug}: {show_dir}", file=sys.stderr)
+        return 2
+    items = []
+    for md in sorted(show_dir.glob("*.md")):
+        if md.name == "index.md":
+            continue
+        items.append({"title": md.stem, "text": md.read_text(encoding="utf-8", errors="replace")})
+    if not items:
+        print(f"no transcripts found in {show_dir}")
+        return 1
+    dest = Path(args.out) if args.out else (DATA / f"{args.slug}-export.{args.format}")
+    try:
+        export(items, args.format, dest)
+    except BulkExportError as e:
+        print(str(e), file=sys.stderr)
+        return 2
+    print(f"exported {len(items)} transcript(s) → {dest}")
+    return 0
+
+
 def cmd_backfill_dates(args: argparse.Namespace) -> int:
     """Re-resolve real YouTube upload dates for a show's back-catalogue (3.1)."""
     wl = _watchlist()
@@ -1452,6 +1479,14 @@ def main() -> int:
     s_status = sub.add_parser("status", help="snapshot: queue depth, in-flight, by-status counts")
     s_status.add_argument("--json", action="store_true")
     s_status.set_defaults(fn=cmd_status)
+
+    s_export = sub.add_parser("export", help="bulk-export a show's transcripts (md/json/pdf)")
+    s_export.add_argument("slug")
+    s_export.add_argument("--format", choices=["md", "json", "pdf"], default="md")
+    s_export.add_argument(
+        "--out", default=None, help="output path (default: <data>/<slug>-export.*)"
+    )
+    s_export.set_defaults(fn=cmd_export)
 
     s_bfd = sub.add_parser("backfill-dates", help="re-resolve real YouTube upload dates for a show")
     s_bfd.add_argument("slug")

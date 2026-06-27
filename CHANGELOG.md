@@ -104,6 +104,9 @@ people actually paste, and paired with a full per-show episode browser.
   history beyond the RSS window and queues the newly fetched videos.
 
 ### Added
+- **Bulk export.** `cli.py export <slug> --format md|json|pdf` writes all of a
+  show's transcripts to one file. Markdown/JSON need no extra dependency; PDF
+  uses the optional `fpdf2` package (cleanly reported if absent).
 - **Playlist support.** Add a YouTube **playlist** URL like a channel —
   `cli.py add "https://www.youtube.com/playlist?list=…" --backlog …` seeds the
   playlist's videos and polls its RSS feed for new entries.

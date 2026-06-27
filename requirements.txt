@@ -16,3 +16,5 @@ pytz>=2024.1
 tzlocal>=5.0
 # Security: hardened XML parser used in OPML import (defuses XXE + bombs)
 defusedxml>=0.7
+# Optional: PDF bulk-export (core.bulk_export). Markdown/JSON work without it.
+fpdf2>=2.7
