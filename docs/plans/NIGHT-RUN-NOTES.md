@@ -137,6 +137,13 @@ per-test `_reset_event_bus` fixture was also added for subscriber isolation
   double-notify), delivers via the GUI-thread `notify` signal. 6 tests.
   **Best-assumption:** transcribed notifications stay on the legacy per-episode
   path; quiet-hours times are CLI-settable (`set-setting`), no new settings UI.
+- **Task 16 — webhooks (10.1)** ✅ `core/webhooks.py`: `webhook_matches`
+  (exact/prefix/all, enabled gate), `event_to_json`, `dispatch` (injectable
+  executors, per-hook failure swallowed), `_run_command` (script + stdin),
+  `_http_post` (safe_url SSRF guard), `install` (non-blocking daemon-thread
+  dispatch, settings read live). Wired into app.py + CLI check. AGENTS documents
+  the settings.yaml config. 6 tests. **Best-assumption:** webhooks configured
+  via settings.yaml (operator surface); GUI list-editor deferred.
 - **Task 11 — wire use_etag_cache (8.5)** ✅ `rss.conditional_validators`
   gates stored ETag/Last-Modified by the setting; worker uses it (off → sends
   no conditional headers). respx tests confirm header present/absent. Settings

@@ -24,6 +24,10 @@ people actually paste, and paired with a full per-show episode browser.
   a curated subset is mirrored into the activity-log dock.
 
 ### Added
+- **Webhooks / on-event hooks.** Configure webhooks in `settings.yaml` to run a
+  local script (event JSON on stdin) or HTTP POST the event JSON when matching
+  events fire. Dispatch is non-blocking and failure-isolated; POST targets are
+  SSRF-guarded (no private/loopback hosts).
 - **Granular notifications.** Desktop notifications now fire on transcription
   failures and when a check finishes (in addition to the existing per-episode
   success notices), gated by a per-event toggle, a per-show opt-out

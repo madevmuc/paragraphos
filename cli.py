@@ -413,6 +413,10 @@ def cmd_check(args: argparse.Namespace) -> int:
     wl = _watchlist()
     state = _state()
     state.recover_in_flight()
+    # Event-driven webhooks (10.1) — fire during a CLI check too.
+    from core import webhooks
+
+    webhooks.install(lambda: settings)
     out_root = Path(settings.output_root).expanduser()
     lib = LibraryIndex(out_root)
     lib.scan()

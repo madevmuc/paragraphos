@@ -359,6 +359,11 @@ class ParagraphosApp(QObject):
         _events.subscribe(_events.EventType.EPISODE_FAILED, self._bus_notify)
         _events.subscribe(_events.EventType.RUN_FINISHED, self._bus_notify)
 
+        # Event-driven webhooks (10.1) — non-blocking, settings read live.
+        from core import webhooks as _webhooks
+
+        _webhooks.install(lambda: self.ctx.settings)
+
         # Re-render the tray icon when macOS flips light/dark so its
         # glyph color tracks the new menu-bar appearance.
         from ui.themes import manager as _theme_manager

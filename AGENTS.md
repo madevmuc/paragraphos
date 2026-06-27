@@ -68,6 +68,12 @@ cli.py set-setting confidence_marking_enabled true           # mark low-confiden
 cli.py set-setting disk_guard_min_free_gb 10  # auto-pause when free space drops below
 ```
 
+**Webhooks** (event-driven, 10.1) are configured in `settings.yaml` —
+`webhooks_enabled: true` plus a `webhooks:` list of
+`{events: [..], kind: command|post, target: <path|url>, enabled: true}`. `events`
+accepts exact types (`episode.transcribed`), prefixes (`episode.`), or `[]` (all).
+POST targets pass an SSRF guard (no private/loopback hosts).
+
 Per-show settable keys: `enabled`, `language`, `whisper_prompt`, `output_override`,
 `youtube_transcript_pref`, `source`, `title`, `rss`, `artwork_url`, `auto_vocab`,
 `min_duration_sec`, `max_duration_sec`, `notify`. Any top-level field in `settings.yaml`
