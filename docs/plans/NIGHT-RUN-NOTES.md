@@ -257,6 +257,22 @@ per-test `_reset_event_bus` fixture was also added for subscriber isolation
   GET /shows /status /queue, POST /queue/pause /resume) + `serve`
   (stdlib HTTPServer, 127.0.0.1 only). New `cli.py serve` (token generated +
   persisted). 6 tests. Exceeded the escape hatch (real build, not skeleton).
+- **Task 36 — parallel transcription (2.2, escape hatch)** → **design+skeleton.**
+  `transcribe_concurrency` setting ships (default 1, safe). Design:
+  `docs/plans/parallel-transcription-design.md` (whisper is already
+  multi-threaded; >1 risks oversubscription — needs RAM-aware cap + benches).
+- **Task 37 — streaming transcription (8.2, escape hatch)** → **design only.**
+  `docs/plans/streaming-transcription-design.md` (chunked download→transcribe→
+  stitch; highest risk; no runtime skeleton — a no-op flag would add surface
+  without value).
+- **Task 38 — diarization (1.5, escape hatch)** → **design+skeleton.**
+  `core/diarize.py` flag-gated seam (no-op off; clear error when enabled until
+  backend lands) + `docs/plans/diarization-design.md` (sherpa-onnx + model
+  download, gated). 2 tests. No heavy dep added.
+- **Task 40 — MCP server (10.3, escape hatch)** → **design+skeleton.**
+  `core/mcp_server.py` tool registry + `call_tool` dispatching through the API
+  router (transport-less); `docs/plans/mcp-server-design.md` for the stdio
+  transport follow-up. 4 tests.
 - **Task 11 — wire use_etag_cache (8.5)** ✅ `rss.conditional_validators`
   gates stored ETag/Last-Modified by the setting; worker uses it (off → sends
   no conditional headers). respx tests confirm header present/absent. Settings

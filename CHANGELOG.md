@@ -5,6 +5,12 @@
 The original "Add YouTube Channel" feature, hardened against the channels
 people actually paste, and paired with a full per-show episode browser.
 
+### Groundwork (design + flag-gated skeletons)
+- **Speaker diarization, parallel & streaming transcription, MCP server** —
+  integration seams and design docs landed (under `docs/plans/`) behind
+  default-off flags; the heavyweight backends (sherpa-onnx, MCP transport) are
+  the documented follow-ups. No behaviour change by default.
+
 ### Platform & reliability (roadmap)
 - **Expanded settings + per-show schema** — new tunables (queue order,
   duration filters, caption-fallback mode, confidence marking, quiet hours,
