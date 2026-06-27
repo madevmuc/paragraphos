@@ -169,6 +169,11 @@ per-test `_reset_event_bus` fixture was also added for subscriber isolation
   **Best-assumption:** retry is "defer to next claim" (status→PENDING, attempts
   capped at 3) rather than an in-loop sleep-backoff — the downloader already
   does low-level network retries, and re-queueing avoids blocking the worker.
+- **Task 21 — self-healing startup + health check (6.2)** ✅ `core/health.py`
+  (`check_disk_space`/`check_data_dir_writable`/`check_dependencies`/
+  `check_model_hash` + `run_health_check`). `recover_in_flight` already resets
+  stale rows; app_context logs health warnings on launch; `cli.py health`
+  command. 5 tests.
 - **Task 11 — wire use_etag_cache (8.5)** ✅ `rss.conditional_validators`
   gates stored ETag/Last-Modified by the setting; worker uses it (off → sends
   no conditional headers). respx tests confirm header present/absent. Settings

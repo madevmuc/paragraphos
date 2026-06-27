@@ -1239,6 +1239,20 @@ def cmd_watch_list(args: argparse.Namespace) -> int:
 # ────────────────────────────────────────────────────────────────────────
 
 
+def cmd_health(args: argparse.Namespace) -> int:
+    """Run the startup health self-check (6.2)."""
+    from core import health
+
+    class _Ctx:
+        data_dir = DATA
+        settings = _settings()
+
+    rows = health.run_health_check(_Ctx())
+    human = "\n".join(f"{'✓' if r['ok'] else '✗'} {r['check']}: {r['detail']}" for r in rows)
+    _emit(rows, as_json=args.json, human=human)
+    return 0 if all(r["ok"] for r in rows) else 1
+
+
 def cmd_stats(args: argparse.Namespace) -> int:
     """Headline throughput / realtime-factor / success-rate dashboard (7.1)."""
     from core.stats import dashboard_summary
@@ -1377,6 +1391,10 @@ def main() -> int:
     s_status = sub.add_parser("status", help="snapshot: queue depth, in-flight, by-status counts")
     s_status.add_argument("--json", action="store_true")
     s_status.set_defaults(fn=cmd_status)
+
+    s_health = sub.add_parser("health", help="startup health self-check (deps/model/disk/data dir)")
+    s_health.add_argument("--json", action="store_true")
+    s_health.set_defaults(fn=cmd_health)
 
     s_stats = sub.add_parser("stats", help="throughput / realtime-factor / success-rate dashboard")
     s_stats.add_argument("--window", type=int, default=7, help="throughput window in days")

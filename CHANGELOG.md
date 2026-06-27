@@ -104,6 +104,10 @@ people actually paste, and paired with a full per-show episode browser.
   history beyond the RSS window and queues the newly fetched videos.
 
 ### Added
+- **Self-healing startup + health self-check.** Stale in-flight rows are reset
+  to a resumable state on launch (existing behaviour), and a new health check
+  (dependencies, model hash, data-dir writable, free disk) logs any problems at
+  startup and is runnable via `cli.py health`.
 - **Error taxonomy + automatic retry.** Pipeline failures are now classified
   (`network`, `not_found`, `too_large`, `format`, `whisper`, `disk`, `unknown`);
   transient ones (network/disk) auto-retry with a capped attempt count instead
