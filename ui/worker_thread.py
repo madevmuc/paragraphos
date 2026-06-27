@@ -614,6 +614,9 @@ class CheckAllThread(QThread):
         )
         kwargs["min_duration_sec"] = emin
         kwargs["max_duration_sec"] = emax
+        # 'After transcribing' action for locally-ingested files (move/delete).
+        kwargs["watch_folder_post"] = getattr(self.settings, "watch_folder_post", "keep") or "keep"
+        kwargs["watch_folder_root"] = getattr(self.settings, "watch_folder_root", "") or ""
         # Speaker diarization (1.5): off by default. Resolve the model dir to
         # <data_dir>/models/diarize when the setting is blank.
         if bool(getattr(self.settings, "diarization_enabled", False)):

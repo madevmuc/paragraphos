@@ -83,6 +83,10 @@ class PipelineContext:
     # effort — a missing backend is logged and skipped, never fails a transcribe.
     diarization_enabled: bool = False
     diarization_model_dir: str = ""
+    # Watch-folder post-transcribe action for locally-ingested files: keep |
+    # move (into <root>/done/) | delete. Applied once the episode is DONE.
+    watch_folder_post: str = "keep"
+    watch_folder_root: str = ""
 
 
 @dataclass(frozen=True)
@@ -107,6 +111,22 @@ def _record_failure(ctx, guid: str, exc: BaseException, err: str) -> str:
     retry = errors.should_retry(category, attempts_after)
     ctx.state.record_failure(guid, category, err, retry=retry)
     return "deferred" if retry else "failed"
+
+
+def _apply_watch_post(ctx, guid: str) -> None:
+    """Move/delete a locally-ingested source file after its transcript is done
+    (Settings → 'After transcribing'). Best-effort; no-op for non-local episodes
+    or when set to 'keep'."""
+    post = getattr(ctx, "watch_folder_post", "keep")
+    root = getattr(ctx, "watch_folder_root", "")
+    if post not in ("move", "delete") or not root:
+        return
+    local = ctx.state.get_meta(f"local_path:{guid}")
+    if not local:
+        return
+    from core.watch_post import apply_post_action
+
+    apply_post_action(local, post, root)
 
 
 def _maybe_diarize(ctx, audio_path, srt_path) -> bool:
@@ -482,6 +502,8 @@ def transcribe_phase(outcome: DownloadOutcome, ctx: PipelineContext) -> Pipeline
     if _meanconf is not None:
         ctx.state.set_mean_confidence(guid, _meanconf)
     ctx.state.set_status(guid, EpisodeStatus.DONE)
+    # 'After transcribing' action for locally-ingested sources (move/delete).
+    _apply_watch_post(ctx, guid)
     # Clean up stale % so a later re-transcribe of the same guid starts
     # from blank instead of inheriting the previous 99%.
     try:

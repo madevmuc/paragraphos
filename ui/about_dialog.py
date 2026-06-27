@@ -65,6 +65,20 @@ DEPENDENCIES = [
     ("Homebrew", "4+", "BSD-2-Clause", "https://brew.sh/"),
     ("defusedxml", "0.7+", "PSF-2.0", "https://github.com/tiran/defusedxml"),
     ("yt-dlp", "latest", "Unlicense (public domain)", "https://github.com/yt-dlp/yt-dlp"),
+    # Optional extras — only needed for specific features.
+    ("fpdf2 (optional — PDF export)", "2.7+", "LGPL-3.0", "https://github.com/py-pdf/fpdf2"),
+    (
+        "sherpa-onnx (optional — diarization)",
+        "1.10+",
+        "Apache-2.0",
+        "https://github.com/k2-fsa/sherpa-onnx",
+    ),
+    (
+        "mcp (optional — MCP server)",
+        "1.0+",
+        "MIT",
+        "https://github.com/modelcontextprotocol/python-sdk",
+    ),
 ]
 
 
@@ -73,7 +87,10 @@ def _about_tab(parent: QWidget) -> QWidget:
     v = QVBoxLayout(w)
     v.addWidget(QLabel("<h2>Paragraphos</h2>"))
     v.addWidget(
-        QLabel(f"Local podcast → whisper.cpp pipeline.<br>Version {VERSION} · Apple Silicon only")
+        QLabel(
+            "Local podcast, YouTube &amp; audio-file → whisper.cpp transcription "
+            f"pipeline.<br>Version {VERSION} · Apple Silicon only"
+        )
     )
     v.addWidget(
         QLabel(
@@ -86,7 +103,17 @@ def _about_tab(parent: QWidget) -> QWidget:
         QLabel(
             "<br><b>Technology</b>: Python 3.12, PyQt6, whisper.cpp "
             "(large-v3-turbo), APScheduler, watchdog, feedparser, "
-            "yt-dlp (for YouTube ingestion)."
+            "yt-dlp (YouTube ingestion), and optional sherpa-onnx (speaker "
+            "diarization)."
+        )
+    )
+    v.addWidget(
+        QLabel(
+            "<br><b>Capabilities</b>: parallel transcription, per-episode "
+            "language detection + low-confidence marking, speaker labels, "
+            "re-upload de-duplication, processing windows + battery-aware "
+            "pausing, and full headless automation — an expanded CLI, a "
+            "localhost JSON API, and an MCP server for LLM agents."
         )
     )
     v.addWidget(
@@ -211,6 +238,14 @@ def _security_tab(parent: QWidget) -> QWidget:
         "parameterised <code>?</code> placeholders.</li>"
         "<li><b>YAML is <code>safe_load</code> only</b> — frontmatter "
         "parsing can't instantiate arbitrary Python classes.</li>"
+        "<li><b>Local automation surface is contained</b> — the optional "
+        "JSON API (<code>serve</code>) binds to <code>127.0.0.1</code> only "
+        "and requires a generated bearer token; the MCP server "
+        "(<code>mcp</code>) speaks over stdio with no network listener. "
+        "Both are off unless you start them.</li>"
+        "<li><b>Webhook POST targets are SSRF-guarded</b> and command "
+        "webhooks are split with <code>shlex</code> + run as list-form argv "
+        "(no shell).</li>"
         "</ul>"
         ""
         "<h3>Residual risks</h3>"
@@ -225,6 +260,10 @@ def _security_tab(parent: QWidget) -> QWidget:
         "<li><b>No code signing / notarization</b> — the .app is locally "
         "ad-hoc signed, so macOS Gatekeeper warns on first launch. Only "
         "install Paragraphos from a source you trust.</li>"
+        "<li><b>yt-dlp binary auto-update</b> — the yt-dlp helper is fetched "
+        "over HTTPS from GitHub and self-updates without a pinned hash "
+        "(unlike the whisper models). A compromised GitHub release would "
+        "run as your user; the HTTPS fetch is the only guard.</li>"
         "</ul>"
         ""
         "<h3>Reporting a vulnerability</h3>"

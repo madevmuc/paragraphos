@@ -39,6 +39,22 @@ class _NoScrollFilter(QObject):
         return False
 
 
+class _SmartTimeEdit(QTimeEdit):
+    """QTimeEdit that selects the whole clicked section (both hour digits or
+    both minute digits) on click, so the user can overwrite it immediately —
+    and on focus selects the hour section by default."""
+
+    def mousePressEvent(self, event):  # noqa: N802 — Qt API
+        super().mousePressEvent(event)
+        # currentSection() reflects where the click landed → select all of it.
+        self.setSelectedSection(self.currentSection())
+
+    def focusInEvent(self, event):  # noqa: N802 — Qt API
+        super().focusInEvent(event)
+        self.setCurrentSection(QTimeEdit.Section.HourSection)
+        self.setSelectedSection(QTimeEdit.Section.HourSection)
+
+
 class _FieldContainer(QWidget):
     """Wrapper that propagates heightForWidth from its child layout up
     to QFormLayout so wrapped hint labels don't get clipped by a row
@@ -225,7 +241,10 @@ class SettingsPane(QWidget):
             if self.watch_folder_post_combo.itemData(i) == _cur_post:
                 self.watch_folder_post_combo.setCurrentIndex(i)
                 break
-        self.watch_folder_post_combo.currentIndexChanged.connect(self._schedule_save)
+        # Remember the prior value so switching → "move" can offer a one-time
+        # retroactive sweep of already-transcribed sources.
+        self._prev_watch_post = _cur_post
+        self.watch_folder_post_combo.currentIndexChanged.connect(self._on_watch_post_changed)
         self._add_field(
             f_local,
             "After transcribing",
@@ -617,7 +636,15 @@ class SettingsPane(QWidget):
         # ── Schedule & monitoring ──────────────────────────────
         root.addWidget(_section("Schedule & monitoring"))
         f2 = QFormLayout()
-        self.time = QTimeEdit(QTime.fromString(self.ctx.settings.daily_check_time, "HH:mm"))
+        self.time = _SmartTimeEdit(QTime.fromString(self.ctx.settings.daily_check_time, "HH:mm"))
+        # Display follows the OS clock style (12h AM/PM vs 24h); stored value
+        # stays canonical HH:mm. The AM/PM marker is editable in 12h mode.
+        from PyQt6.QtCore import QLocale
+
+        from core.timefmt import display_format, uses_ampm
+
+        _ampm = uses_ampm(QLocale.system().timeFormat(QLocale.FormatType.ShortFormat))
+        self.time.setDisplayFormat(display_format(_ampm))
         self.time.timeChanged.connect(self._schedule_save)
         time_row = QHBoxLayout()
         time_row.addWidget(self.time)
@@ -1029,6 +1056,58 @@ class SettingsPane(QWidget):
         d = QFileDialog.getExistingDirectory(self, "Pick watch folder", start)
         if d:
             self.watch_folder_root.setText(d)
+
+    def _on_watch_post_changed(self) -> None:
+        """Persist the new 'After transcribing' choice and, when switching TO
+        'move', offer to retroactively move sources transcribed so far."""
+        new_post = self.watch_folder_post_combo.currentData() or "keep"
+        prev = getattr(self, "_prev_watch_post", "keep")
+        self._prev_watch_post = new_post
+        self._schedule_save()
+        if new_post == "move" and prev != "move":
+            self._offer_retroactive_move()
+
+    def _offer_retroactive_move(self) -> None:
+        """Ask whether to move already-transcribed sources into done/ now."""
+        from PyQt6.QtWidgets import QMessageBox
+
+        root = (self.watch_folder_root.text() or "").strip()
+        if not root:
+            return
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("Move existing sources?")
+        box.setText(
+            "Move files that were already transcribed into the <code>done/</code> folder as well?"
+        )
+        box.setInformativeText(
+            "Yes — tidy up everything transcribed so far.\n"
+            "No — only move files transcribed from now on."
+        )
+        yes = box.addButton("Move existing (recommended)", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("Only new", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(yes)
+        box.exec()
+        if box.clickedButton() is not yes:
+            return
+        self._run_retroactive_move(root)
+
+    def _run_retroactive_move(self, root: str) -> None:
+        from PyQt6.QtWidgets import QMessageBox
+
+        from core.watch_post import apply_post_action, collect_retroactive
+
+        slugs = [s.slug for s in getattr(self.ctx.watchlist, "shows", [])]
+        pairs = collect_retroactive(self.ctx.state, slugs, root)
+        moved = 0
+        for _guid, path in pairs:
+            if apply_post_action(path, "move", root) is not None:
+                moved += 1
+        QMessageBox.information(
+            self,
+            "Done",
+            f"Moved {moved} already-transcribed source file(s) into done/.",
+        )
 
     def _pick_obsidian(self):
         start = self._default_picker_dir(self.obsidian_path.text())
@@ -1615,6 +1694,26 @@ class SettingsPane(QWidget):
             "<b>Feed retry</b>:<br>"
             "&nbsp;• <b>retry-feed &lt;slug&gt;</b> — clear backoff + immediate fetch<br>"
             "&nbsp;• <b>retry-all-feeds</b> — same for every feed marked fail<br><br>"
+            "<b>Observability &amp; automation</b>:<br>"
+            "&nbsp;• <b>stats [--json]</b> — throughput / realtime-factor / "
+            "success-rate dashboard<br>"
+            "&nbsp;• <b>logs [--limit N] [--type X] [--json]</b> — query the "
+            "structured event log<br>"
+            "&nbsp;• <b>health</b> — startup self-check (deps / model / disk / data dir)<br>"
+            "&nbsp;• <b>bug-report &lt;file.zip&gt;</b> — redacted diagnostics bundle<br>"
+            "&nbsp;• <b>serve [--port N] [--token T]</b> — localhost JSON API "
+            "(read + queue control)<br>"
+            "&nbsp;• <b>mcp</b> — MCP server over stdio so an LLM client can drive "
+            "the app over the same tool surface (needs the optional "
+            "<code>mcp</code> package)<br>"
+            "&nbsp;• <b>publish &lt;dir&gt;</b> — static searchable transcript site + RSS<br>"
+            "&nbsp;• <b>export &lt;slug&gt; [--format md|json|pdf]</b> — bulk export<br>"
+            "&nbsp;• <b>find-duplicates &lt;slug&gt;</b> — report likely re-upload "
+            "duplicates (auto-skipped at ingest when detected)<br>"
+            "&nbsp;• <b>backfill-dates &lt;slug&gt;</b> — re-resolve real YouTube "
+            "upload dates<br>"
+            "&nbsp;• <b>import-opml &lt;file&gt;</b> — import podcast subscriptions "
+            "from OPML<br><br>"
             "<b>Settings</b>:<br>"
             "&nbsp;• <b>set-setting &lt;key&gt; &lt;value&gt;</b> — type-coerced from the "
             "Settings model<br>"
@@ -1769,6 +1868,29 @@ class SettingsPane(QWidget):
             "  retry-all-feeds                      Same for every feed marked\n"
             "                                       fail\n"
             "\n"
+            "Observability & automation:\n"
+            "  stats [--json]                       Throughput / realtime-factor\n"
+            "                                       / success-rate dashboard\n"
+            "  logs [--limit N] [--type X]          Query the structured event\n"
+            "    [--json]                           log (bus events, persisted)\n"
+            "  health                               Self-check: deps, model,\n"
+            "                                       disk, data dir\n"
+            "  bug-report <file.zip>                Redacted diagnostics bundle\n"
+            "  serve [--port N] [--token T]         Localhost JSON API (read +\n"
+            "                                       queue control)\n"
+            "  mcp                                  MCP server over stdio so an\n"
+            "                                       LLM client can drive the app\n"
+            "                                       over the same tools (needs\n"
+            "                                       the optional `mcp` package)\n"
+            "  publish <dir>                        Static searchable transcript\n"
+            "                                       site + RSS\n"
+            "  export <slug> [--format md|json|pdf] Bulk-export a show\n"
+            "  find-duplicates <slug>               Report likely re-upload dups\n"
+            "                                       (also auto-skipped at ingest)\n"
+            "  backfill-dates <slug>                Re-resolve YouTube upload\n"
+            "                                       dates\n"
+            "  import-opml <file>                   Import subscriptions (OPML)\n"
+            "\n"
             "Top-level settings:\n"
             "  set-setting <key> <value>            Type-coerced from the\n"
             "                                       Settings model. Examples:\n"
@@ -1789,6 +1911,19 @@ class SettingsPane(QWidget):
             "  youtube_skip_shorts_default                     exclude Shorts (default true)\n"
             "  load_level / background_priority               quiet | balanced | full\n"
             "  whisper_fast_mode                               beam=1/best=1, ~2-3× faster\n"
+            "  transcribe_concurrency                          parallel whisper workers\n"
+            "                                                  (RAM-capped; 1 = serial)\n"
+            "  confidence_marking_enabled                      mark low-confidence words\n"
+            "                                                  in transcripts (default on)\n"
+            "  diarization_enabled                             speaker labels A/B/C\n"
+            "                                                  (default on; needs the\n"
+            "                                                  optional sherpa-onnx backend)\n"
+            "  caption_fallback_mode                           manual_whisper |\n"
+            "                                                  manual_auto_whisper\n"
+            "  pause_queue_on_battery                          hold the queue while on\n"
+            "                                                  battery; resume on AC power\n"
+            "  watch_folder_post                               keep | move (→ done/) |\n"
+            "                                                  delete after transcribing\n"
             "  save_srt / mp3_retention_days                   output / cleanup\n"
             "  auto_start_queue / auto_start_delay_seconds     launch behaviour\n"
             "  connectivity_monitor_enabled                    offline banner +\n"
@@ -1830,6 +1965,10 @@ class SettingsPane(QWidget):
             "     via `ingest folder --show zoom`, then tail `status\n"
             "     --json` until the queue drains.'\n"
             "  · 'Ingest the Vimeo URL <url> and run-next once it lands.'\n"
+            "  · 'Run `stats --json` and `health`, then summarise the pipeline's\n"
+            "     throughput and flag anything unhealthy.'\n"
+            "  · 'Publish a static site of all transcripts into ~/Sites/pods and\n"
+            "     tell me the index URL.'\n"
             "\n"
             "Task: <describe what you want the agent to do>\n"
         )
