@@ -1,9 +1,32 @@
 # Paragraphos Changelog
 
-## Unreleased — YouTube hardening + per-show episode browser
+## Unreleased — Reliability, observability & power-user tooling
 
-The original "Add YouTube Channel" feature, hardened against the channels
-people actually paste, and paired with a full per-show episode browser.
+A large roadmap pass on top of the YouTube hardening + per-show episode browser:
+an internal event backbone, smarter transcription, reliability guards, and a
+deep CLI/automation surface.
+
+**Highlights**
+- **Smarter transcription** — per-episode language auto-detect, auto-vocabulary
+  prompts from past transcripts, optional low-confidence word marking, and a
+  Metal toggle + model auto-pick.
+- **Reliability** — error taxonomy with automatic retry of transient failures,
+  pre-transcribe integrity checks, a disk guard, self-healing startup + health
+  check, crash logging, and time-boxed **Undo** for destructive actions.
+- **Control & flow** — queue order toggle, move-to-top, processing windows,
+  pause/resume individual downloads, per-show duration filters, and battery-aware
+  load.
+- **Observability** — an internal event bus persisted to SQLite, granular
+  notifications + quiet hours, webhooks, a per-episode timeline, and
+  filterable/exportable logs + a stats dashboard (CLI).
+- **Ingestion & sharing** — YouTube playlists, back-catalogue date backfill,
+  re-upload detection, OPML import, bulk export (md/json/pdf), and a static
+  searchable transcript site + RSS.
+- **Automation** — a localhost JSON API, a ⌘K command palette, and an expanded
+  CLI (`stats`, `logs`, `health`, `bug-report`, `serve`, `publish`, `export`, …).
+
+Heavyweight items (diarization, parallel/streaming transcription, MCP transport)
+land as design docs + flag-gated skeletons — see `docs/plans/`.
 
 ### Groundwork (design + flag-gated skeletons)
 - **Speaker diarization, parallel & streaming transcription, MCP server** —
