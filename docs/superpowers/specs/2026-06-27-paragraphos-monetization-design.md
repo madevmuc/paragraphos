@@ -46,6 +46,9 @@ kein verkrüppeltes Gratis-Produkt.
 
 - **Abo** (Subscription), passend zu „solange im Hintergrund läuft".
   Vorschlag: monatlich + jährlich.
+- **Account-Login statt Lizenzschlüssel:** Pro wird an einen Nutzer-Account
+  gebunden, Login per E-Mail-Magic-Link/OTP (kein Key zum Aufbewahren,
+  Mehrgeräte inklusive). Details §4.
 - **Trial:** Der Free-Tier deckt das Ausprobieren bereits ab; ein
   separater zeitlich begrenzter Pro-Trial ist optional, nicht MVP.
 - **Merchant of Record (MoR)** übernimmt EU-VAT. Anbieter siehe §6.
@@ -93,17 +96,22 @@ Aufwand überwiegend mechanisch (Enums, Signal/Slot-Syntax, Imports).
 
 ---
 
-## 4. Entitlement-Flow
+## 4. Auth & Entitlement-Flow
 
-1. Nutzer kauft Pro → erhält Lizenzschlüssel vom MoR.
-2. In-App „Pro aktivieren" → Key an die Lizenz-API → **signiertes Token**
-   (mit Ablauf, z. B. 30 Tage) wird lokal gecacht.
-3. Das Pro-Paket prüft das Token beim Start des Automatik-Daemons.
-   Gültig → Automatik läuft.
-4. Nahe Ablauf: stille Online-Revalidierung.
-   - **Server nicht erreichbar → fail-open** (weiterlaufen, Grace
-     verlängern).
-   - Token klar abgelaufen *und* Server meldet „ungültig/widerrufen" →
+**Login statt Lizenzschlüssel** — kein Key, den der Nutzer aufbewahren muss.
+
+1. Nutzer kauft Pro beim MoR (Zahlung + EU-VAT). Ein **MoR-Webhook** meldet
+   das Abo an das Entitlement-Backend (Nhost), das den Abo-Status pro Account
+   führt.
+2. In-App „Anmelden" → **E-Mail-Magic-Link / OTP** über Nhost-Auth (kein
+   Passwort). Nhost liefert ein **JWT**.
+3. Mit dem JWT fragt die App den Entitlement-Status ab („hat dieser Account
+   ein aktives Pro-Abo?"). JWT + Entitlement-Antwort werden lokal gecacht.
+4. Das Pro-Paket prüft das gecachte Entitlement beim Start des Automatik-
+   Daemons. Aktiv → Automatik läuft.
+5. Periodische stille Revalidierung (Token-Refresh + Entitlement-Recheck):
+   - **Server nicht erreichbar → fail-open** (weiterlaufen, Grace verlängern).
+   - Account eindeutig nicht (mehr) berechtigt (Abo gekündigt/abgelaufen) →
      Automatik pausiert, App fällt sauber in den Free/Manuell-Modus zurück
      (nichts geht kaputt).
 
@@ -113,9 +121,9 @@ Aufwand überwiegend mechanisch (Enums, Signal/Slot-Syntax, Imports).
 
 Das Modell ist **„ehrlicher Zahler mit Reibung"**, kein hartes DRM:
 
-- Echter Schutz liegt bei **(a)** der einmaligen, server-gateten
-  **Aktivierung** (gültiger Key nötig, Keys widerrufbar, keine
-  Key-Weitergabe) und **(b)** dem **closed-source Automatik-Code**.
+- Echter Schutz liegt bei **(a)** dem **Account-Login** (gültiges Abo nötig,
+  Accounts/Abos serverseitig widerrufbar) und **(b)** dem **closed-source
+  Automatik-Code**.
 - **Fail-open** bei unerreichbarem Server ist Absicht (gute UX).
 - **Akzeptierter Bypass:** Wer nach der Aktivierung selektiv nur die
   Lizenz-Domain blockt (Content-Domains offenlässt), nutzt Pro dauerhaft
@@ -140,17 +148,19 @@ Das Modell ist **„ehrlicher Zahler mit Reibung"**, kein hartes DRM:
 | ffmpeg | LGPL/GPL (Homebrew-Build) | bei Bündelung **LGPL-Build** nötig, dynamisch gelinkt; sonst weiter extern via Homebrew |
 | yt-dlp | Unlicense | lizenzrechtlich frei; **aber** YouTube-ToS-/Abmahnrisiko im Bezahlprodukt — Risiko bewerten |
 
-### 6.2 Merchant of Record (MoR) — europäisch
+### 6.2 Backend: Zahlung getrennt von Auth/Entitlement
 
-US-Anbieter (Lemonsqueezy, Gumroad) sind ausgeschlossen (EU-Präferenz).
-**Shortlist, Datenstandort zu verifizieren:**
+Login-Modell → zwei getrennte Dienste statt einer Lizenz-API:
 
-- **Paddle** (UK) — MoR + Lizenz-API.
-- **Payhip** (UK) — MoR + Lizenzschlüssel.
-
-Entscheidungs-Item: Datenstandort/DSGVO-Auftragsverarbeitung prüfen, bevor
-fixiert wird. Ein echt EU-domiziliertes All-in-One (MoR + Lizenz-API) ist
-dünn gesät; UK ist der realistische „europäische" Kompromiss.
+- **Auth + Entitlement: Nhost** — EU-Firma (Schweden), managed, Supabase-
+  ähnlich (Postgres + Auth + Functions), EU-Hosting. Stellt Magic-Link-Login
+  (JWT), eine `subscriptions`-Tabelle und den Entitlement-Check. Echtes
+  EU-Domizil (≠ Supabase, das eine US-Firma mit EU-Region ist). Domizil/AV
+  vor Vertrag bestätigen.
+- **Merchant of Record (Zahlung + EU-VAT): Paddle (UK) oder Payhip (UK)** —
+  nur noch fürs Geld; ein MoR-Webhook füllt die Nhost-`subscriptions`-Tabelle.
+  US-Anbieter (Lemonsqueezy, Gumroad) ausgeschlossen (EU-Präferenz).
+  Datenstandort/DSGVO-AV prüfen.
 
 ### 6.3 Rechtliche To-dos vor Launch
 
@@ -189,8 +199,9 @@ eigenen Spec → Plan → Implementierung:
 2. **Open-Core-Split** — Automatik-Runner (`scheduler`-Verdrahtung +
    `watch_folder`-Auto-Start) aus dem offenen Repo herauslösen,
    Plugin-Schnittstelle definieren, privates `paragraphos-pro`-Paket anlegen.
-3. **Entitlement + Lizenz-Integration** — Token-Client, Aktivierungs-UI,
-   fail-open-Revalidierung, MoR-Lizenz-API-Anbindung.
+3. **Auth + Entitlement** — Nhost-Magic-Link-Login (JWT), Login-UI im Client,
+   Entitlement-Cache + fail-open-Revalidierung, MoR-Webhook → Nhost-
+   `subscriptions`, Pro-Tier-Gate gegen den Entitlement-Status.
 4. **Distribution & Recht** — Signing/Notarization/Sparkle + EULA/DSGVO/
    Impressum + Billing-Setup.
 
@@ -198,7 +209,9 @@ eigenen Spec → Plan → Implementierung:
 
 ## Offene Entscheidungs-Items
 
-- [ ] MoR final wählen (Paddle vs. Payhip) nach Datenstandort-Prüfung.
+- [ ] Nhost-Domizil + DSGVO-Auftragsverarbeitung (AV) verifizieren.
+- [ ] MoR final wählen (Paddle vs. Payhip) nach Datenstandort-Prüfung;
+      Webhook → Nhost aufsetzen.
 - [ ] Abo-Preise (monatlich/jährlich) festlegen.
 - [ ] ffmpeg: weiter extern (Homebrew) oder LGPL-Build bündeln?
 - [ ] YouTube-Ingest im Pro-Tier behalten oder als „bring your own URL /
