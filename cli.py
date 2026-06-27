@@ -1239,6 +1239,33 @@ def cmd_watch_list(args: argparse.Namespace) -> int:
 # ────────────────────────────────────────────────────────────────────────
 
 
+def cmd_backfill_dates(args: argparse.Namespace) -> int:
+    """Re-resolve real YouTube upload dates for a show's back-catalogue (3.1)."""
+    wl = _watchlist()
+    show = _find_show(wl, args.slug)
+    if not show:
+        print(f"unknown slug: {args.slug}", file=sys.stderr)
+        return 2
+    if getattr(show, "source", "podcast") != "youtube":
+        print("backfill-dates only applies to YouTube shows", file=sys.stderr)
+        return 2
+    from core.backcat_dates import backfill_show_dates
+    from core.youtube import channel_id_from_feed_url
+    from core.youtube_meta import enumerate_channel_videos
+
+    cid = channel_id_from_feed_url(show.rss)
+    if not cid:
+        print("couldn't resolve channel id from feed url", file=sys.stderr)
+        return 2
+
+    def _enum(channel_id, *, full):
+        return enumerate_channel_videos(channel_id, include_shorts=True, full=full)
+
+    changed = backfill_show_dates(_state(), cid, enumerate_fn=_enum)
+    print(f"updated {changed} episode date(s) for {args.slug}")
+    return 0
+
+
 def cmd_bug_report(args: argparse.Namespace) -> int:
     """Build a redacted bug-report bundle zip (6.4)."""
     from core.bugbundle import build_bundle
@@ -1401,6 +1428,10 @@ def main() -> int:
     s_status = sub.add_parser("status", help="snapshot: queue depth, in-flight, by-status counts")
     s_status.add_argument("--json", action="store_true")
     s_status.set_defaults(fn=cmd_status)
+
+    s_bfd = sub.add_parser("backfill-dates", help="re-resolve real YouTube upload dates for a show")
+    s_bfd.add_argument("slug")
+    s_bfd.set_defaults(fn=cmd_backfill_dates)
 
     s_bug = sub.add_parser("bug-report", help="write a redacted diagnostics bundle (zip)")
     s_bug.add_argument("--out", default=None, help="output path (default: <data>/bug-report.zip)")

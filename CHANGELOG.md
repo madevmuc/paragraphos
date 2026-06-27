@@ -104,6 +104,9 @@ people actually paste, and paired with a full per-show episode browser.
   history beyond the RSS window and queues the newly fetched videos.
 
 ### Added
+- **Back-catalogue date backfill.** `cli.py backfill-dates <slug>` re-resolves
+  real YouTube upload dates for a channel's episodes (the fast enumeration path
+  leaves them approximate), so the library sorts/dates correctly.
 - **GPU/Metal toggle + model auto-pick.** A Settings toggle can force CPU-only
   whisper (Metal is on by default), and an **Auto-pick** button suggests a
   whisper model suited to the Mac's RAM and core count.

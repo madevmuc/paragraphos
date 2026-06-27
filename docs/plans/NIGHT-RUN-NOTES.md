@@ -214,6 +214,13 @@ per-test `_reset_event_bus` fixture was also added for subscriber isolation
   --no-gpu` only when Metal disabled (compiled-in caveat documented). Threaded
   through transcribe_episode + PipelineContext + worker. Settings Metal toggle +
   "Auto-pick" model button. 4 tests.
+- **Task 29 — back-catalogue date backfill (3.1)** ✅ `core/backcat_dates.py`
+  (`resolve_real_dates` parses upload_date from a full enumeration;
+  `update_pub_dates` updates only differing rows; `backfill_show_dates`). New
+  `cli.py backfill-dates <slug>` (uses `enumerate_channel_videos(full=True)`).
+  2 tests. **Best-assumption:** exposed as an on-demand CLI command rather than
+  an always-on background thread (keeps launch fast, no surprise yt-dlp load);
+  the resolver is injected so it's fully mockable.
 - **Task 11 — wire use_etag_cache (8.5)** ✅ `rss.conditional_validators`
   gates stored ETag/Last-Modified by the setting; worker uses it (off → sends
   no conditional headers). respx tests confirm header present/absent. Settings
