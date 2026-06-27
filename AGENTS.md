@@ -91,6 +91,7 @@ cli.py logs --type episode. --show <slug> --json   # query the event log
 cli.py logs --export run.json                       # export events to JSON/CSV
 cli.py backfill-dates <slug>                         # real YouTube upload dates
 cli.py export <slug> --format md|json|pdf            # bulk-export transcripts
+cli.py publish [--slug X] --out site/                # static searchable site + RSS
 ```
 
 The CLI shares `state.sqlite` + `watchlist.yaml` with the GUI; changes are picked up live.

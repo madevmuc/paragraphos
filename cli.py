@@ -1263,6 +1263,41 @@ def cmd_watch_list(args: argparse.Namespace) -> int:
 # ────────────────────────────────────────────────────────────────────────
 
 
+def cmd_publish(args: argparse.Namespace) -> int:
+    """Generate a static searchable transcript site + RSS (10.4)."""
+    from core.publish import publish_site
+
+    settings = _settings()
+    root = Path(settings.output_root).expanduser()
+    if not root.is_dir():
+        print(f"no transcripts root: {root}", file=sys.stderr)
+        return 2
+    slugs = [args.slug] if args.slug else [p.name for p in root.iterdir() if p.is_dir()]
+    items = []
+    for slug in slugs:
+        show_dir = root / slug
+        if not show_dir.is_dir():
+            continue
+        for md in sorted(show_dir.glob("*.md")):
+            if md.name == "index.md":
+                continue
+            items.append(
+                {
+                    "slug": f"{slug}--{md.stem}",
+                    "title": md.stem,
+                    "date": md.stem[:10],
+                    "text": md.read_text(encoding="utf-8", errors="replace"),
+                }
+            )
+    if not items:
+        print("no transcripts to publish")
+        return 1
+    dest = Path(args.out) if args.out else (DATA / "published-site")
+    publish_site(items, dest, site_title=args.title or "Paragraphos Transcripts")
+    print(f"published {len(items)} transcript(s) → {dest}/index.html")
+    return 0
+
+
 def cmd_export(args: argparse.Namespace) -> int:
     """Bulk-export a show's transcripts to md/json/pdf (4.1)."""
     from core.bulk_export import BulkExportError, export
@@ -1479,6 +1514,14 @@ def main() -> int:
     s_status = sub.add_parser("status", help="snapshot: queue depth, in-flight, by-status counts")
     s_status.add_argument("--json", action="store_true")
     s_status.set_defaults(fn=cmd_status)
+
+    s_publish = sub.add_parser("publish", help="generate a static searchable transcript site + RSS")
+    s_publish.add_argument("--slug", default=None, help="only this show (default: all)")
+    s_publish.add_argument(
+        "--out", default=None, help="output dir (default: <data>/published-site)"
+    )
+    s_publish.add_argument("--title", default=None, help="site title")
+    s_publish.set_defaults(fn=cmd_publish)
 
     s_export = sub.add_parser("export", help="bulk-export a show's transcripts (md/json/pdf)")
     s_export.add_argument("slug")

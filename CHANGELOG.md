@@ -104,6 +104,9 @@ people actually paste, and paired with a full per-show episode browser.
   history beyond the RSS window and queues the newly fetched videos.
 
 ### Added
+- **Transcript publishing.** `cli.py publish` generates a self-contained static
+  site — an index with client-side full-text search, one page per transcript,
+  and an RSS feed — ready to host anywhere static.
 - **Bulk export.** `cli.py export <slug> --format md|json|pdf` writes all of a
   show's transcripts to one file. Markdown/JSON need no extra dependency; PDF
   uses the optional `fpdf2` package (cleanly reported if absent).

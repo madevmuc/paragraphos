@@ -232,6 +232,10 @@ per-test `_reset_event_bus` fixture was also added for subscriber isolation
   added to requirements. New `cli.py export <slug> --format`. 4 tests.
   **Best-assumption:** CLI export (reads the show's `.md` files); GUI
   multi-select export action deferred. PDF uses core fonts (latin-1 fallback).
+- **Task 32 — transcript publishing (10.4)** ✅ `core/publish.py`
+  `publish_site` → index.html (static list + client-side search), per-transcript
+  pages, search.js + search-index.json, rss.xml. All HTML-escaped. New
+  `cli.py publish [--slug] [--out] [--title]`. 4 tests.
 - **Task 11 — wire use_etag_cache (8.5)** ✅ `rss.conditional_validators`
   gates stored ETag/Last-Modified by the setting; worker uses it (off → sends
   no conditional headers). respx tests confirm header present/absent. Settings
