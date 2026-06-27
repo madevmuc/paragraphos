@@ -16,6 +16,36 @@ from pathlib import Path
 # Confidence markers (``==word==``, 1.3) → <mark> in HTML output.
 _HIGHLIGHT_RE = re.compile(r"==(.+?)==", re.DOTALL)
 
+# SRT cue timestamp line: ``00:00:01,000 --> 00:00:03,000`` (start captured).
+_SRT_TIME_RE = re.compile(r"(\d\d:\d\d:\d\d)[,.]\d\d\d\s*-->")
+
+
+def _parse_srt_cues(srt_text: str) -> list[tuple[str, str]]:
+    """Parse SRT into ``[(start "HH:MM:SS", text), …]`` (milliseconds dropped).
+
+    Tolerant of stray index lines / CRLF / multi-line cue text; cues without a
+    parseable timestamp or with empty text are skipped."""
+    cues: list[tuple[str, str]] = []
+    for block in re.split(r"\n\s*\n", (srt_text or "").replace("\r\n", "\n").strip()):
+        lines = [ln for ln in block.splitlines() if ln.strip()]
+        ts = ti = None
+        for i, ln in enumerate(lines):
+            m = _SRT_TIME_RE.match(ln.strip())
+            if m:
+                ts, ti = m.group(1), i
+                break
+        if ts is None:
+            continue
+        text = " ".join(lines[ti + 1 :]).strip()
+        if text:
+            cues.append((ts, text))
+    return cues
+
+
+def _mark_html(escaped: str) -> str:
+    """Turn ``==word==`` confidence markers in already-escaped text into <mark>."""
+    return _HIGHLIGHT_RE.sub(r"<mark>\1</mark>", escaped)
+
 
 class BulkExportError(RuntimeError):
     pass
@@ -33,28 +63,49 @@ _HTML_STYLE = (
     "font:16px/1.6 -apple-system,Helvetica,Arial,sans-serif;color:#1a1a1a;background:#fff}"
     "h1{font-size:1.5rem;margin:2rem 0 .5rem}article+article{border-top:1px solid #ddd}"
     "mark{background:#fff3b0;padding:0 .1em}p{margin:.6rem 0;white-space:pre-wrap}"
+    ".cue{margin:.35rem 0;display:flex;gap:.6rem}"
+    ".ts{color:#888;font-variant-numeric:tabular-nums;font-size:.85em;"
+    "white-space:nowrap;user-select:none;flex:none}"
     "@media(prefers-color-scheme:dark){body{color:#e6e6e6;background:#1a1a1a}"
     "article+article{border-color:#444}mark{background:#5a4a00;color:#fff}}"
 )
 
 
+def _html_body_from_text(text: str) -> str:
+    """Plain-text fallback body: escape + mark, split into <p> on blank lines."""
+    paras = []
+    for para in re.split(r"\n\s*\n", text or ""):
+        if not para.strip():
+            continue
+        paras.append(f"<p>{_mark_html(_html.escape(para))}</p>")
+    return "\n".join(paras)
+
+
+def _html_body_from_srt(srt_text: str) -> str:
+    """Timestamped body: one row per SRT cue, ``[HH:MM:SS] text``."""
+    rows = []
+    for ts, text in _parse_srt_cues(srt_text):
+        rows.append(
+            f'<div class="cue"><span class="ts">{ts}</span>'
+            f"<span>{_mark_html(_html.escape(text))}</span></div>"
+        )
+    return "\n".join(rows)
+
+
 def _export_html(items: list[dict], dest: Path) -> None:
     """Render the items as one clean, self-contained HTML document.
 
-    Text is HTML-escaped (then ``==word==`` confidence markers become
-    ``<mark>``) and split into <p> paragraphs on blank lines."""
+    When an item carries SRT (``it["srt"]``) the body shows timestamped cues
+    (``[HH:MM:SS] text``); otherwise it falls back to plain paragraphs from
+    ``it["text"]``. Confidence markers (``==word==``) render as <mark>."""
     blocks: list[str] = []
     for it in items:
         title = _html.escape(it.get("title", "Untitled"))
-        text = it.get("text", "") or ""
-        paras = []
-        for para in re.split(r"\n\s*\n", text):
-            if not para.strip():
-                continue
-            esc = _html.escape(para)
-            esc = _HIGHLIGHT_RE.sub(r"<mark>\1</mark>", esc)
-            paras.append(f"<p>{esc}</p>")
-        blocks.append(f"<article>\n<h1>{title}</h1>\n" + "\n".join(paras) + "\n</article>")
+        srt = it.get("srt")
+        body = _html_body_from_srt(srt) if srt and _parse_srt_cues(srt) else None
+        if not body:
+            body = _html_body_from_text(it.get("text", "") or "")
+        blocks.append(f"<article>\n<h1>{title}</h1>\n{body}\n</article>")
     doc = (
         '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'

@@ -52,6 +52,31 @@ def test_export_html_escapes_and_marks_confidence(tmp_path):
     assert "&lt;b&gt;x&lt;/b&gt;" in body  # body tags neutralised, not injected
 
 
+def test_export_html_renders_srt_timestamps(tmp_path):
+    srt = (
+        "1\n00:00:01,000 --> 00:00:03,000\nHello there\n\n"
+        "2\n00:01:05,500 --> 00:01:07,000\nGoodbye ==now==\n"
+    )
+    items = [{"title": "Ep", "text": "fallback body", "srt": srt}]
+    dest = tmp_path / "out.html"
+    export(items, "html", dest)
+    body = dest.read_text(encoding="utf-8")
+    assert '<span class="ts">00:00:01</span>' in body
+    assert "Hello there" in body
+    assert '<span class="ts">00:01:05</span>' in body
+    assert "<mark>now</mark>" in body  # confidence marker survives into cue text
+    assert "fallback body" not in body  # SRT present → cues used, not the md text
+
+
+def test_export_html_falls_back_when_no_srt(tmp_path):
+    items = [{"title": "Ep", "text": "just paragraphs", "srt": ""}]
+    dest = tmp_path / "out.html"
+    export(items, "html", dest)
+    body = dest.read_text(encoding="utf-8")
+    assert "<p>just paragraphs</p>" in body
+    assert 'class="ts"' not in body
+
+
 def test_export_unknown_format_raises(tmp_path):
     with pytest.raises(BulkExportError):
         export(_ITEMS, "docx", tmp_path / "x.docx")

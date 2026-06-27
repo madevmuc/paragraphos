@@ -109,11 +109,15 @@ def _collect_show_transcripts(show_dir: Path) -> list[dict]:
     for md in sorted(show_dir.glob("*.md")):
         if md.name == "index.md":
             continue
+        # Sibling .srt (same stem) carries timestamps — included so HTML/other
+        # exporters can render timestamped cues.
+        srt = md.with_suffix(".srt")
         items.append(
             {
                 "title": md.stem,
                 "date": md.stem[:10],
                 "text": md.read_text(encoding="utf-8", errors="replace"),
+                "srt": srt.read_text(encoding="utf-8", errors="replace") if srt.is_file() else "",
             }
         )
     return items
