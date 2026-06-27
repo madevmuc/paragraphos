@@ -295,6 +295,29 @@ class StateStore:
             ).fetchall()
             return [dict(r) for r in rows]
 
+    def claim_one_pending(self, scope_slugs: list[str], order_by: str) -> Optional[dict]:
+        """Atomically claim the next pending episode for one of ``scope_slugs``,
+        flipping it to ``downloading``, and return its row (or None).
+
+        ``order_by`` MUST be a whitelisted fragment from ``claim_order_by`` —
+        never raw user input. The single ``UPDATE … RETURNING`` is atomic, so
+        concurrent download workers can call this without double-claiming a row
+        (parallel transcription, 2.2)."""
+        if not scope_slugs:
+            return None
+        placeholders = ",".join("?" for _ in scope_slugs)
+        with self._conn() as c:
+            row = c.execute(
+                "UPDATE episodes SET status='downloading' "
+                "WHERE guid = ("
+                "  SELECT guid FROM episodes "
+                f"  WHERE status='pending' AND show_slug IN ({placeholders}) "
+                f"  ORDER BY {order_by} LIMIT 1"
+                ") RETURNING *",
+                tuple(scope_slugs),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
     def set_priority(self, guid: str, priority: int) -> None:
         with self._conn() as c:
             c.execute("UPDATE episodes SET priority=? WHERE guid=?", (priority, guid))

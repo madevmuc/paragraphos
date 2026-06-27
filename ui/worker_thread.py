@@ -175,18 +175,12 @@ class _DownloadPool(QThread):
         # single atomic UPDATE…RETURNING.
         order_by = claim_order_by(self._queue_order)
         with self._claim_lock, self._ctx.state._conn() as c:
-            row = c.execute(
-                "UPDATE episodes SET status='downloading' "
-                "WHERE guid = ("
-                "  SELECT guid FROM episodes "
-                f"  WHERE status='pending' AND show_slug IN ({placeholders}) "
-                f"  ORDER BY {order_by} LIMIT 1"
-                ") "
-                "RETURNING *",
-                tuple(self._scope_slugs),
-            ).fetchone()
-            if row is not None:
-                return dict(row), "pending"
+            # Pending step uses the shared atomic claim helper (also unit-tested
+            # for concurrency safety). It runs on its own connection inside this
+            # lock; the orphan step below shares `c`.
+            pending = self._ctx.state.claim_one_pending(self._scope_slugs, order_by)
+            if pending is not None:
+                return pending, "pending"
             # Orphan branch: only claim rows that were ALREADY 'downloaded'
             # at run-start (the snapshot in _orphan_guids). Without this
             # filter the branch races with the in-pass staging usage of
@@ -522,6 +516,7 @@ class CheckAllThread(QThread):
         # scheduling tier (see core/load.py). detect() shells out to sysctl,
         # so do it once here rather than per-episode.
         _mem, _perf = hw_detect()
+        self._ram_gb = _mem  # cached for the transcribe-worker RAM cap in run()
         # Battery budget (8.4): on battery + pause_on_battery → gentler level.
         from core.power import effective_load_level, on_battery
 
@@ -984,6 +979,7 @@ class CheckAllThread(QThread):
         n_tr = resolve_transcribe_workers(
             self._load_profile.parallel,
             getattr(self.settings, "transcribe_concurrency", 1),
+            ram_gb=getattr(self, "_ram_gb", None),
         )
         # Shared atomic counter so the UI sees a coherent done_idx
         # across all parallel workers (workers race to increment).
