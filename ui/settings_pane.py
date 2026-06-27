@@ -414,6 +414,32 @@ class SettingsPane(QWidget):
         _dg_holder.setLayout(_dg_form)
         root.addWidget(_dg_holder)
 
+        # Processing windows (2.3): only run inside these time windows.
+        self.processing_windows_cb = QCheckBox("Only process during set time windows")
+        self.processing_windows_cb.setObjectName("processing_windows_checkbox")
+        self.processing_windows_cb.setChecked(
+            bool(getattr(self.ctx.settings, "processing_windows_enabled", False))
+        )
+        self.processing_windows_cb.toggled.connect(self._schedule_save)
+        root.addWidget(self.processing_windows_cb)
+
+        _pw_form = QFormLayout()
+        self.processing_windows_edit = QLineEdit(
+            ", ".join(getattr(self.ctx.settings, "processing_windows", []) or [])
+        )
+        self.processing_windows_edit.setPlaceholderText("e.g. 22:00-06:00, 13:00-14:00")
+        self.processing_windows_edit.textChanged.connect(self._schedule_save)
+        self._add_field(
+            _pw_form,
+            "Windows",
+            self.processing_windows_edit,
+            hint="Comma-separated HH:MM-HH:MM ranges (midnight wrap allowed). Empty = always.",
+            hint_kind="info",
+        )
+        _pw_holder = QWidget()
+        _pw_holder.setLayout(_pw_form)
+        root.addWidget(_pw_holder)
+
         # ── YouTube ────────────────────────────────────────────
         # Visible only when Sources → YouTube channels is checked. The
         # whole group hides/shows live as the Sources toggle flips.
@@ -1165,6 +1191,10 @@ class SettingsPane(QWidget):
         s.use_etag_cache = self.use_etag_cache_cb.isChecked()
         s.disk_guard_enabled = self.disk_guard_cb.isChecked()
         s.disk_guard_min_free_gb = int(self.disk_guard_min_gb.value())
+        s.processing_windows_enabled = self.processing_windows_cb.isChecked()
+        s.processing_windows = [
+            w.strip() for w in self.processing_windows_edit.text().split(",") if w.strip()
+        ]
         s.sources_podcasts = self.podcasts_checkbox.isChecked()
         s.sources_youtube = self.youtube_checkbox.isChecked()
         s.show_log_dock = self.show_log_dock_cb.isChecked()

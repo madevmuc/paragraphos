@@ -104,6 +104,9 @@ people actually paste, and paired with a full per-show episode browser.
   history beyond the RSS window and queues the newly fetched videos.
 
 ### Added
+- **Processing windows.** Restrict transcription to set time windows (e.g.
+  overnight) in Settings → Processing & reliability; outside them the worker
+  idles until the next window.
 - **Move episodes to the top of the queue.** A new Queue context-menu action
   persists a stable manual order (via priority) for the selected episodes.
 - **Crash visibility + bug-report bundle.** Uncaught exceptions are routed to

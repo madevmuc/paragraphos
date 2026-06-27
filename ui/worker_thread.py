@@ -689,6 +689,19 @@ class CheckAllThread(QThread):
             self._finish()
             return
 
+        # Processing windows (2.3): outside the configured windows the worker
+        # idles (does nothing this cycle) and waits for the next scheduled run.
+        if getattr(self.settings, "processing_windows_enabled", False):
+            from datetime import datetime
+
+            from core.schedule_windows import within_windows
+
+            windows = list(getattr(self.settings, "processing_windows", []) or [])
+            if not within_windows(datetime.now().strftime("%H:%M"), windows):
+                self.progress.emit("outside processing window — idling until the next window")
+                self._finish()
+                return
+
         from core import backoff
 
         # Pass 1a: filter out skipped shows, then fetch feeds concurrently.

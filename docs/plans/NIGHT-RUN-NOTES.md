@@ -196,6 +196,10 @@ per-test `_reset_event_bus` fixture was also added for subscriber isolation
   **Best-assumption:** delivered reorder via a context action + priority
   persistence instead of native drag-drop, which conflicts with the
   click-to-sort QTableWidget; full drag-drop deferred.
+- **Task 25 — scheduling windows (2.3)** ✅ `core/schedule_windows.py`
+  `within_windows` (multi-window, midnight wrap, malformed-skip). Worker idles
+  at the start of a run when outside windows + `processing_windows_enabled`.
+  Settings toggle + comma-separated windows field. 5 tests.
 - **Task 11 — wire use_etag_cache (8.5)** ✅ `rss.conditional_validators`
   gates stored ETag/Last-Modified by the setting; worker uses it (off → sends
   no conditional headers). respx tests confirm header present/absent. Settings
