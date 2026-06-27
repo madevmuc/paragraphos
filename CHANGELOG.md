@@ -104,6 +104,9 @@ people actually paste, and paired with a full per-show episode browser.
   history beyond the RSS window and queues the newly fetched videos.
 
 ### Added
+- **Re-upload duplicate detection.** `cli.py find-duplicates <slug>` reports
+  likely re-uploads within a show by title similarity (non-destructive); an
+  audio-fingerprint follow-up is designed in `docs/plans/`.
 - **Command palette (⌘K).** Press ⌘K for a fuzzy-searchable list of actions —
   jump between tabs, start/stop the queue, undo, toggle the log panel.
 - **OPML subscription import.** `cli.py import-opml subs.opml --backlog …`

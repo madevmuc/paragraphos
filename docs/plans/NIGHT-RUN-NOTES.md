@@ -246,6 +246,12 @@ per-test `_reset_event_bus` fixture was also added for subscriber isolation
   `fuzzy_filter` (substring-first then subsequence ranking) + `CommandPalette`
   dialog (filter-as-you-type, Enter runs, Esc closes). MainWindow ⌘K opens it
   with nav + start/stop/undo/log-toggle commands. 5 tests.
+- **Task 35 — re-upload dedupe (3.5, escape hatch)** ✅ title-similarity built
+  fully: `core/dedupe.py` (`normalize_title`, `title_similarity` via difflib,
+  `find_near_duplicates`). New `cli.py find-duplicates <slug>` (non-destructive
+  report — avoids false-skip data loss). 5 tests. **Fingerprint dedup deferred
+  to design doc** `docs/plans/dedupe-fingerprint-design.md` (needs `fpcalc`
+  dep) per the escape hatch.
 - **Task 11 — wire use_etag_cache (8.5)** ✅ `rss.conditional_validators`
   gates stored ETag/Last-Modified by the setting; worker uses it (off → sends
   no conditional headers). respx tests confirm header present/absent. Settings

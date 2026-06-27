@@ -1314,6 +1314,27 @@ def cmd_watch_list(args: argparse.Namespace) -> int:
 # ────────────────────────────────────────────────────────────────────────
 
 
+def cmd_find_duplicates(args: argparse.Namespace) -> int:
+    """Report likely re-upload duplicates within a show, by title similarity (3.5)."""
+    from core.dedupe import find_near_duplicates
+
+    state = _state()
+    rows = state.list_by_status(args.slug, EpisodeStatus.PENDING)
+    rows += state.list_by_status(args.slug, EpisodeStatus.DONE)
+    items = [(r["guid"], r["title"]) for r in rows]
+    pairs = find_near_duplicates(items, threshold=args.threshold)
+    titles = {r["guid"]: r["title"] for r in rows}
+    payload = [
+        {"a": a, "b": b, "title_a": titles.get(a), "title_b": titles.get(b)} for a, b in pairs
+    ]
+    human = (
+        "\n".join(f"~ {titles.get(a)!r}  ≈  {titles.get(b)!r}" for a, b in pairs)
+        or "no near-duplicates found"
+    )
+    _emit(payload, as_json=args.json, human=human)
+    return 0
+
+
 def cmd_publish(args: argparse.Namespace) -> int:
     """Generate a static searchable transcript site + RSS (10.4)."""
     from core.publish import publish_site
@@ -1571,6 +1592,12 @@ def main() -> int:
     s_status = sub.add_parser("status", help="snapshot: queue depth, in-flight, by-status counts")
     s_status.add_argument("--json", action="store_true")
     s_status.set_defaults(fn=cmd_status)
+
+    s_dup = sub.add_parser("find-duplicates", help="report likely re-upload duplicates in a show")
+    s_dup.add_argument("slug")
+    s_dup.add_argument("--threshold", type=float, default=0.85)
+    s_dup.add_argument("--json", action="store_true")
+    s_dup.set_defaults(fn=cmd_find_duplicates)
 
     s_publish = sub.add_parser("publish", help="generate a static searchable transcript site + RSS")
     s_publish.add_argument("--slug", default=None, help="only this show (default: all)")
