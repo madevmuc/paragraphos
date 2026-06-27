@@ -148,6 +148,38 @@ def build_menu_bar(window) -> QMenuBar:
     a.triggered.connect(lambda: _open_in_obsidian(window))
     ac.addAction(a)
 
+    # ── Tools ─────────────────────────────────────────────────────
+    # GUI parity with the CLI: each action wraps the same core function the
+    # corresponding `cli.py` subcommand uses.
+    t = mb.addMenu("Tools")
+    a = QAction("Statistics…", window)
+    a.triggered.connect(lambda: _show_stats(window))
+    t.addAction(a)
+    a = QAction("Event Log…", window)
+    a.triggered.connect(lambda: _show_event_log(window))
+    t.addAction(a)
+    a = QAction("Health Check…", window)
+    a.triggered.connect(lambda: _show_health(window))
+    t.addAction(a)
+    t.addSeparator()
+    a = QAction("Bulk Export Transcripts…", window)
+    a.triggered.connect(lambda: _bulk_export(window))
+    t.addAction(a)
+    a = QAction("Publish Transcript Site…", window)
+    a.triggered.connect(lambda: _publish_site(window))
+    t.addAction(a)
+    t.addSeparator()
+    a = QAction("Backfill YouTube Dates (selected show)…", window)
+    a.triggered.connect(lambda: _backfill_dates(window))
+    t.addAction(a)
+    a = QAction("Find Duplicate Episodes (selected show)…", window)
+    a.triggered.connect(lambda: _find_duplicates(window))
+    t.addAction(a)
+    t.addSeparator()
+    a = QAction("Export Bug Report…", window)
+    a.triggered.connect(lambda: _export_bug_report(window))
+    t.addAction(a)
+
     # ── Window ────────────────────────────────────────────────────
     w = mb.addMenu("Window")
     a = QAction("Minimize", window)
@@ -360,6 +392,231 @@ def _check_selected(window) -> None:
     slug = _selected_slug(window)
     if slug:
         window.shows_tab.start_check(only_slug=slug, force=True)
+
+
+# ── Tools menu helpers (GUI parity with the CLI) ──────────────────────────
+
+
+def _show_stats(window) -> None:
+    from PyQt6.QtWidgets import QMessageBox
+
+    from core.stats import dashboard_summary
+
+    s = dashboard_summary(window.ctx.state)
+    QMessageBox.information(
+        window,
+        "Statistics",
+        f"Throughput: {s['throughput_per_day']:.2f} episodes/day (7d)\n"
+        f"Success rate: {s['success_rate'] * 100:.0f}%\n"
+        f"Realtime factor: {s['realtime_factor']:.2f}×\n"
+        f"Done / pending / failed: {s['done']} / {s['pending']} / {s['failed']}",
+    )
+
+
+def _show_health(window) -> None:
+    from PyQt6.QtWidgets import QMessageBox
+
+    from core import health
+
+    rows = health.run_health_check(window.ctx)
+    body = "\n".join(f"{'✓' if r['ok'] else '✗'} {r['check']}: {r['detail']}" for r in rows)
+    QMessageBox.information(window, "Health check", body)
+
+
+def _show_event_log(window) -> None:
+    """Filterable event-log viewer with JSON/CSV export (7.3)."""
+    from PyQt6.QtWidgets import (
+        QFileDialog,
+        QHBoxLayout,
+        QLineEdit,
+        QMessageBox,
+        QPlainTextEdit,
+        QPushButton,
+    )
+
+    dlg = QDialog(window)
+    dlg.setWindowTitle("Event log")
+    dlg.resize(640, 480)
+    lay = QVBoxLayout(dlg)
+    row = QHBoxLayout()
+    type_edit = QLineEdit()
+    type_edit.setPlaceholderText("type filter, e.g. 'episode.' (blank = all)")
+    row.addWidget(type_edit)
+    lay.addLayout(row)
+    view = QPlainTextEdit()
+    view.setReadOnly(True)
+    lay.addWidget(view)
+
+    def _refresh():
+        rows = window.ctx.state.query_events(
+            type_prefix=type_edit.text().strip() or None, limit=500
+        )
+        view.setPlainText(
+            "\n".join(f"{r['ts']}  {r['type']}  {r.get('show_slug') or ''}".rstrip() for r in rows)
+            or "(no events)"
+        )
+
+    type_edit.textChanged.connect(lambda _=None: _refresh())
+
+    btn_row = QHBoxLayout()
+    export_btn = QPushButton("Export…")
+
+    def _export():
+        path, _ = QFileDialog.getSaveFileName(
+            dlg, "Export events", "events.json", "JSON (*.json);;CSV (*.csv)"
+        )
+        if not path:
+            return
+        from core.log_export import export_events
+
+        rows = window.ctx.state.query_events(
+            type_prefix=type_edit.text().strip() or None, limit=5000
+        )
+        fmt = "csv" if path.lower().endswith(".csv") else "json"
+        export_events(rows, fmt, path)
+        QMessageBox.information(dlg, "Exported", f"Wrote {len(rows)} event(s) → {path}")
+
+    export_btn.clicked.connect(_export)
+    btn_row.addWidget(export_btn)
+    btn_row.addStretch()
+    lay.addLayout(btn_row)
+    _refresh()
+    dlg.exec()
+
+
+def _bulk_export(window) -> None:
+    from PyQt6.QtWidgets import QFileDialog, QInputDialog, QMessageBox
+
+    slug = _selected_slug(window)
+    if not slug:
+        QMessageBox.information(window, "Select show", "Select a row in the Shows tab first.")
+        return
+    fmt, ok = QInputDialog.getItem(
+        window, "Bulk export", "Format:", ["md", "json", "pdf"], 0, False
+    )
+    if not ok:
+        return
+    path, _ = QFileDialog.getSaveFileName(window, "Export to", f"{slug}-export.{fmt}")
+    if not path:
+        return
+    show_dir = Path(window.ctx.settings.output_root).expanduser() / slug
+    items = [
+        {"title": md.stem, "text": md.read_text(encoding="utf-8", errors="replace")}
+        for md in sorted(show_dir.glob("*.md"))
+        if md.name != "index.md"
+    ]
+    if not items:
+        QMessageBox.information(window, "Nothing to export", "No transcripts for that show.")
+        return
+    from core.bulk_export import BulkExportError, export
+
+    try:
+        export(items, fmt, path)
+    except BulkExportError as e:
+        QMessageBox.warning(window, "Export failed", str(e))
+        return
+    QMessageBox.information(window, "Exported", f"Wrote {len(items)} transcript(s) → {path}")
+
+
+def _publish_site(window) -> None:
+    from PyQt6.QtWidgets import QFileDialog, QMessageBox
+
+    dest = QFileDialog.getExistingDirectory(window, "Publish site into folder")
+    if not dest:
+        return
+    root = Path(window.ctx.settings.output_root).expanduser()
+    items = []
+    for show_dir in (p for p in root.iterdir() if p.is_dir()):
+        for md in sorted(show_dir.glob("*.md")):
+            if md.name == "index.md":
+                continue
+            items.append(
+                {
+                    "slug": f"{show_dir.name}--{md.stem}",
+                    "title": md.stem,
+                    "date": md.stem[:10],
+                    "text": md.read_text(encoding="utf-8", errors="replace"),
+                }
+            )
+    if not items:
+        QMessageBox.information(window, "Nothing to publish", "No transcripts found.")
+        return
+    from core.publish import publish_site
+
+    out = publish_site(items, dest)
+    QMessageBox.information(window, "Published", f"Wrote {len(items)} page(s) → {out}/index.html")
+
+
+def _backfill_dates(window) -> None:
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtWidgets import QApplication, QMessageBox
+
+    slug = _selected_slug(window)
+    if not slug:
+        QMessageBox.information(window, "Select show", "Select a YouTube show first.")
+        return
+    show = next((s for s in window.ctx.watchlist.shows if s.slug == slug), None)
+    if not show or getattr(show, "source", "podcast") != "youtube":
+        QMessageBox.information(window, "YouTube only", "Date backfill applies to YouTube shows.")
+        return
+    from core.backcat_dates import backfill_show_dates
+    from core.youtube import channel_id_from_feed_url
+    from core.youtube_meta import enumerate_channel_videos
+
+    cid = channel_id_from_feed_url(show.rss)
+    if not cid:
+        QMessageBox.warning(window, "Backfill", "Couldn't resolve the channel id.")
+        return
+    QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+    try:
+        changed = backfill_show_dates(
+            window.ctx.state,
+            cid,
+            enumerate_fn=lambda c, *, full: enumerate_channel_videos(
+                c, include_shorts=True, full=full
+            ),
+        )
+    finally:
+        QApplication.restoreOverrideCursor()
+    QMessageBox.information(window, "Backfill", f"Updated {changed} episode date(s).")
+
+
+def _find_duplicates(window) -> None:
+    from PyQt6.QtWidgets import QMessageBox
+
+    from core.dedupe import find_near_duplicates
+    from core.state import EpisodeStatus
+
+    slug = _selected_slug(window)
+    if not slug:
+        QMessageBox.information(window, "Select show", "Select a show first.")
+        return
+    rows = window.ctx.state.list_by_status(slug, EpisodeStatus.PENDING)
+    rows += window.ctx.state.list_by_status(slug, EpisodeStatus.DONE)
+    titles = {r["guid"]: r["title"] for r in rows}
+    pairs = find_near_duplicates([(r["guid"], r["title"]) for r in rows])
+    body = (
+        "\n".join(f"• {titles.get(a)!r}\n  ≈ {titles.get(b)!r}" for a, b in pairs)
+        or "No likely duplicates found."
+    )
+    QMessageBox.information(window, "Duplicate episodes", body)
+
+
+def _export_bug_report(window) -> None:
+    from PyQt6.QtWidgets import QFileDialog, QMessageBox
+
+    path, _ = QFileDialog.getSaveFileName(window, "Export bug report", "paragraphos-bug-report.zip")
+    if not path:
+        return
+    from core.bugbundle import build_bundle
+
+    build_bundle(
+        settings=window.ctx.settings,
+        state=window.ctx.state,
+        dest=path,
+        log_dir=window.ctx.data_dir / "logs",
+    )
+    QMessageBox.information(window, "Bug report", f"Wrote {path}")
 
 
 def _mark_selected_stale(window) -> None:
