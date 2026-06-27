@@ -209,6 +209,11 @@ per-test `_reset_event_bus` fixture was also added for subscriber isolation
   (`parse_pmset_on_battery`, `on_battery` via pmset, `effective_load_level`).
   Worker resolves the load profile through it (battery + pause_on_battery →
   battery_load_level). Settings toggle + battery-load combo. 4 tests.
+- **Task 28 — Metal toggle + model auto-pick (8.1)** ✅ `hw.recommend_model`
+  (RAM/cores → base/small/medium/turbo). `_build_whisper_cmd` adds `-ng
+  --no-gpu` only when Metal disabled (compiled-in caveat documented). Threaded
+  through transcribe_episode + PipelineContext + worker. Settings Metal toggle +
+  "Auto-pick" model button. 4 tests.
 - **Task 11 — wire use_etag_cache (8.5)** ✅ `rss.conditional_validators`
   gates stored ETag/Last-Modified by the setting; worker uses it (off → sends
   no conditional headers). respx tests confirm header present/absent. Settings

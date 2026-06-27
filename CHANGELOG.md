@@ -104,6 +104,9 @@ people actually paste, and paired with a full per-show episode browser.
   history beyond the RSS window and queues the newly fetched videos.
 
 ### Added
+- **GPU/Metal toggle + model auto-pick.** A Settings toggle can force CPU-only
+  whisper (Metal is on by default), and an **Auto-pick** button suggests a
+  whisper model suited to the Mac's RAM and core count.
 - **Battery-aware load.** When enabled, transcription drops to a gentler load
   level while the Mac runs on battery, then returns to the configured level on
   AC power.

@@ -441,6 +441,22 @@ class SettingsPane(QWidget):
         root.addWidget(_pw_holder)
 
         # Battery budget (8.4): drop to a gentler load level on battery.
+        self.whisper_metal_cb = QCheckBox("Use GPU (Metal) acceleration for whisper")
+        self.whisper_metal_cb.setObjectName("whisper_metal_checkbox")
+        self.whisper_metal_cb.setChecked(
+            bool(getattr(self.ctx.settings, "whisper_metal_enabled", True))
+        )
+        self.whisper_metal_cb.toggled.connect(self._schedule_save)
+        root.addWidget(self.whisper_metal_cb)
+
+        metal_hint = QLabel(
+            "<span style='color: palette(placeholder-text); font-size: 11px;'>"
+            "Metal is built into whisper.cpp and on by default; turn off to force "
+            "CPU-only (slower, but useful for debugging GPU issues).</span>"
+        )
+        metal_hint.setWordWrap(True)
+        root.addWidget(metal_hint)
+
         self.pause_on_battery_cb = QCheckBox("Ease off CPU/RAM when running on battery")
         self.pause_on_battery_cb.setObjectName("pause_on_battery_checkbox")
         self.pause_on_battery_cb.setChecked(
@@ -663,6 +679,11 @@ class SettingsPane(QWidget):
         self.model.setCurrentText(self.ctx.settings.whisper_model)
         self.model.currentTextChanged.connect(self._on_model_changed)
         model_row.addWidget(self.model)
+        # Model auto-pick (8.1): suggest a model for this machine's class.
+        _autopick = QPushButton("Auto-pick")
+        _autopick.setToolTip("Pick a whisper model suited to this Mac's RAM + cores")
+        _autopick.clicked.connect(self._autopick_model)
+        model_row.addWidget(_autopick)
         self.model_status = QLabel()
         self.model_status.setStyleSheet(f"color: {_theme_tokens()['ink_3']}; font-style: italic;")
         model_row.addWidget(self.model_status, stretch=1)
@@ -1083,6 +1104,14 @@ class SettingsPane(QWidget):
         self._drift_label.setStyleSheet(f"color: {tokens['ok']}; font-size: 11px;")
         self._drift_button.setVisible(False)
 
+    def _autopick_model(self) -> None:
+        """Set the model combo to the recommendation for this machine (8.1)."""
+        from core.hw import detect, recommend_model
+
+        mem_gb, cores = detect()
+        rec = recommend_model(cores=cores or 4, ram_gb=mem_gb or 8.0)
+        self.model.setCurrentText(rec)
+
     def _on_model_changed(self, text: str) -> None:
         self._schedule_save()
         self._update_model_status()
@@ -1219,6 +1248,7 @@ class SettingsPane(QWidget):
         s.use_etag_cache = self.use_etag_cache_cb.isChecked()
         s.disk_guard_enabled = self.disk_guard_cb.isChecked()
         s.disk_guard_min_free_gb = int(self.disk_guard_min_gb.value())
+        s.whisper_metal_enabled = self.whisper_metal_cb.isChecked()
         s.pause_on_battery = self.pause_on_battery_cb.isChecked()
         s.battery_load_level = self.battery_load_combo.currentData() or "quiet"
         s.processing_windows_enabled = self.processing_windows_cb.isChecked()

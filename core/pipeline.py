@@ -42,6 +42,8 @@ class PipelineContext:
     # sub-threshold words in ==highlight== in the transcript body.
     confidence_marking: bool = False
     confidence_threshold: float = 0.5
+    # GPU/Metal (8.1): when False, pass --no-gpu to whisper.
+    metal_enabled: bool = True
     # Duration filters (3.3): effective bounds in seconds (0 = no limit).
     # Resolved per show (show value over settings default) in the worker.
     min_duration_sec: int = 0
@@ -397,6 +399,7 @@ def transcribe_phase(outcome: DownloadOutcome, ctx: PipelineContext) -> Pipeline
             save_srt=ctx.save_srt,
             confidence_marking=ctx.confidence_marking,
             confidence_threshold=ctx.confidence_threshold,
+            metal_enabled=ctx.metal_enabled,
             progress_cb=_write_progress,
         )
     except TranscriptionError as e:

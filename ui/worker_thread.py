@@ -600,6 +600,7 @@ class CheckAllThread(QThread):
             save_srt=self.settings.save_srt,
             confidence_marking=bool(getattr(self.settings, "confidence_marking_enabled", False)),
             confidence_threshold=float(getattr(self.settings, "confidence_threshold", 0.5)),
+            metal_enabled=bool(getattr(self.settings, "whisper_metal_enabled", True)),
         )
         from core.filters import resolve_duration_bounds
 

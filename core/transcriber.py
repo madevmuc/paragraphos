@@ -283,6 +283,7 @@ def _build_whisper_cmd(
     processors: int,
     whisper_prompt: str,
     confidence_json: bool = False,
+    metal_enabled: bool = True,
     launch_prefix: Sequence[str] = (),
 ) -> list[str]:
     """Assemble the whisper-cli argv. Split out so the flag set is unit-testable.
@@ -309,6 +310,11 @@ def _build_whisper_cmd(
     ]
     if confidence_json:
         cmd += ["-oj", "--output-json-full"]
+    # GPU/Metal (8.1): Metal is compiled into whisper.cpp and on by default;
+    # the only runtime lever is disabling it. When the user turns Metal off we
+    # pass --no-gpu; otherwise we leave the default (GPU on). No-op-safe.
+    if not metal_enabled:
+        cmd += ["-ng", "--no-gpu"]
     if fast_mode:
         cmd += ["-bs", "1", "-bo", "1", "-ac", "0", "--no-fallback"]
     if processors > 1:
@@ -377,6 +383,7 @@ def transcribe_episode(
     save_srt: bool = True,
     confidence_marking: bool = False,
     confidence_threshold: float = 0.5,
+    metal_enabled: bool = True,
     progress_cb=None,
 ) -> TranscribeResult:
     """Run whisper-cli once and produce <output_dir>/<slug>.md and .srt.
@@ -441,6 +448,7 @@ def transcribe_episode(
             processors=processors,
             whisper_prompt=whisper_prompt,
             confidence_json=confidence_marking,
+            metal_enabled=metal_enabled,
             launch_prefix=launch_prefix,
         )
         # Per-episode timeout scaled to MP3 size — see _whisper_timeout
