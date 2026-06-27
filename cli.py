@@ -1358,6 +1358,27 @@ def cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_mcp(_args: argparse.Namespace) -> int:
+    """Run the MCP server over stdio (10.3) so an LLM client can drive the app."""
+    from core.mcp_server import McpUnavailable, serve_stdio
+
+    class _Ctx:
+        pass
+
+    ctx = _Ctx()
+    ctx.watchlist = _watchlist()
+    ctx.state = _state()
+    ctx.settings = _settings()
+    try:
+        serve_stdio(ctx)
+    except McpUnavailable as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        pass
+    return 0
+
+
 def cmd_find_duplicates(args: argparse.Namespace) -> int:
     """Report likely re-upload duplicates within a show, by title similarity (3.5)."""
     from core.dedupe import find_near_duplicates
@@ -1627,6 +1648,9 @@ def main() -> int:
         "--token", default=None, help="auth token (default: generated + persisted)"
     )
     s_serve.set_defaults(fn=cmd_serve)
+
+    s_mcp = sub.add_parser("mcp", help="run the MCP server over stdio (needs the 'mcp' package)")
+    s_mcp.set_defaults(fn=cmd_mcp)
 
     s_dup = sub.add_parser("find-duplicates", help="report likely re-upload duplicates in a show")
     s_dup.add_argument("slug")
