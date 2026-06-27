@@ -458,24 +458,31 @@ class _TranscribeWorker(QThread):
                     # should turn errors into PipelineResult, but guard.
                     r = PipelineResult("failed", outcome.guid, str(e))
 
-            with self._done_lock:
-                self._done_counter[0] += 1
-                done_idx = self._done_counter[0]
-            if r.action == "failed":
-                self.progress.emit(f"    [{r.action}]")
-                for line in r.detail.splitlines():
-                    self.progress.emit(f"        {line}")
+            # A "deferred" outcome (transient retry / paused download) leaves the
+            # episode PENDING for a later attempt — it is NOT done, so it must
+            # not advance the done counter (else done_idx overshoots total and a
+            # re-processed episode is double-counted). Just log progress.
+            if r.action == "deferred":
+                self.progress.emit(f"    [deferred] {r.detail[:160]}")
             else:
-                self.progress.emit(f"    [{r.action}] {r.detail[:160]}")
-            self.episode_done.emit(
-                show.slug,
-                ep["guid"],
-                r.action,
-                done_idx,
-                self._total,
-                show.title,
-                ep["title"],
-            )
+                with self._done_lock:
+                    self._done_counter[0] += 1
+                    done_idx = self._done_counter[0]
+                if r.action == "failed":
+                    self.progress.emit(f"    [{r.action}]")
+                    for line in r.detail.splitlines():
+                        self.progress.emit(f"        {line}")
+                else:
+                    self.progress.emit(f"    [{r.action}] {r.detail[:160]}")
+                self.episode_done.emit(
+                    show.slug,
+                    ep["guid"],
+                    r.action,
+                    done_idx,
+                    self._total,
+                    show.title,
+                    ep["title"],
+                )
 
             if self._stop.is_set():
                 # Drain without processing further work items, but keep

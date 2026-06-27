@@ -23,3 +23,13 @@ def test_manual_auto_whisper_mode():
 
 def test_unknown_mode_falls_back_to_manual_whisper():
     assert caption_source_chain("captions", "nonsense") == ["manual", "whisper"]
+
+
+def test_legacy_auto_captions_pref_in_helper():
+    # The legacy per-show pref must be honoured by the helper itself (single
+    # source of truth), regardless of the settings fallback mode.
+    assert caption_source_chain("auto-captions", "manual_whisper") == [
+        "manual",
+        "auto",
+        "whisper",
+    ]

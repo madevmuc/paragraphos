@@ -391,10 +391,14 @@ class StateStore:
         self, guid: str, status: EpisodeStatus, *, error_text: Optional[str] = None
     ) -> None:
         now = datetime.now(timezone.utc).isoformat()
+        emits_event = _STATUS_EVENT_MAP.get(status) is not None
         with self._conn() as c:
             if status == EpisodeStatus.DONE:
+                # Success clears the failure bookkeeping so a later, unrelated
+                # transient failure gets its full retry budget (6.1).
                 c.execute(
-                    "UPDATE episodes SET status=?, completed_at=?, error_text=NULL WHERE guid=?",
+                    "UPDATE episodes SET status=?, completed_at=?, error_text=NULL, "
+                    "error_category=NULL, attempts=0 WHERE guid=?",
                     (status.value, now, guid),
                 )
             elif status in (EpisodeStatus.DOWNLOADING, EpisodeStatus.TRANSCRIBING):
@@ -409,11 +413,19 @@ class StateStore:
                 )
             else:
                 c.execute("UPDATE episodes SET status=? WHERE guid=?", (status.value, guid))
-            row = c.execute(
-                "SELECT show_slug, title, detected_language FROM episodes WHERE guid=?",
-                (guid,),
-            ).fetchone()
-        self._emit_status_event(guid, status, row, error_text)
+            # Only fetch the payload row for statuses that actually emit an event
+            # — PENDING/STALE/PAUSED transitions (common in the worker hot path)
+            # skip the extra SELECT entirely.
+            row = (
+                c.execute(
+                    "SELECT show_slug, title, detected_language FROM episodes WHERE guid=?",
+                    (guid,),
+                ).fetchone()
+                if emits_event
+                else None
+            )
+        if emits_event:
+            self._emit_status_event(guid, status, row, error_text)
 
     @staticmethod
     def _emit_status_event(guid, status, row, error_text):

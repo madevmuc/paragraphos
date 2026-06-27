@@ -46,7 +46,8 @@ def handle_request(
                     "SELECT COUNT(*) AS n FROM episodes WHERE status=?", (st.value,)
                 ).fetchone()
             counts[st.value] = row["n"] if row else 0
-        counts["paused"] = ctx.state.get_meta("queue_paused") == "1"
+        # Distinct key — `paused` already holds the count of PAUSED episodes.
+        counts["queue_paused"] = ctx.state.get_meta("queue_paused") == "1"
         return 200, counts
     if method == "GET" and path == "/queue":
         with ctx.state._conn() as c:

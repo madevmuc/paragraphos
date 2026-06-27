@@ -9,16 +9,10 @@ window is skipped, never raised.
 from __future__ import annotations
 
 
-def _in_window(now: str, start: str, end: str) -> bool:
-    if start == end:
-        return False
-    if start < end:
-        return start <= now < end
-    return now >= start or now < end  # wraps midnight
-
-
 def within_windows(now_hhmm: str, windows: list[str]) -> bool:
     """True if ``now_hhmm`` is inside any window (or no windows are set)."""
+    from core.timewindow import in_window
+
     if not windows:
         return True
     for win in windows:
@@ -27,7 +21,7 @@ def within_windows(now_hhmm: str, windows: list[str]) -> bool:
             start, end = start.strip(), end.strip()
             if not start or not end:
                 continue
-            if _in_window(now_hhmm, start, end):
+            if in_window(now_hhmm, start, end):
                 return True
         except (ValueError, AttributeError):
             continue

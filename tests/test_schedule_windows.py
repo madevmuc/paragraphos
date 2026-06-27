@@ -27,6 +27,12 @@ def test_multiple_windows():
     assert within_windows("15:00", wins) is False
 
 
+def test_non_zero_padded_input():
+    # "8:00" must compare correctly against "08:30" (zero-pad normalisation).
+    assert within_windows("08:30", ["8:00-9:00"]) is True
+    assert within_windows("09:30", ["8:00-9:00"]) is False
+
+
 def test_malformed_window_ignored():
     # A bad entry must not crash; it's simply skipped.
     assert within_windows("07:00", ["garbage", "06:00-09:00"]) is True

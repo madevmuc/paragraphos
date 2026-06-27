@@ -79,6 +79,21 @@ def test_record_failure_retry_vs_terminal(tmp_path):
     assert ep["error_category"] == WHISPER
 
 
+def test_attempts_reset_on_success(tmp_path):
+    from core.state import EpisodeStatus, StateStore
+
+    s = StateStore(tmp_path / "s.sqlite")
+    s.init_schema()
+    s.upsert_episode(show_slug="sh", guid="g1", title="T", pub_date="2026-01-01", mp3_url="u")
+    s.record_failure("g1", NETWORK, "net err", retry=True)
+    assert s.get_episode("g1")["attempts"] == 1
+    # A later success clears attempts + category so a future failure gets full budget.
+    s.set_status("g1", EpisodeStatus.DONE)
+    ep = s.get_episode("g1")
+    assert ep["attempts"] == 0
+    assert ep["error_category"] is None
+
+
 def test_should_retry_transient_under_cap_then_stops():
     from core.errors import should_retry
 

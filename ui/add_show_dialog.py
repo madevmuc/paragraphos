@@ -1563,6 +1563,9 @@ class AddShowDialog(QDialog):
         cid = preview.get("channel_id") or ""
         is_playlist = bool(preview.get("is_playlist"))
         playlist_id = preview.get("playlist_id") or ""
+        if is_playlist and not playlist_id:
+            QMessageBox.warning(self, "Missing", "Could not determine the playlist id.")
+            return
         if not cid and not is_playlist:
             QMessageBox.warning(self, "Missing", "Could not determine channel id.")
             return

@@ -689,11 +689,19 @@ class QueueTab(QWidget):
 
     def _set_download_paused(self, guids: list[str], paused: bool) -> None:
         """Set/clear the per-download pause flag (2.4). A paused in-flight
-        download halts (leaving a .part) and re-queues; resume continues."""
+        download halts (leaving a .part) and parks the episode as PAUSED; resume
+        clears the flag and re-queues it (PENDING) so it continues from the .part."""
         for g in guids:
             self.ctx.state.set_meta(f"download_paused:{g}", "1" if paused else "0")
+            if not paused:
+                # Only un-park episodes parked by a pause; never disturb others.
+                ep = self.ctx.state.get_episode(g)
+                if ep and ep.get("status") == EpisodeStatus.PAUSED.value:
+                    self.ctx.state.set_status(g, EpisodeStatus.PENDING)
         verb = "Paused" if paused else "Resumed"
         log_activity(f"{verb} download for {len(guids)} episode(s)")
+        self._last_table_refresh = 0.0
+        self.refresh()
 
     def _move_to_top(self, guids: list[str]) -> None:
         """Persist a stable manual order for the selected episodes at the top of

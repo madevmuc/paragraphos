@@ -14,14 +14,12 @@ from datetime import datetime
 def in_quiet_hours(now_hhmm: str, start: str, end: str) -> bool:
     """True if ``now_hhmm`` (``"HH:MM"``) falls within [start, end).
 
-    Handles windows that wrap past midnight (e.g. 22:00–08:00). Equal bounds
-    mean "no quiet hours" (never suppress)."""
-    if start == end:
-        return False
-    if start < end:
-        return start <= now_hhmm < end
-    # wraps midnight
-    return now_hhmm >= start or now_hhmm < end
+    Handles windows that wrap past midnight (e.g. 22:00–08:00) and non-zero-
+    padded input; equal bounds mean "no quiet hours". Thin wrapper over the
+    shared :func:`core.timewindow.in_window`."""
+    from core.timewindow import in_window
+
+    return in_window(now_hhmm, start, end)
 
 
 def should_notify(event, settings, show=None, *, now_hhmm: str | None = None) -> bool:

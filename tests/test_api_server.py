@@ -33,9 +33,17 @@ def test_shows_endpoint(tmp_path):
 
 
 def test_status_endpoint(tmp_path):
-    status, body = handle_request("GET", "/status", _TOKEN, _TOKEN, _Ctx(tmp_path))
+    ctx = _Ctx(tmp_path)
+    ctx.state.upsert_episode(
+        show_slug="sh", guid="p1", title="P", pub_date="2026-01-01", mp3_url="u"
+    )
+    ctx.state.set_status("p1", EpisodeStatus.PAUSED)
+    status, body = handle_request("GET", "/status", _TOKEN, _TOKEN, ctx)
     assert status == 200
     assert "pending" in body
+    # The PAUSED episode count and the queue-paused boolean must not collide.
+    assert body["paused"] == 1
+    assert body["queue_paused"] is False
 
 
 def test_queue_endpoint(tmp_path):

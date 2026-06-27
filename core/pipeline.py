@@ -102,7 +102,8 @@ def caption_source_chain(pref: str, fallback_mode: str) -> list[str]:
     """
     if pref == "whisper":
         return ["whisper"]
-    if fallback_mode == "manual_auto_whisper":
+    # Legacy per-show pref: "auto-captions" always means manual→auto→whisper.
+    if pref == "auto-captions" or fallback_mode == "manual_auto_whisper":
         return ["manual", "auto", "whisper"]
     return ["manual", "whisper"]
 
@@ -305,8 +306,10 @@ def download_phase(
         ctx.state.set_status(guid, EpisodeStatus.DOWNLOADING)
         download_mp3(ep["mp3_url"], mp3_path, pause_check=_pause_check)
     except DownloadPaused:
-        # Per-download pause (2.4): re-queue so it resumes from the .part later.
-        ctx.state.set_status(guid, EpisodeStatus.PENDING)
+        # Per-download pause (2.4): park as PAUSED (not PENDING) so the claim
+        # loop won't immediately re-grab it and re-pause in a tight loop. The
+        # .part is kept; "Resume download" flips it back to PENDING to continue.
+        ctx.state.set_status(guid, EpisodeStatus.PAUSED)
         return DownloadOutcome(
             guid=guid, result=PipelineResult("deferred", guid, "download paused")
         )
@@ -612,12 +615,9 @@ def _process_youtube_episode(
 
     pref = ctx.youtube_transcript_pref or ctx.youtube_default_transcript_source or "captions"
     # Build the ordered source chain from the per-show pref + the settings
-    # caption-fallback mode (3.4). A legacy "auto-captions" pref keeps meaning
-    # "manual then auto then whisper".
-    if pref == "auto-captions":
-        chain = ["manual", "auto", "whisper"]
-    else:
-        chain = caption_source_chain(pref, ctx.caption_fallback_mode)
+    # caption-fallback mode (3.4). caption_source_chain owns all the rules,
+    # including the legacy "auto-captions" pref.
+    chain = caption_source_chain(pref, ctx.caption_fallback_mode)
     want_auto = "auto" in chain
 
     show_dir = ctx.output_root / ep["show_slug"]
@@ -707,6 +707,15 @@ def _process_youtube_episode(
             except Exception:
                 pass
 
+        # Same pre-transcribe integrity guard as the podcast path (6.5).
+        from core import integrity
+
+        _ireason = integrity.check_audio_integrity(mp3_path) or integrity.check_model_integrity(
+            model_path, ctx.model_name
+        )
+        if _ireason:
+            ctx.state.set_status(guid, EpisodeStatus.FAILED, error_text=f"integrity: {_ireason}")
+            return PipelineResult("failed", guid, f"integrity: {_ireason}")
         try:
             wresult = transcribe_episode(
                 mp3_path=mp3_path,
@@ -721,6 +730,9 @@ def _process_youtube_episode(
                 threads=ctx.threads,
                 launch_prefix=ctx.launch_prefix,
                 save_srt=True,  # always need SRT for YouTube re-render
+                confidence_marking=ctx.confidence_marking,
+                confidence_threshold=ctx.confidence_threshold,
+                metal_enabled=ctx.metal_enabled,
                 progress_cb=_write_progress,
             )
         except TranscriptionError as e:
@@ -760,6 +772,14 @@ def _process_youtube_episode(
         ctx.state.record_completion(guid, len(md_text.split()), _duration_from_srt(srt_path))
     except Exception:
         ctx.state.record_completion(guid, len(md_text.split()))
+    # Persist whisper-derived metadata when the whisper fallback ran (parity
+    # with the podcast path); the captions path leaves wresult unset.
+    _wres = locals().get("wresult")
+    if _wres is not None:
+        if getattr(_wres, "detected_language", None):
+            ctx.state.set_detected_language(guid, _wres.detected_language)
+        if getattr(_wres, "mean_confidence", None) is not None:
+            ctx.state.set_mean_confidence(guid, _wres.mean_confidence)
     ctx.state.set_status(guid, EpisodeStatus.DONE)
     try:
         ctx.state.set_meta(f"transcribe_pct:{guid}", "")

@@ -120,7 +120,7 @@ def test_youtube_episode_falls_back_to_whisper_when_no_captions(tmp_path: Path):
     def fake_audio(video_id, target_mp3, **kw):
         called["audio"] = True
         target_mp3.parent.mkdir(parents=True, exist_ok=True)
-        target_mp3.write_bytes(b"\x00" * 1024)
+        target_mp3.write_bytes(b"ID3" + b"\x00" * 1024)
         return target_mp3
 
     class _R:
@@ -168,7 +168,7 @@ def test_youtube_episode_whisper_pref_skips_captions(tmp_path: Path):
     def fake_audio(video_id, target_mp3, **kw):
         called["audio"] = True
         target_mp3.parent.mkdir(parents=True, exist_ok=True)
-        target_mp3.write_bytes(b"\x00" * 1024)
+        target_mp3.write_bytes(b"ID3" + b"\x00" * 1024)
         return target_mp3
 
     class _R:
@@ -211,7 +211,7 @@ def test_youtube_whisper_writes_progress_and_persists_duration(tmp_path: Path):
 
     def fake_audio(video_id, target_mp3, **kw):
         target_mp3.parent.mkdir(parents=True, exist_ok=True)
-        target_mp3.write_bytes(b"\x00" * 1024)
+        target_mp3.write_bytes(b"ID3" + b"\x00" * 1024)
         return target_mp3
 
     class _R:
@@ -289,7 +289,7 @@ def test_short_not_skipped_when_include_shorts(tmp_path: Path):
 
     def fake_audio(video_id, target_mp3, **kw):
         target_mp3.parent.mkdir(parents=True, exist_ok=True)
-        target_mp3.write_bytes(b"\x00" * 1024)
+        target_mp3.write_bytes(b"ID3" + b"\x00" * 1024)
         return target_mp3
 
     class _R:

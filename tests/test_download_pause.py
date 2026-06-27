@@ -57,3 +57,30 @@ def test_no_pause_check_is_noop(tmp_path):
     dest = tmp_path / "ep.mp3"
     download_mp3(_URL, dest, chunk=8)
     assert dest.exists()
+
+
+@respx.mock
+def test_pipeline_pause_parks_as_paused_not_pending(tmp_path):
+    # A paused download must park the episode as PAUSED so the claim loop won't
+    # immediately re-grab it and re-pause in a tight loop.
+    from core.library import LibraryIndex
+    from core.pipeline import PipelineContext, download_phase
+    from core.state import EpisodeStatus, StateStore
+
+    _mock()
+    s = StateStore(tmp_path / "s.sqlite")
+    s.init_schema()
+    s.upsert_episode(show_slug="sh", guid="g1", title="T", pub_date="2026-01-01", mp3_url=_URL)
+    ctx = PipelineContext(
+        state=s,
+        library=LibraryIndex(tmp_path / "out"),
+        output_root=tmp_path / "out",
+        whisper_prompt="",
+        retention_days=7,
+        delete_mp3_after=False,
+        download_pause_check=lambda guid: True,  # pause immediately
+    )
+    outcome = download_phase("g1", ctx, episode_number="0001")
+    assert outcome.result is not None
+    assert outcome.result.action == "deferred"
+    assert s.get_episode("g1")["status"] == EpisodeStatus.PAUSED.value

@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from PyQt6.QtCore import QDateTime, QLocale, QSettings, Qt, QTimer, QUrl
+from PyQt6.QtCore import QDateTime, QLocale, QSettings, Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QHBoxLayout,
@@ -95,6 +95,11 @@ def _last_compiled_path(ctx) -> Path:
 
 
 class MainWindow(QMainWindow):
+    # Activity-log lines may be emitted from worker threads (via the event-bus
+    # bridge). This signal marshals them onto the GUI thread before any QWidget
+    # is touched — emitting a signal is thread-safe; the slot runs queued here.
+    _log_line_sig = pyqtSignal(str)
+
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Paragraphos")
@@ -241,9 +246,16 @@ class MainWindow(QMainWindow):
 
         # Fan every log message into both the dock (bottom) and the
         # sidebar Logs pane so they stay in sync.
-        def _log_sink(msg: str) -> None:
+        def _append_log_line(msg: str) -> None:
             self.log_dock.append(msg)
             self.logs_pane.append(msg)
+
+        # Widget mutation only happens in this slot, always on the GUI thread.
+        self._log_line_sig.connect(_append_log_line)
+
+        def _log_sink(msg: str) -> None:
+            # Safe to call from any thread — the signal queues to the GUI thread.
+            self._log_line_sig.emit(msg)
 
         self.shows_tab.log_sink = _log_sink  # type: ignore[attr-defined]
         # App-wide activity log (adds/removes/start/pause/deletes/…) fans into

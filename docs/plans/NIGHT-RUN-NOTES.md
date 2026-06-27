@@ -296,6 +296,39 @@ full runs); the pre-commit hook passes normally again — no more `--no-verify`.
   dialog (resolve + enumerate generalised for playlists). Every CLI command now
   has a GUI surface. OPML import + single-show export already had menu actions.
 
+## Self-review pass (fixes applied after a multi-angle diff review)
+
+Ran an 8-angle review over `main..HEAD`; fixed the confirmed findings:
+- **Download-pause infinite loop** — a paused in-flight download set PENDING with
+  the pause flag still set, so the claim loop re-grabbed and re-paused it. Now
+  parks as PAUSED; "Resume download" clears the flag + re-queues (PENDING).
+- **Progress overcount** — "deferred" outcomes (retry/pause) no longer bump the
+  done counter / emit `episode_done`, so `done_idx` can't overshoot total.
+- **API `/status` key collision** — the PAUSED-episode count and the
+  queue-paused boolean shared the `paused` key; the boolean is now `queue_paused`.
+- **YouTube whisper fallback parity** — now runs the pre-transcribe integrity
+  check and passes confidence/threshold/metal flags, and persists
+  detected_language/mean_confidence (matches the podcast path).
+- **Bug-bundle leak** — `redact_settings` now redacts webhook command paths/URLs
+  (the list was written verbatim into the "redacted" bundle).
+- **Move-to-top** — `set_priorities` now ranks above the Run-now/Run-next bump
+  priorities so the action actually reaches the top.
+- **attempts reset on success** — `set_status(DONE)` clears `attempts` +
+  `error_category` so a later transient failure gets its full retry budget.
+- **set_status hot-path** — skips the payload SELECT + emit for non-event
+  statuses (PENDING/STALE/PAUSED).
+- **Time-window dedup + zero-pad** — quiet-hours and processing-windows now share
+  `core/timewindow.in_window`, which normalises `8:00`→`08:00` before comparing.
+- **Caption chain** — the legacy `auto-captions` rule moved into
+  `caption_source_chain` (single source of truth).
+- **Activity-log thread-safety** — the event-bus bridge can fire from worker
+  threads; the MainWindow sink now marshals lines onto the GUI thread via a
+  signal before touching any QWidget.
+- **Playlist guard** — the add dialog requires a non-empty playlist id.
+
+Updated YT pipeline test fixtures to write valid audio magic (the new integrity
+check rejects dummy bytes). 916 tests green, ruff clean, suite exits 0.
+
 ## Final summary
 
 **Outcome:** all 41 plan tasks addressed. Baseline `720 passed` → final
