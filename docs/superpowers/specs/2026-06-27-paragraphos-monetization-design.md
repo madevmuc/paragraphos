@@ -56,6 +56,11 @@ dass es *unbeaufsichtigt* geholt wird.
   Mehrgeräte inklusive). Details §4.
 - **Trial:** Der Free-Tier deckt das Ausprobieren bereits ab; ein
   separater zeitlich begrenzter Pro-Trial ist optional, nicht MVP.
+- **Free-Tier-Upsell:** Hinweis aufs Premium-Angebot **1×/Tag** (Default).
+  In den Einstellungen kann der Nutzer die Frequenz **drosseln — minimal
+  1×/Woche** (nicht ganz abschaltbar). Pro-/eingeloggte Abonnenten sehen den
+  Hinweis nicht. Dezent halten (kein modaler Vollbild-Block), Zeitpunkt der
+  letzten Anzeige lokal merken.
 - **Merchant of Record (MoR)** übernimmt EU-VAT. Anbieter siehe §6.
 
 ---
