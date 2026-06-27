@@ -104,6 +104,8 @@ people actually paste, and paired with a full per-show episode browser.
   history beyond the RSS window and queues the newly fetched videos.
 
 ### Added
+- **Move episodes to the top of the queue.** A new Queue context-menu action
+  persists a stable manual order (via priority) for the selected episodes.
 - **Crash visibility + bug-report bundle.** Uncaught exceptions are routed to
   the activity log (and log file) instead of vanishing, and `cli.py bug-report`
   writes a shareable zip with recent logs, redacted settings, recent events,

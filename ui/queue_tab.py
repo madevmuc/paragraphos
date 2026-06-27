@@ -664,6 +664,7 @@ class QueueTab(QWidget):
             menu.addSeparator()
             menu.addAction(f"Run next{sfx}", lambda gs=guids: self._bump(gs, PRIORITY_RUN_NEXT))
             menu.addAction(f"Run now{sfx}", lambda gs=guids: self._bump(gs, PRIORITY_RUN_NOW))
+            menu.addAction(f"Move to top of queue{sfx}", lambda gs=guids: self._move_to_top(gs))
         menu.addSeparator()
         if is_paused:
             menu.addAction(
@@ -680,6 +681,14 @@ class QueueTab(QWidget):
             lambda gs=guids: self._remove_from_queue(gs),
         )
         menu.exec(self.table.viewport().mapToGlobal(pos))
+
+    def _move_to_top(self, guids: list[str]) -> None:
+        """Persist a stable manual order for the selected episodes at the top of
+        the queue (2.1) via priority, then refresh."""
+        self.ctx.state.set_priorities(list(guids))
+        log_activity(f"Moved {len(guids)} episode(s) to the top of the queue")
+        self._last_table_refresh = 0.0
+        self.refresh()
 
     def _set_episode_status(self, guids: list[str], status: EpisodeStatus) -> None:
         """Flip status (e.g. pending↔paused) on every given episode; refresh once."""

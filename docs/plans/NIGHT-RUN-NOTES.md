@@ -187,6 +187,15 @@ per-test `_reset_event_bus` fixture was also added for subscriber isolation
   `cli.py bug-report` builds the zip. 3 tests. **Tier 2 complete.**
   **Best-assumption:** GUI "Export bug report" menu item deferred — CLI command
   is the operator surface; excepthook covers crash visibility in the GUI.
+
+### Tier 3
+
+- **Task 24 — queue reorder (2.1)** ✅ `state.set_priorities(ordered_guids)`
+  (first guid → highest priority, claim ORDER BY follows). Queue context-menu
+  "Move to top of queue" persists a stable manual order. 2 tests.
+  **Best-assumption:** delivered reorder via a context action + priority
+  persistence instead of native drag-drop, which conflicts with the
+  click-to-sort QTableWidget; full drag-drop deferred.
 - **Task 11 — wire use_etag_cache (8.5)** ✅ `rss.conditional_validators`
   gates stored ETag/Last-Modified by the setting; worker uses it (off → sends
   no conditional headers). respx tests confirm header present/absent. Settings

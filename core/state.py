@@ -288,6 +288,15 @@ class StateStore:
         with self._conn() as c:
             c.execute("UPDATE episodes SET priority=? WHERE guid=?", (priority, guid))
 
+    def set_priorities(self, ordered_guids: list[str]) -> None:
+        """Persist a user-chosen ordering (2.1): the first guid gets the highest
+        priority so the claim ORDER BY (priority DESC, …) yields the same order.
+        Guids not listed keep their existing priority."""
+        n = len(ordered_guids)
+        with self._conn() as c:
+            for i, guid in enumerate(ordered_guids):
+                c.execute("UPDATE episodes SET priority=? WHERE guid=?", (n - i, guid))
+
     def delete_episodes_for_show(self, show_slug: str) -> int:
         """Purge all episode rows for a show (used when the show is removed) so
         re-adding the same channel starts from a clean slate instead of finding
