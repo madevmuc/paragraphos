@@ -24,6 +24,11 @@ deep CLI/automation surface.
   searchable transcript site + RSS.
 - **Automation** — a localhost JSON API, a ⌘K command palette, and an expanded
   CLI (`stats`, `logs`, `health`, `bug-report`, `serve`, `publish`, `export`, …).
+- **Full GUI/CLI parity** — a new **Tools** menu (Statistics, Event Log,
+  Health Check, Bulk Export, Publish Site, Backfill Dates, Find Duplicates,
+  Start Local API, Export Bug Report), Settings controls for quiet hours and a
+  webhook editor, and YouTube **playlist** add in the Add dialog — so every CLI
+  capability is reachable from the GUI too.
 
 Heavyweight items (diarization, parallel/streaming transcription, MCP transport)
 land as design docs + flag-gated skeletons — see `docs/plans/`.

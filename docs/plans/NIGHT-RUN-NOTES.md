@@ -284,6 +284,18 @@ full runs); the pre-commit hook passes normally again — no more `--no-verify`.
   no conditional headers). respx tests confirm header present/absent. Settings
   "Processing & reliability" toggle. 3 tests.
 
+## Post-run follow-ups (requested after the run)
+
+- **Pre-commit teardown SIGABRT — FIXED.** Root-caused to GUI tests leaking
+  background QThreads; added a conftest `_join_qthreads_each_test` cleanup. Suite
+  exits 0 reliably; hook passes without `--no-verify`. (See infra note above.)
+- **GUI/CLI feature parity — DONE.** Added a **Tools** menu (Statistics, Event
+  Log + export, Health Check, Bulk Export md/json/pdf, Publish Site, Backfill
+  Dates, Find Duplicates, Start Local API, Export Bug Report), Settings controls
+  for quiet hours + a webhook editor, and **playlist** add in the Add-Show
+  dialog (resolve + enumerate generalised for playlists). Every CLI command now
+  has a GUI surface. OPML import + single-show export already had menu actions.
+
 ## Final summary
 
 **Outcome:** all 41 plan tasks addressed. Baseline `720 passed` → final

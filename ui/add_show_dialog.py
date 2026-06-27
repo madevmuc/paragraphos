@@ -141,6 +141,28 @@ class _YoutubeResolveThread(QThread):
                 cid = self.parsed_value
             elif self.parsed_kind == "video":
                 cid = _youtube_meta.resolve_video_to_channel_id(self.parsed_value)
+            elif self.parsed_kind == "playlist":
+                # Playlists have no channel id — build a minimal preview from a
+                # one-entry flat enumeration (title) and mark it a playlist (3.2).
+                self.step.emit(2, 2, "Fetching playlist info…")
+                vids = _youtube_meta.enumerate_playlist_videos(self.parsed_value, limit=1)
+                title = "Playlist"
+                if vids:
+                    title = vids[0].get("playlist_title") or vids[0].get("playlist") or "Playlist"
+                out.update(
+                    {
+                        "ok": True,
+                        "preview": {
+                            "title": title,
+                            "channel_id": "",
+                            "is_playlist": True,
+                            "playlist_id": self.parsed_value,
+                            "artwork_url": "",
+                        },
+                    }
+                )
+                self.done.emit(out)
+                return
             else:
                 raise ValueError(f"unsupported YouTube URL kind: {self.parsed_kind!r}")
             if not cid:
@@ -230,17 +252,33 @@ class _YoutubeEnumerateThread(QThread):
     done = pyqtSignal(list)  # merged manifest (list[dict])
     error = pyqtSignal(str)  # message on failure
 
-    def __init__(self, channel_id: str, limit, date_after=None, include_shorts=False, parent=None):
+    def __init__(
+        self,
+        channel_id: str,
+        limit,
+        date_after=None,
+        include_shorts=False,
+        parent=None,
+        playlist_id: str | None = None,
+    ):
         super().__init__(parent)
         self.channel_id = channel_id
         self.limit = limit
         self.date_after = date_after
         self.include_shorts = include_shorts
+        self.playlist_id = playlist_id
 
     def run(self) -> None:
         try:
+            from core.youtube import rss_url_for_playlist_id
+
+            feed_url = (
+                rss_url_for_playlist_id(self.playlist_id)
+                if self.playlist_id
+                else rss_url_for_channel_id(self.channel_id)
+            )
             try:
-                window = _rss.build_manifest(rss_url_for_channel_id(self.channel_id))
+                window = _rss.build_manifest(feed_url)
             except Exception:  # noqa: BLE001
                 window = []
             # limit == 0 ("Only new") needs no deep extraction — the RSS window
@@ -248,6 +286,15 @@ class _YoutubeEnumerateThread(QThread):
             # full extraction entirely.
             if self.limit == 0:
                 deep = []
+            elif self.playlist_id:
+                deep = manifest_from_videos(
+                    _youtube_meta.enumerate_playlist_videos(
+                        self.playlist_id,
+                        limit=self.limit,
+                        date_after=self.date_after,
+                        full=True,
+                    )
+                )
             else:
                 deep = manifest_from_videos(
                     _youtube_meta.enumerate_channel_videos(
@@ -1514,7 +1561,9 @@ class AddShowDialog(QDialog):
             return
         title = preview.get("title") or "channel"
         cid = preview.get("channel_id") or ""
-        if not cid:
+        is_playlist = bool(preview.get("is_playlist"))
+        playlist_id = preview.get("playlist_id") or ""
+        if not cid and not is_playlist:
             QMessageBox.warning(self, "Missing", "Could not determine channel id.")
             return
         slug = self._yt_slug_input.text().strip() or slugify(title)
@@ -1556,6 +1605,7 @@ class AddShowDialog(QDialog):
             "slug": slug,
             "mode": mode,
             "preview": preview,
+            "playlist_id": playlist_id,
         }
 
         # Indeterminate progress + Cancel; disable Add while the (potentially
@@ -1576,7 +1626,12 @@ class AddShowDialog(QDialog):
         self._yt_enum_timer.start(1000)
 
         self._yt_enumerate_thread = _YoutubeEnumerateThread(
-            cid, limit, date_after=date_after, include_shorts=False, parent=self
+            cid,
+            limit,
+            date_after=date_after,
+            include_shorts=False,
+            parent=self,
+            playlist_id=playlist_id or None,
         )
         self._yt_enumerate_thread.done.connect(self._on_yt_enumerate_done)
         self._yt_enumerate_thread.error.connect(self._on_yt_enumerate_error)
@@ -1636,16 +1691,22 @@ class AddShowDialog(QDialog):
         slug = pending.get("slug") or ""
         mode = pending.get("mode") or ("only_new", None)
         preview = pending.get("preview") or {}
+        playlist_id = pending.get("playlist_id") or ""
 
         # Caption preference: checked → import uploader subtitles per video
         # (manual only; whisper fallback). Unchecked → always whisper. Auto-
         # generated captions are never used by either path.
         transcript_pref = "captions" if self._yt_captions_chk.isChecked() else "whisper"
 
+        from core.youtube import rss_url_for_playlist_id
+
+        _rss_url = (
+            rss_url_for_playlist_id(playlist_id) if playlist_id else rss_url_for_channel_id(cid)
+        )
         show_dict = {
             "slug": slug,
             "title": title,
-            "rss": rss_url_for_channel_id(cid),
+            "rss": _rss_url,
             "whisper_prompt": "",
             "manifest": manifest,
             # Structured baseline instruction consumed by _do_save:
