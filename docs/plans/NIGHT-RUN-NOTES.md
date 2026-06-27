@@ -392,3 +392,49 @@ JSON API.
 ### Not started / out of scope
 Area 5 (semantic/vector search etc.), 1.4 (LLM post-processing), 7.5 (weekly
 digest) — out of scope per the spec. 8.3 was already shipped before the run.
+
+---
+
+## Follow-up run (2026-06-27) — heavyweights built + assumptions reworked
+
+After review, Matthias requested building out three of the design-only items and
+reworking three best-assumptions. All landed as individually-green commits.
+
+### Heavyweights now BUILT
+- **1.5 Speaker diarization** — real sherpa-onnx backend (optional dep, lazy
+  import), unit-tested SRT relabel alignment, best-effort flag-gated pipeline
+  hook, settings toggle. Off by default. (Follow-up: model auto-download + WAV
+  conversion — see `diarization-design.md`.)
+- **10.3 MCP server** — real stdio transport (`build_server` / `serve_stdio`,
+  optional `mcp` dep) over the existing tool registry, `cli.py mcp` entrypoint,
+  clean error when `mcp` absent.
+- **2.2 Parallel transcription** — finished: RAM-aware worker cap
+  (`resolve_transcribe_workers(ram_gb=…)`) + extracted `state.claim_one_pending`
+  with a concurrency test proving 8 threads never double-claim.
+
+### Assumptions reworked
+- **Confidence marking** now defaults **ON**.
+- **Re-upload dedupe** now **acts** at feed-ingest (`resolve_duplicates` +
+  worker `_skip_duplicates` → SKIPPED), not just reports. Stricter 0.9
+  threshold; never skips done episodes.
+- **Transient retry** now **in-loop with backoff** in the pipeline
+  (`_MAX_DOWNLOAD_ATTEMPTS` + `_PIPELINE_RETRY_DELAYS` + `state.set_error_details`),
+  replacing defer-to-next-claim.
+- Kept as-is by request: caption-fallback default stays `manual_whisper`.
+
+### Live streams (clarified intent)
+No streaming-transcription feature (8.2 dropped by request). A live stream is
+DEFERRED until it finishes, then `_reprobe_deferred` promotes it to PENDING and
+it processes as a normal video — already the behavior; confirmed, unchanged.
+
+### PR #1 audit (merged — report only, no GitHub comment)
+Headline real bug fixed here: the connectivity monitor emitted `online_changed`
+from a worker thread into a **bare lambda**, so the slot ran off the GUI thread
+(touching widgets + the DB). Now connected to a GUI-thread bound method
+(`ParagraphosApp._on_online_changed`). Other audit items were lower-confidence
+design trade-offs (yt-dlp binary has no TOFU; `clear_pending` uses `done`).
+
+### Pre-commit hook
+The Qt-teardown SIGABRT flake noted in the original run was fixed at root cause
+(conftest `_join_qthreads_each_test`); every follow-up commit passed the hook
+normally (ruff + ruff-format + unit suite).

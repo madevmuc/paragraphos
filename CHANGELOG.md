@@ -32,14 +32,23 @@ deep CLI/automation surface.
   every CLI capability is reachable from the GUI too. Stats/Health are
   structured panels, and the YouTube date backfill runs off the GUI thread.
 
-Heavyweight items (diarization, parallel/streaming transcription, MCP transport)
-land as design docs + flag-gated skeletons — see `docs/plans/`.
+### Built out (2026-06-27 follow-up)
+- **Speaker diarization (1.5)** — real sherpa-onnx backend (optional dep) labels
+  speakers (A/B/C) in the SRT after transcribe; off by default, best-effort.
+- **MCP server (10.3)** — a real stdio transport (`cli.py mcp`, optional `mcp`
+  dep) lets an LLM client drive the app over the existing tool surface.
+- **Parallel transcription (2.2)** — finished: RAM-aware worker cap + a
+  concurrency-safe atomic claim (proven no double-claim under contention).
+- **Confidence marking now defaults ON.**
+- **Re-upload dedupe now acts** — near-duplicate episodes are auto-skipped at
+  feed-ingest (one keeper per cluster), not just reported.
+- **Transient download failures retry in-loop with backoff** instead of being
+  re-queued for a later pass.
+- **Fix:** the connectivity monitor's online/offline signal ran its handler off
+  the GUI thread (touching widgets + the DB); now marshalled onto the GUI thread.
 
-### Groundwork (design + flag-gated skeletons)
-- **Speaker diarization, parallel & streaming transcription, MCP server** —
-  integration seams and design docs landed (under `docs/plans/`) behind
-  default-off flags; the heavyweight backends (sherpa-onnx, MCP transport) are
-  the documented follow-ups. No behaviour change by default.
+Streaming transcription (8.2) was intentionally dropped: a live stream is
+deferred until it finishes, then processed as a normal video.
 
 ### Platform & reliability (roadmap)
 - **Expanded settings + per-show schema** — new tunables (queue order,

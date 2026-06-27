@@ -1,8 +1,16 @@
 # Speaker diarization — design (roadmap 1.5)
 
-- **Date:** 2026-06-27 · **Status:** Design + flag-gated skeleton (escape hatch)
-- **Shipped:** `core/diarize.py` seam (`diarize_segments(enabled=…)`), gated by
-  the `diarization_enabled` setting (default off). No heavy dependency added.
+- **Date:** 2026-06-27 · **Status:** BUILT (2026-06-27). Real sherpa-onnx backend
+  (`diarize_audio`, optional dep, lazy import → `DiarizationUnavailable`), pure
+  unit-tested alignment (`speaker_at` / `relabel_srt` / `_label_speakers`), and a
+  best-effort flag-gated pipeline hook (`_maybe_diarize`) that relabels the SRT
+  with A/B/C speaker tags after transcribe. Settings checkbox + worker wiring +
+  `Settings.diarization_model_dir`. Off by default.
+- **Remaining follow-up:** model auto-download UX, and 16 kHz-mono WAV
+  conversion before the sherpa call (`diarize_audio` reads WAV; podcast audio is
+  MP3), plus optional speaker-labelled markdown body (SRT is labelled today).
+- **Shipped (original seam):** `core/diarize.py` `diarize_segments(enabled=…)`,
+  gated by the `diarization_enabled` setting (default off).
 
 ## Why design-only
 

@@ -1,9 +1,14 @@
 # MCP server — design (roadmap 10.3)
 
-- **Date:** 2026-06-27 · **Status:** Design + transport-less skeleton (escape hatch)
-- **Shipped:** `core/mcp_server.py` — a tool registry (`list_tools`) + dispatcher
-  (`call_tool`) that reuses the localhost JSON API router
-  (`core.api_server.handle_request`). The stdio MCP transport is the follow-up.
+- **Date:** 2026-06-27 · **Status:** BUILT (2026-06-27). Real stdio transport on
+  top of the registry: `build_server` constructs an `mcp.server.Server` (optional
+  `mcp` dep, lazy import → `McpUnavailable`) wiring `list_tools`/`call_tool`
+  handlers; `serve_stdio` runs the asyncio loop; `cli.py mcp` is the entrypoint
+  (clean error when `mcp` is absent). `list_tools` now emits a per-tool
+  `inputSchema`. Tested without `mcp` installed (registry + unavailable path).
+- **Shipped (original core):** `core/mcp_server.py` registry (`list_tools`) +
+  dispatcher (`call_tool`) reusing the localhost JSON API router
+  (`core.api_server.handle_request`).
 
 ## Why transport deferred
 
