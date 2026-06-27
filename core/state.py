@@ -580,6 +580,22 @@ class StateStore:
             out.append(d)
         return out
 
+    def count_events(self, *, type_exact: Optional[str] = None, since: Optional[str] = None) -> int:
+        """Cheap COUNT(*) over the events table with optional type/since filters
+        (avoids materialising rows just to count them)."""
+        clauses: list[str] = []
+        params: list[Any] = []
+        if type_exact is not None:
+            clauses.append("type = ?")
+            params.append(type_exact)
+        if since is not None:
+            clauses.append("ts >= ?")
+            params.append(since)
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        with self._conn() as c:
+            row = c.execute(f"SELECT COUNT(*) AS n FROM events{where}", params).fetchone()
+        return int(row["n"]) if row else 0
+
     def prune_events(self, retention_days: int) -> int:
         """Delete events older than ``retention_days``. Returns rows deleted.
 

@@ -620,6 +620,9 @@ class CheckAllThread(QThread):
         kwargs["min_duration_sec"] = emin
         kwargs["max_duration_sec"] = emax
         # Per-download pause (2.4): honour a per-guid pause flag in state.meta.
+        # Lazy (accesses state inside the call) so a stub ctx without a real
+        # state still builds a PipelineContext; the context is per-run/short-
+        # lived so the captured self is not a meaningful retention concern.
         kwargs["download_pause_check"] = lambda g: (
             self.ctx.state.get_meta(f"download_paused:{g}") == "1"
         )

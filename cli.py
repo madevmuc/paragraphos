@@ -100,6 +100,25 @@ def _episode_dict(row: dict) -> dict:
     }
 
 
+def _collect_show_transcripts(show_dir: Path) -> list[dict]:
+    """Read a show's transcript .md files into ``[{title, date, text}, ...]``
+    (skips index.md). Shared by ``publish`` and ``export``."""
+    items: list[dict] = []
+    if not show_dir.is_dir():
+        return items
+    for md in sorted(show_dir.glob("*.md")):
+        if md.name == "index.md":
+            continue
+        items.append(
+            {
+                "title": md.stem,
+                "date": md.stem[:10],
+                "text": md.read_text(encoding="utf-8", errors="replace"),
+            }
+        )
+    return items
+
+
 def _coerce_value(default: Any, raw: str) -> Any:
     """Coerce a CLI string to the type of ``default`` (bool/int/float/str).
     Used by ``set`` and ``set-setting`` so agents can pass plain strings
@@ -1372,20 +1391,8 @@ def cmd_publish(args: argparse.Namespace) -> int:
     slugs = [args.slug] if args.slug else [p.name for p in root.iterdir() if p.is_dir()]
     items = []
     for slug in slugs:
-        show_dir = root / slug
-        if not show_dir.is_dir():
-            continue
-        for md in sorted(show_dir.glob("*.md")):
-            if md.name == "index.md":
-                continue
-            items.append(
-                {
-                    "slug": f"{slug}--{md.stem}",
-                    "title": md.stem,
-                    "date": md.stem[:10],
-                    "text": md.read_text(encoding="utf-8", errors="replace"),
-                }
-            )
+        for t in _collect_show_transcripts(root / slug):
+            items.append({**t, "slug": f"{slug}--{t['title']}"})
     if not items:
         print("no transcripts to publish")
         return 1
@@ -1404,11 +1411,7 @@ def cmd_export(args: argparse.Namespace) -> int:
     if not show_dir.is_dir():
         print(f"no transcripts dir for {args.slug}: {show_dir}", file=sys.stderr)
         return 2
-    items = []
-    for md in sorted(show_dir.glob("*.md")):
-        if md.name == "index.md":
-            continue
-        items.append({"title": md.stem, "text": md.read_text(encoding="utf-8", errors="replace")})
+    items = _collect_show_transcripts(show_dir)
     if not items:
         print(f"no transcripts found in {show_dir}")
         return 1

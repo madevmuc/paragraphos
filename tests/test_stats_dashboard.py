@@ -41,3 +41,22 @@ def test_success_rate():
 
 def test_success_rate_no_data():
     assert success_rate([]) == 0.0
+
+
+def test_count_events_and_dashboard_summary(tmp_path):
+    from core import events
+    from core.events import Event, EventType
+    from core.state import StateStore
+    from core.stats import dashboard_summary
+
+    s = StateStore(tmp_path / "s.sqlite")
+    s.init_schema()
+    for _ in range(3):
+        s.append_event(Event(type=EventType.EPISODE_TRANSCRIBED, ts=events.now_iso()))
+    s.append_event(Event(type=EventType.EPISODE_FAILED, ts=events.now_iso()))
+    assert s.count_events(type_exact=EventType.EPISODE_TRANSCRIBED) == 3
+    assert s.count_events(type_exact=EventType.EPISODE_FAILED) == 1
+
+    summary = dashboard_summary(s, window_days=7)
+    assert summary["success_rate"] == 0.75
+    assert abs(summary["throughput_per_day"] - 3 / 7) < 1e-6
