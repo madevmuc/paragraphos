@@ -221,6 +221,12 @@ per-test `_reset_event_bus` fixture was also added for subscriber isolation
   2 tests. **Best-assumption:** exposed as an on-demand CLI command rather than
   an always-on background thread (keeps launch fast, no surprise yt-dlp load);
   the resolver is injected so it's fully mockable.
+- **Task 30 — playlist support (3.2)** ✅ `parse_youtube_url` recognises
+  `/playlist?list=` (→ "playlist" kind; `/watch?...&list=` stays a video),
+  `rss_url_for_playlist_id`, `enumerate_playlist_videos`. CLI `add` seeds a
+  playlist like a channel (playlist RSS feed for polling; channel dedup
+  no-ops). 4 tests. **Best-assumption:** CLI add covers it; GUI add-dialog
+  playlist field not added (the dialog's YouTube tab is channel-oriented).
 - **Task 11 — wire use_etag_cache (8.5)** ✅ `rss.conditional_validators`
   gates stored ETag/Last-Modified by the setting; worker uses it (off → sends
   no conditional headers). respx tests confirm header present/absent. Settings

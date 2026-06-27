@@ -104,6 +104,9 @@ people actually paste, and paired with a full per-show episode browser.
   history beyond the RSS window and queues the newly fetched videos.
 
 ### Added
+- **Playlist support.** Add a YouTube **playlist** URL like a channel —
+  `cli.py add "https://www.youtube.com/playlist?list=…" --backlog …` seeds the
+  playlist's videos and polls its RSS feed for new entries.
 - **Back-catalogue date backfill.** `cli.py backfill-dates <slug>` re-resolves
   real YouTube upload dates for a channel's episodes (the fast enumeration path
   leaves them approximate), so the library sorts/dates correctly.

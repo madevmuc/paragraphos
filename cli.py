@@ -159,24 +159,32 @@ def cmd_add(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 2
-        if parsed.kind == "handle":
-            from core import youtube_meta
+        playlist_id = None
+        if parsed.kind == "playlist":
+            from core.youtube import rss_url_for_playlist_id
 
-            cid = youtube_meta.resolve_handle_to_channel_id(parsed.value)
-        elif parsed.kind == "channel_url":
-            from core import youtube_meta
-
-            cid = youtube_meta.resolve_channel_url_to_id(parsed.value)
-        elif parsed.kind == "channel_id":
-            cid = parsed.value
+            playlist_id = parsed.value
+            rss = rss_url_for_playlist_id(playlist_id)
+            yt_source = True
         else:
-            print(f"unsupported YouTube URL kind: {parsed.kind}", file=sys.stderr)
-            return 2
-        if not cid:
-            print("couldn't resolve that URL to a YouTube channel", file=sys.stderr)
-            return 2
-        rss = rss_url_for_channel_id(cid)
-        yt_source = True
+            if parsed.kind == "handle":
+                from core import youtube_meta
+
+                cid = youtube_meta.resolve_handle_to_channel_id(parsed.value)
+            elif parsed.kind == "channel_url":
+                from core import youtube_meta
+
+                cid = youtube_meta.resolve_channel_url_to_id(parsed.value)
+            elif parsed.kind == "channel_id":
+                cid = parsed.value
+            else:
+                print(f"unsupported YouTube URL kind: {parsed.kind}", file=sys.stderr)
+                return 2
+            if not cid:
+                print("couldn't resolve that URL to a YouTube channel", file=sys.stderr)
+                return 2
+            rss = rss_url_for_channel_id(cid)
+            yt_source = True
     elif inp.startswith("http"):
         rss = find_rss_from_url(inp) or inp
     else:
@@ -197,7 +205,23 @@ def cmd_add(args: argparse.Namespace) -> int:
     skip_shorts = bool(getattr(args, "skip_shorts", True))
     # YouTube seeds from a DEEP channel enumeration (honouring --backlog), not
     # the ~15-entry RSS feed; podcasts keep the RSS manifest path.
-    if yt_source:
+    if yt_source and playlist_id:
+        # Playlist: enumerate the playlist's entries (3.2). Shorts filtering and
+        # the /videos-tab distinction don't apply to an explicit playlist.
+        from core.youtube import manifest_from_videos
+        from core.youtube_meta import enumerate_playlist_videos
+
+        kind, arg = mode
+        if kind == "last":
+            videos = enumerate_playlist_videos(playlist_id, limit=arg)
+        elif kind == "since":
+            videos = enumerate_playlist_videos(playlist_id, date_after=arg)
+        elif kind == "recent":
+            videos = enumerate_playlist_videos(playlist_id, limit=15)
+        else:  # "all"
+            videos = enumerate_playlist_videos(playlist_id)
+        manifest = manifest_from_videos(videos)
+    elif yt_source:
         from core.youtube import channel_id_from_feed_url, manifest_from_videos
         from core.youtube_meta import enumerate_channel_videos
 

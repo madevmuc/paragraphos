@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Literal
 from urllib.parse import parse_qs, urlparse
 
-YoutubeKind = Literal["video", "channel_id", "handle", "channel_url"]
+YoutubeKind = Literal["video", "channel_id", "handle", "channel_url", "playlist"]
 
 
 class YoutubeUrlError(ValueError):
@@ -40,6 +40,12 @@ def parse_youtube_url(url: str) -> YoutubeUrl:
         raise YoutubeUrlError(f"bad video id: {vid!r}")
 
     if host in {"youtube.com", "m.youtube.com", "music.youtube.com"}:
+        if path.startswith("/playlist"):
+            qs = parse_qs(u.query)
+            pid = (qs.get("list") or [""])[0]
+            if pid:
+                return YoutubeUrl("playlist", pid)
+            raise YoutubeUrlError("playlist URL has no list= id")
         if path.startswith("/watch"):
             qs = parse_qs(u.query)
             v = (qs.get("v") or [""])[0]
@@ -72,6 +78,12 @@ def parse_youtube_url(url: str) -> YoutubeUrl:
 
 def rss_url_for_channel_id(channel_id: str) -> str:
     return f"https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
+
+
+def rss_url_for_playlist_id(playlist_id: str) -> str:
+    """YouTube exposes a per-playlist RSS feed (3.2) — used so a playlist show
+    polls for new entries just like a channel."""
+    return f"https://www.youtube.com/feeds/videos.xml?playlist_id={playlist_id}"
 
 
 def manifest_from_videos(videos: list[dict]) -> list[dict]:

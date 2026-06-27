@@ -303,3 +303,26 @@ def enumerate_channel_videos(
     args.append(target)
     out = _run_ytdlp(args, timeout=300)
     return [json.loads(line) for line in out.splitlines() if line.strip()]
+
+
+def enumerate_playlist_videos(
+    playlist_id: str,
+    *,
+    limit: int | None = None,
+    date_after: str | None = None,
+    full: bool = False,
+) -> List[Dict]:
+    """Enumerate a playlist's videos via yt-dlp (3.2). Mirrors
+    ``enumerate_channel_videos`` but targets a ``/playlist?list=`` URL."""
+    target = f"https://www.youtube.com/playlist?list={playlist_id}"
+    args: List[str] = []
+    if not full:
+        args.append("--flat-playlist")
+    args.append("--dump-json")
+    if limit:
+        args += ["--playlist-end", str(limit)]
+    if date_after:
+        args += ["--dateafter", date_after.replace("-", "")]
+    args.append(target)
+    out = _run_ytdlp(args, timeout=300)
+    return [json.loads(line) for line in out.splitlines() if line.strip()]
