@@ -35,3 +35,17 @@ def test_set_priorities_partial(tmp_path):
     s.set_priorities(["g2"])
     order = _claim_order(s)
     assert order[0] == "g2"
+
+
+def test_move_to_top_beats_run_now_bump(tmp_path):
+    s = _seed(tmp_path)
+    s.set_priority("g1", 10)  # simulate a "Run now" bump on g1
+    s.set_priorities(["g3"])  # move g3 to the very top
+    assert _claim_order(s)[0] == "g3"
+
+
+def test_move_to_bottom_sinks(tmp_path):
+    s = _seed(tmp_path)
+    s.set_priority("g1", 10)  # g1 bumped up
+    s.move_to_bottom(["g1"])  # then sunk to the bottom
+    assert _claim_order(s)[-1] == "g1"

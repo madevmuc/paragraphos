@@ -959,7 +959,14 @@ class CheckAllThread(QThread):
         # workers share the same in_q (queue.Queue is thread-safe) and
         # the same stop_event; shutdown sends N _SHUTDOWN sentinels via
         # the download pool's existing terminator (one per consumer).
-        n_tr = max(self._load_profile.parallel, 1)
+        # transcribe_concurrency (2.2) is a user override: >1 raises the cap;
+        # the default (1) keeps the load profile's choice (never reduces it).
+        from core.load import resolve_transcribe_workers
+
+        n_tr = resolve_transcribe_workers(
+            self._load_profile.parallel,
+            getattr(self.settings, "transcribe_concurrency", 1),
+        )
         # Shared atomic counter so the UI sees a coherent done_idx
         # across all parallel workers (workers race to increment).
         shared_done_counter = [0]

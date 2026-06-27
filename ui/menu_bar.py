@@ -401,29 +401,52 @@ def _check_selected(window) -> None:
 
 
 def _show_stats(window) -> None:
-    from PyQt6.QtWidgets import QMessageBox
+    """Structured stats panel (7.1) — labelled metric rows, not a message box."""
+    from PyQt6.QtWidgets import QDialogButtonBox, QFormLayout
 
     from core.stats import dashboard_summary
 
     s = dashboard_summary(window.ctx.state)
-    QMessageBox.information(
-        window,
-        "Statistics",
-        f"Throughput: {s['throughput_per_day']:.2f} episodes/day (7d)\n"
-        f"Success rate: {s['success_rate'] * 100:.0f}%\n"
-        f"Realtime factor: {s['realtime_factor']:.2f}×\n"
-        f"Done / pending / failed: {s['done']} / {s['pending']} / {s['failed']}",
-    )
+    dlg = QDialog(window)
+    dlg.setWindowTitle("Statistics")
+    dlg.setMinimumWidth(360)
+    lay = QVBoxLayout(dlg)
+    form = QFormLayout()
+    form.addRow("Throughput (7d)", QLabel(f"{s['throughput_per_day']:.2f} episodes/day"))
+    form.addRow("Success rate", QLabel(f"{s['success_rate'] * 100:.0f}%"))
+    form.addRow("Realtime factor", QLabel(f"{s['realtime_factor']:.2f}×"))
+    form.addRow("Done", QLabel(str(s["done"])))
+    form.addRow("Pending", QLabel(str(s["pending"])))
+    form.addRow("Failed", QLabel(str(s["failed"])))
+    lay.addLayout(form)
+    bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+    bb.rejected.connect(dlg.reject)
+    bb.accepted.connect(dlg.accept)
+    lay.addWidget(bb)
+    dlg.exec()
 
 
 def _show_health(window) -> None:
-    from PyQt6.QtWidgets import QMessageBox
+    """Health panel (6.2) — one coloured row per check."""
+    from PyQt6.QtWidgets import QDialogButtonBox
 
     from core import health
 
     rows = health.run_health_check(window.ctx)
-    body = "\n".join(f"{'✓' if r['ok'] else '✗'} {r['check']}: {r['detail']}" for r in rows)
-    QMessageBox.information(window, "Health check", body)
+    dlg = QDialog(window)
+    dlg.setWindowTitle("Health check")
+    dlg.setMinimumWidth(460)
+    lay = QVBoxLayout(dlg)
+    for r in rows:
+        ok = r["ok"]
+        lbl = QLabel(f"{'✓' if ok else '✗'}  {r['check']}: {r['detail']}")
+        lbl.setWordWrap(True)
+        lbl.setStyleSheet(f"color: {'#2e7d32' if ok else '#c62828'};")
+        lay.addWidget(lbl)
+    bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+    bb.rejected.connect(dlg.reject)
+    lay.addWidget(bb)
+    dlg.exec()
 
 
 def _show_event_log(window) -> None:
@@ -550,9 +573,37 @@ def _publish_site(window) -> None:
     QMessageBox.information(window, "Published", f"Wrote {len(items)} page(s) → {out}/index.html")
 
 
+class _BackfillThread(QThread):
+    """Off-thread YouTube date backfill so the GUI never freezes on the
+    (potentially minutes-long) yt-dlp full enumeration."""
+
+    done = pyqtSignal(int)
+    error = pyqtSignal(str)
+
+    def __init__(self, state, channel_id: str, parent=None):
+        super().__init__(parent)
+        self._state = state
+        self._cid = channel_id
+
+    def run(self) -> None:
+        try:
+            from core.backcat_dates import backfill_show_dates
+            from core.youtube_meta import enumerate_channel_videos
+
+            changed = backfill_show_dates(
+                self._state,
+                self._cid,
+                enumerate_fn=lambda c, *, full: enumerate_channel_videos(
+                    c, include_shorts=True, full=full
+                ),
+            )
+            self.done.emit(changed)
+        except Exception as e:  # noqa: BLE001
+            self.error.emit(str(e))
+
+
 def _backfill_dates(window) -> None:
-    from PyQt6.QtCore import Qt
-    from PyQt6.QtWidgets import QApplication, QMessageBox
+    from PyQt6.QtWidgets import QMessageBox, QProgressDialog
 
     slug = _selected_slug(window)
     if not slug:
@@ -562,26 +613,33 @@ def _backfill_dates(window) -> None:
     if not show or getattr(show, "source", "podcast") != "youtube":
         QMessageBox.information(window, "YouTube only", "Date backfill applies to YouTube shows.")
         return
-    from core.backcat_dates import backfill_show_dates
     from core.youtube import channel_id_from_feed_url
-    from core.youtube_meta import enumerate_channel_videos
 
     cid = channel_id_from_feed_url(show.rss)
     if not cid:
         QMessageBox.warning(window, "Backfill", "Couldn't resolve the channel id.")
         return
-    QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-    try:
-        changed = backfill_show_dates(
-            window.ctx.state,
-            cid,
-            enumerate_fn=lambda c, *, full: enumerate_channel_videos(
-                c, include_shorts=True, full=full
-            ),
-        )
-    finally:
-        QApplication.restoreOverrideCursor()
-    QMessageBox.information(window, "Backfill", f"Updated {changed} episode date(s).")
+
+    prog = QProgressDialog("Re-resolving upload dates…", None, 0, 0, window)
+    prog.setWindowTitle("Backfill dates")
+    prog.setMinimumDuration(0)
+    prog.setCancelButton(None)
+    th = _BackfillThread(window.ctx.state, cid, window)
+    window._backfill_thread = th  # keep a reference for the thread's lifetime
+
+    def _on_done(n: int) -> None:
+        prog.close()
+        QMessageBox.information(window, "Backfill", f"Updated {n} episode date(s).")
+
+    def _on_error(msg: str) -> None:
+        prog.close()
+        QMessageBox.warning(window, "Backfill", f"Backfill failed: {msg}")
+
+    th.done.connect(_on_done)
+    th.error.connect(_on_error)
+    th.finished.connect(lambda: setattr(window, "_backfill_thread", None))
+    th.start()
+    prog.show()
 
 
 def _find_duplicates(window) -> None:

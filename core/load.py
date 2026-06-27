@@ -73,3 +73,15 @@ def describe_profile(profile: LoadProfile) -> str:
     """Human-readable one-liner for the settings read-out label."""
     episodes = "1 Episode" if profile.parallel == 1 else f"{profile.parallel} Episoden"
     return f"{episodes} × {profile.threads} Threads · {_TIER_DE[profile.qos]}"
+
+
+def resolve_transcribe_workers(load_parallel: int, transcribe_concurrency: int) -> int:
+    """Effective transcribe-worker count (2.2).
+
+    The load profile sets a safe default (1, or 2 on big machines at "full").
+    ``transcribe_concurrency`` is a user override: when > 1 it raises the cap to
+    that value; the default (1) leaves the profile's choice untouched so we never
+    *reduce* the parallelism a "full" profile already grants."""
+    base = max(int(load_parallel or 1), 1)
+    cc = int(transcribe_concurrency or 1)
+    return max(cc, 1) if cc > 1 else base

@@ -288,14 +288,32 @@ class StateStore:
         with self._conn() as c:
             c.execute("UPDATE episodes SET priority=? WHERE guid=?", (priority, guid))
 
+    # Base for manual "move to top" ordering — above the Run-now (10) /
+    # Run-next (5) bump priorities so a move-to-top episode genuinely lands
+    # at the top of the claim order (priority DESC).
+    _MANUAL_TOP_BASE = 1000
+
     def set_priorities(self, ordered_guids: list[str]) -> None:
         """Persist a user-chosen ordering (2.1): the first guid gets the highest
         priority so the claim ORDER BY (priority DESC, …) yields the same order.
-        Guids not listed keep their existing priority."""
+        Priorities start above the Run-now/Run-next bumps so 'move to top' really
+        reaches the top. Guids not listed keep their existing priority."""
         n = len(ordered_guids)
         with self._conn() as c:
             for i, guid in enumerate(ordered_guids):
-                c.execute("UPDATE episodes SET priority=? WHERE guid=?", (n - i, guid))
+                c.execute(
+                    "UPDATE episodes SET priority=? WHERE guid=?",
+                    (self._MANUAL_TOP_BASE + (n - i), guid),
+                )
+
+    def move_to_bottom(self, guids: list[str]) -> None:
+        """Sink ``guids`` below everything else in the claim order (2.1)."""
+        with self._conn() as c:
+            for guid in guids:
+                c.execute(
+                    "UPDATE episodes SET priority=? WHERE guid=?",
+                    (-self._MANUAL_TOP_BASE, guid),
+                )
 
     def delete_episodes_for_show(self, show_slug: str) -> int:
         """Purge all episode rows for a show (used when the show is removed) so

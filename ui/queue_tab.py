@@ -665,6 +665,9 @@ class QueueTab(QWidget):
             menu.addAction(f"Run next{sfx}", lambda gs=guids: self._bump(gs, PRIORITY_RUN_NEXT))
             menu.addAction(f"Run now{sfx}", lambda gs=guids: self._bump(gs, PRIORITY_RUN_NOW))
             menu.addAction(f"Move to top of queue{sfx}", lambda gs=guids: self._move_to_top(gs))
+            menu.addAction(
+                f"Move to bottom of queue{sfx}", lambda gs=guids: self._move_to_bottom(gs)
+            )
         menu.addSeparator()
         if is_paused:
             menu.addAction(
@@ -708,6 +711,13 @@ class QueueTab(QWidget):
         the queue (2.1) via priority, then refresh."""
         self.ctx.state.set_priorities(list(guids))
         log_activity(f"Moved {len(guids)} episode(s) to the top of the queue")
+        self._last_table_refresh = 0.0
+        self.refresh()
+
+    def _move_to_bottom(self, guids: list[str]) -> None:
+        """Sink the selected episodes below everything else in the queue (2.1)."""
+        self.ctx.state.move_to_bottom(list(guids))
+        log_activity(f"Moved {len(guids)} episode(s) to the bottom of the queue")
         self._last_table_refresh = 0.0
         self.refresh()
 

@@ -450,6 +450,54 @@ class LibraryTab(QWidget):
                 return r
         return None
 
+    def _selected_guids(self) -> list[str]:
+        sel = self.table.selectionModel()
+        if sel is None:
+            return []
+        out = []
+        for idx in sel.selectedRows():
+            item = self.table.item(idx.row(), 0)
+            g = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+            if g:
+                out.append(g)
+        return out
+
+    def _export_selected(self) -> None:
+        """Bulk-export the selected transcripts to md/json/pdf (4.1, GUI)."""
+        from PyQt6.QtWidgets import QFileDialog, QInputDialog, QMessageBox
+
+        guids = self._selected_guids()
+        items = []
+        for g in guids:
+            row = self._row_for_guid(g)
+            md = row.get("md_path") if row else None
+            if md and Path(md).exists():
+                items.append(
+                    {
+                        "title": Path(md).stem,
+                        "text": Path(md).read_text(encoding="utf-8", errors="replace"),
+                    }
+                )
+        if not items:
+            QMessageBox.information(self, "Export", "Select one or more transcripts first.")
+            return
+        fmt, ok = QInputDialog.getItem(
+            self, "Export selected", "Format:", ["md", "json", "pdf"], 0, False
+        )
+        if not ok:
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "Export to", f"transcripts.{fmt}")
+        if not path:
+            return
+        from core.bulk_export import BulkExportError, export
+
+        try:
+            export(items, fmt, path)
+        except BulkExportError as e:
+            QMessageBox.warning(self, "Export failed", str(e))
+            return
+        QMessageBox.information(self, "Exported", f"Wrote {len(items)} transcript(s) → {path}")
+
     def _render_preview(self, guid: str) -> None:
         r = self._row_for_guid(guid)
         if r is None:
@@ -564,6 +612,10 @@ class LibraryTab(QWidget):
         a_timeline = QAction("Show timeline…", self)
         a_timeline.triggered.connect(lambda: self._show_timeline(guid))
         menu.addAction(a_timeline)
+
+        a_export = QAction("Export selected…", self)
+        a_export.triggered.connect(self._export_selected)
+        menu.addAction(a_export)
 
         menu.addSeparator()
         a_del = QAction("Delete transcript…", self)

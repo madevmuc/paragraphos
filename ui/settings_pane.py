@@ -458,6 +458,29 @@ class SettingsPane(QWidget):
         metal_hint.setWordWrap(True)
         root.addWidget(metal_hint)
 
+        # Parallel transcription cap (2.2). >1 runs that many whisper workers.
+        _tc_form = QFormLayout()
+        self.transcribe_concurrency_spin = QSpinBox()
+        self.transcribe_concurrency_spin.setRange(1, 8)
+        self.transcribe_concurrency_spin.setValue(
+            int(getattr(self.ctx.settings, "transcribe_concurrency", 1) or 1)
+        )
+        self.transcribe_concurrency_spin.valueChanged.connect(self._schedule_save)
+        self._add_field(
+            _tc_form,
+            "Parallel transcriptions",
+            self.transcribe_concurrency_spin,
+            hint=(
+                "How many episodes to transcribe at once. 1 is safest; raise only "
+                "on a many-core Mac with plenty of RAM (whisper is already "
+                "multi-threaded, so >1 can oversubscribe the CPU/GPU)."
+            ),
+            hint_kind="info",
+        )
+        _tc_holder = QWidget()
+        _tc_holder.setLayout(_tc_form)
+        root.addWidget(_tc_holder)
+
         self.pause_on_battery_cb = QCheckBox("Ease off CPU/RAM when running on battery")
         self.pause_on_battery_cb.setObjectName("pause_on_battery_checkbox")
         self.pause_on_battery_cb.setChecked(
@@ -1297,6 +1320,7 @@ class SettingsPane(QWidget):
         s.disk_guard_enabled = self.disk_guard_cb.isChecked()
         s.disk_guard_min_free_gb = int(self.disk_guard_min_gb.value())
         s.whisper_metal_enabled = self.whisper_metal_cb.isChecked()
+        s.transcribe_concurrency = int(self.transcribe_concurrency_spin.value())
         s.pause_on_battery = self.pause_on_battery_cb.isChecked()
         s.battery_load_level = self.battery_load_combo.currentData() or "quiet"
         s.notify_quiet_hours_enabled = self.quiet_hours_cb.isChecked()
