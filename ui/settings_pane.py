@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QRadioButton,
     QScrollArea,
@@ -667,6 +668,24 @@ class SettingsPane(QWidget):
         self.notify_mode.setCurrentIndex(idx)
         self.notify_mode.currentIndexChanged.connect(self._schedule_save)
         self._add_field(f3, "Notification frequency", self.notify_mode)
+
+        # Quiet hours (7.4): suppress notifications within a daily window.
+        self.quiet_hours_cb = QCheckBox("Silence notifications during quiet hours")
+        self.quiet_hours_cb.setChecked(
+            bool(getattr(self.ctx.settings, "notify_quiet_hours_enabled", False))
+        )
+        self.quiet_hours_cb.toggled.connect(self._schedule_save)
+        self._add_field(f3, "Quiet hours", self.quiet_hours_cb)
+        self.quiet_start = QLineEdit(
+            getattr(self.ctx.settings, "notify_quiet_hours_start", "22:00")
+        )
+        self.quiet_start.setPlaceholderText("HH:MM")
+        self.quiet_start.textChanged.connect(self._schedule_save)
+        self._add_field(f3, "Quiet from", self.quiet_start)
+        self.quiet_end = QLineEdit(getattr(self.ctx.settings, "notify_quiet_hours_end", "08:00"))
+        self.quiet_end.setPlaceholderText("HH:MM")
+        self.quiet_end.textChanged.connect(self._schedule_save)
+        self._add_field(f3, "Quiet until", self.quiet_end)
         root.addLayout(f3)
 
         # ── Transcription engine ───────────────────────────────
@@ -857,6 +876,35 @@ class SettingsPane(QWidget):
         )
         copy_btn.clicked.connect(lambda: self._copy_agent_prompt_with_feedback(copy_btn))
         root.addWidget(copy_btn)
+
+        # Webhooks (10.1): one per line as `events|kind|target`
+        # (events comma-separated; kind = command|post). Edited in the GUI here;
+        # the same list is what `settings.yaml`/the bus dispatcher consume.
+        self.webhooks_enabled_cb = QCheckBox("Enable event webhooks")
+        self.webhooks_enabled_cb.setChecked(
+            bool(getattr(self.ctx.settings, "webhooks_enabled", False))
+        )
+        self.webhooks_enabled_cb.toggled.connect(self._schedule_save)
+        root.addWidget(self.webhooks_enabled_cb)
+        self.webhooks_edit = QPlainTextEdit()
+        self.webhooks_edit.setPlaceholderText(
+            "episode.transcribed,episode.failed|post|https://example.com/hook\n"
+            "run.finished|command|/path/to/script.sh"
+        )
+        self.webhooks_edit.setPlainText(
+            self._webhooks_to_text(getattr(self.ctx.settings, "webhooks", []))
+        )
+        self.webhooks_edit.setFixedHeight(80)
+        self.webhooks_edit.textChanged.connect(self._schedule_save)
+        root.addWidget(
+            QLabel(
+                "<span style='color: palette(placeholder-text); font-size: 11px;'>"
+                "One webhook per line: <code>events|kind|target</code> — events "
+                "comma-separated (or blank = all), kind = command|post. POST "
+                "targets are SSRF-guarded.</span>"
+            )
+        )
+        root.addWidget(self.webhooks_edit)
 
         # ── Setup guide ────────────────────────────────────────
         # Mirrors the Help → Re-run setup guide… menu entry. Two entry
@@ -1251,6 +1299,11 @@ class SettingsPane(QWidget):
         s.whisper_metal_enabled = self.whisper_metal_cb.isChecked()
         s.pause_on_battery = self.pause_on_battery_cb.isChecked()
         s.battery_load_level = self.battery_load_combo.currentData() or "quiet"
+        s.notify_quiet_hours_enabled = self.quiet_hours_cb.isChecked()
+        s.notify_quiet_hours_start = self.quiet_start.text().strip() or "22:00"
+        s.notify_quiet_hours_end = self.quiet_end.text().strip() or "08:00"
+        s.webhooks_enabled = self.webhooks_enabled_cb.isChecked()
+        s.webhooks = self._text_to_webhooks(self.webhooks_edit.toPlainText())
         s.processing_windows_enabled = self.processing_windows_cb.isChecked()
         s.processing_windows = [
             w.strip() for w in self.processing_windows_edit.text().split(",") if w.strip()
@@ -1315,6 +1368,37 @@ class SettingsPane(QWidget):
             h.setStyleSheet(f"color: {tokens['ink_3']}; font-size: 11px; font-style: italic;")
         v.addWidget(h)
         form.addRow(label, container)
+
+    @staticmethod
+    def _webhooks_to_text(webhooks: list) -> str:
+        """Render the webhooks list as one `events|kind|target` line each."""
+        lines = []
+        for wh in webhooks or []:
+            events = ",".join(wh.get("events", []) or [])
+            lines.append(f"{events}|{wh.get('kind', 'post')}|{wh.get('target', '')}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _text_to_webhooks(text: str) -> list:
+        """Parse `events|kind|target` lines back into the webhooks list."""
+        out = []
+        for line in (text or "").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split("|")
+            if len(parts) < 3:
+                continue
+            events = [e.strip() for e in parts[0].split(",") if e.strip()]
+            out.append(
+                {
+                    "events": events,
+                    "kind": parts[1].strip() or "post",
+                    "target": parts[2].strip(),
+                    "enabled": True,
+                }
+            )
+        return out
 
     def _row_widget(self, layout) -> QWidget:
         """Wrap an HBox layout in a QWidget so it can be added via _add_field."""

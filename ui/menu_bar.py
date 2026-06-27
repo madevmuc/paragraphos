@@ -176,6 +176,9 @@ def build_menu_bar(window) -> QMenuBar:
     a.triggered.connect(lambda: _find_duplicates(window))
     t.addAction(a)
     t.addSeparator()
+    a = QAction("Start Local API…", window)
+    a.triggered.connect(lambda: _start_local_api(window))
+    t.addAction(a)
     a = QAction("Export Bug Report…", window)
     a.triggered.connect(lambda: _export_bug_report(window))
     t.addAction(a)
@@ -600,6 +603,35 @@ def _find_duplicates(window) -> None:
         or "No likely duplicates found."
     )
     QMessageBox.information(window, "Duplicate episodes", body)
+
+
+def _start_local_api(window) -> None:
+    """Start the localhost JSON API in a background thread (10.2)."""
+    import secrets
+    import threading
+
+    from PyQt6.QtWidgets import QMessageBox
+
+    if getattr(window, "_api_server", None) is not None:
+        QMessageBox.information(window, "Local API", "The local API is already running.")
+        return
+    from core.api_server import serve
+
+    token = window.ctx.state.get_meta("api_token") or secrets.token_urlsafe(16)
+    window.ctx.state.set_meta("api_token", token)
+    try:
+        server = serve(window.ctx, token=token, host="127.0.0.1", port=8723)
+    except OSError as e:
+        QMessageBox.warning(window, "Local API", f"Couldn't start the API: {e}")
+        return
+    window._api_server = server
+    threading.Thread(target=server.serve_forever, name="api-server", daemon=True).start()
+    QMessageBox.information(
+        window,
+        "Local API",
+        f"Running at http://127.0.0.1:8723\n\nToken:\n{token}\n\n"
+        "Send it as `Authorization: Bearer <token>` or `?token=`.",
+    )
 
 
 def _export_bug_report(window) -> None:
