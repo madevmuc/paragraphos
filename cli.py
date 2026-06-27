@@ -1239,6 +1239,16 @@ def cmd_watch_list(args: argparse.Namespace) -> int:
 # ────────────────────────────────────────────────────────────────────────
 
 
+def cmd_bug_report(args: argparse.Namespace) -> int:
+    """Build a redacted bug-report bundle zip (6.4)."""
+    from core.bugbundle import build_bundle
+
+    dest = Path(args.out) if args.out else (DATA / "bug-report.zip")
+    build_bundle(settings=_settings(), state=_state(), dest=dest, log_dir=DATA / "logs")
+    print(f"bug report written → {dest}")
+    return 0
+
+
 def cmd_health(args: argparse.Namespace) -> int:
     """Run the startup health self-check (6.2)."""
     from core import health
@@ -1391,6 +1401,10 @@ def main() -> int:
     s_status = sub.add_parser("status", help="snapshot: queue depth, in-flight, by-status counts")
     s_status.add_argument("--json", action="store_true")
     s_status.set_defaults(fn=cmd_status)
+
+    s_bug = sub.add_parser("bug-report", help="write a redacted diagnostics bundle (zip)")
+    s_bug.add_argument("--out", default=None, help="output path (default: <data>/bug-report.zip)")
+    s_bug.set_defaults(fn=cmd_bug_report)
 
     s_health = sub.add_parser("health", help="startup health self-check (deps/model/disk/data dir)")
     s_health.add_argument("--json", action="store_true")

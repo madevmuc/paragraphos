@@ -133,6 +133,13 @@ class ParagraphosApp(QObject):
         super().__init__()
         self.ctx = AppContext.load(DATA_DIR)
         setup_logging(DATA_DIR, retention_days=self.ctx.settings.log_retention_days)
+        # Crash visibility (6.4): route uncaught exceptions to the activity log
+        # (which also lands in the rotating log file) before deferring to the
+        # default handler.
+        from core.bugbundle import install_excepthook
+        from ui.activity_log import log as _activity_log
+
+        install_excepthook(_activity_log)
         # One-line system fingerprint at startup — useful when users send
         # logs for debugging. Carefully NO PII: no username, no hostname,
         # no IP, no file paths, no watchlist content. macOS version,

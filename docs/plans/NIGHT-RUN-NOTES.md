@@ -179,6 +179,14 @@ per-test `_reset_event_bus` fixture was also added for subscriber isolation
   Worker pre-flight before pass 2: low disk → set `queue_paused` + progress
   warning + finish. Settings "Processing & reliability" toggle + min-free-GB
   spinbox. 5 tests.
+- **Task 23 — crash visibility + bug-report bundle (6.4)** ✅
+  `core/bugbundle.py`: `redact_settings` (paths/secrets), `build_bundle`
+  (zip: redacted settings.json + events.json + versions.txt + logs),
+  `install_excepthook` (routes uncaught exceptions to a log callback, then
+  defers to the prior hook). app.py installs the excepthook → activity log;
+  `cli.py bug-report` builds the zip. 3 tests. **Tier 2 complete.**
+  **Best-assumption:** GUI "Export bug report" menu item deferred — CLI command
+  is the operator surface; excepthook covers crash visibility in the GUI.
 - **Task 11 — wire use_etag_cache (8.5)** ✅ `rss.conditional_validators`
   gates stored ETag/Last-Modified by the setting; worker uses it (off → sends
   no conditional headers). respx tests confirm header present/absent. Settings

@@ -104,6 +104,10 @@ people actually paste, and paired with a full per-show episode browser.
   history beyond the RSS window and queues the newly fetched videos.
 
 ### Added
+- **Crash visibility + bug-report bundle.** Uncaught exceptions are routed to
+  the activity log (and log file) instead of vanishing, and `cli.py bug-report`
+  writes a shareable zip with recent logs, redacted settings, recent events,
+  and version info.
 - **Disk guard.** Before each run the queue auto-pauses if free space is below
   a configurable threshold (Settings → Processing & reliability), so a long
   back-catalogue run can't fill the disk mid-transcribe.
