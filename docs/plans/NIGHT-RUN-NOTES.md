@@ -127,6 +127,16 @@ per-test `_reset_event_bus` fixture was also added for subscriber isolation
   `EmptyState` (icon/title/hint/optional action, theme-token styled). Wired into
   Queue/Library/Failed/Shows tabs (toggle table↔empty in refresh; Shows keys on
   watchlist emptiness + "Add show" action). 3 widget tests. **Tier 1 complete.**
+
+### Tier 2
+
+- **Task 15 — granular notifications (7.4)** ✅ `core/notify_rules.py`
+  (`in_quiet_hours` midnight-wrap, `should_notify` event-toggle + per-show
+  opt-out + quiet hours). app.py subscribes the bus for `episode.failed` +
+  `run.finished` (the gaps the legacy notify_mode path doesn't cover, avoiding
+  double-notify), delivers via the GUI-thread `notify` signal. 6 tests.
+  **Best-assumption:** transcribed notifications stay on the legacy per-episode
+  path; quiet-hours times are CLI-settable (`set-setting`), no new settings UI.
 - **Task 11 — wire use_etag_cache (8.5)** ✅ `rss.conditional_validators`
   gates stored ETag/Last-Modified by the setting; worker uses it (off → sends
   no conditional headers). respx tests confirm header present/absent. Settings

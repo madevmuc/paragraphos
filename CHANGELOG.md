@@ -24,6 +24,11 @@ people actually paste, and paired with a full per-show episode browser.
   a curated subset is mirrored into the activity-log dock.
 
 ### Added
+- **Granular notifications.** Desktop notifications now fire on transcription
+  failures and when a check finishes (in addition to the existing per-episode
+  success notices), gated by a per-event toggle, a per-show opt-out
+  (`notify=false`), and an optional quiet-hours window that respects midnight
+  wrap.
 - **Friendly empty states.** The Queue, Library, Failed and Shows tabs now show
   a clear placeholder (with a helpful hint, and an "Add show" button on Shows)
   when there's nothing to display yet, instead of a blank table.

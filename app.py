@@ -93,6 +93,42 @@ class ParagraphosApp(QObject):
     notify = pyqtSignal(str, str, str)  # title, subtitle, body
     update_available = pyqtSignal(str, str)  # tag, html_url — GUI-thread safe
 
+    def _deliver_notification(self, title: str, subtitle: str, body: str) -> None:
+        """GUI-thread delivery of a notification (connected to the notify signal)."""
+        tray = getattr(self, "tray", None)
+        if tray is None:
+            return
+        msg = (subtitle + ("\n" + body if body else "")).strip()
+        try:
+            tray.showMessage(title, msg or title)
+        except Exception:
+            pass
+
+    def _bus_notify(self, ev) -> None:
+        """Bus callback: fire a desktop notification if the event passes the
+        granular notify rules (7.4). Runs on whatever thread emitted the event;
+        delivery is marshalled to the GUI thread via the notify signal."""
+        try:
+            from core.notify_rules import should_notify
+
+            show = next((s for s in self.ctx.watchlist.shows if s.slug == ev.show_slug), None)
+            if not should_notify(ev, self.ctx.settings, show):
+                return
+            from core.events import EventType
+
+            if ev.type == EventType.EPISODE_FAILED:
+                title = "✗ Transcription failed"
+                sub = (ev.payload or {}).get("title", "") or (ev.show_slug or "episode")
+            elif ev.type == EventType.RUN_FINISHED:
+                title = "Paragraphos — check finished"
+                sub = ""
+            else:
+                title = ev.type
+                sub = ev.show_slug or ""
+            self.notify.emit(title, sub, "")
+        except Exception:
+            pass
+
     def __init__(self) -> None:
         super().__init__()
         self.ctx = AppContext.load(DATA_DIR)
@@ -311,6 +347,17 @@ class ParagraphosApp(QObject):
 
         self._rebuild_tray_menu(running=False)
         self.tray.show()
+
+        # Granular event-driven notifications (7.4). The legacy notify_mode path
+        # already covers per-episode 'transcribed' messages, so to avoid
+        # duplicates the bus notifier handles the gaps it doesn't: failures and
+        # run-finished. Delivery marshals to the GUI thread via the notify
+        # signal (bus callbacks may run on a worker thread).
+        self.notify.connect(self._deliver_notification)
+        from core import events as _events
+
+        _events.subscribe(_events.EventType.EPISODE_FAILED, self._bus_notify)
+        _events.subscribe(_events.EventType.RUN_FINISHED, self._bus_notify)
 
         # Re-render the tray icon when macOS flips light/dark so its
         # glyph color tracks the new menu-bar appearance.
@@ -618,6 +665,7 @@ class ParagraphosApp(QObject):
             return
         if action != "transcribed":
             return
+        # (failures + run-finished are handled by the event-bus notifier below)
         spot_key = f"spotcheck_done:{slug}"
         title_prefix = f"{done_idx}/{total}"
         if self.ctx.state.get_meta(spot_key) != "1":
