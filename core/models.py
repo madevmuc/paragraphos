@@ -246,6 +246,9 @@ class Settings(BaseModel):
     whisper_model_autopick: bool = False
     # diarization (1.5) — off by default; gates a one-time model download
     diarization_enabled: bool = False
+    # Directory holding segmentation.onnx + embedding.onnx for sherpa-onnx
+    # diarization. Empty → resolved to <data_dir>/models/diarize at runtime.
+    diarization_model_dir: str = ""
     # disk guard (6.3)
     disk_guard_enabled: bool = True
     disk_guard_min_free_gb: int = 5

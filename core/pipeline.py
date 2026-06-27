@@ -78,6 +78,11 @@ class PipelineContext:
     # and a YouTube Short is marked SKIPPED instead of transcribed. When
     # False the probe is skipped entirely and Shorts transcribe normally.
     skip_shorts: bool = True
+    # Speaker diarization (1.5): when on AND the optional sherpa-onnx backend +
+    # models are present, the SRT is relabelled with A/B/C speaker tags. Best-
+    # effort — a missing backend is logged and skipped, never fails a transcribe.
+    diarization_enabled: bool = False
+    diarization_model_dir: str = ""
 
 
 @dataclass(frozen=True)
@@ -102,6 +107,31 @@ def _record_failure(ctx, guid: str, exc: BaseException, err: str) -> str:
     retry = errors.should_retry(category, attempts_after)
     ctx.state.record_failure(guid, category, err, retry=retry)
     return "deferred" if retry else "failed"
+
+
+def _maybe_diarize(ctx, audio_path, srt_path) -> bool:
+    """Best-effort speaker diarization (1.5): when enabled, relabel ``srt_path``
+    in place with A/B/C speaker tags using the sherpa-onnx backend. Swallows all
+    errors (incl. DiarizationUnavailable / missing models) so it never breaks a
+    completed transcribe. Returns True iff the SRT was relabelled."""
+    if not getattr(ctx, "diarization_enabled", False) or not srt_path:
+        return False
+    try:
+        from core.diarize import diarize_audio, diarize_segments, relabel_srt
+
+        segs = diarize_segments(
+            audio_path,
+            enabled=True,
+            backend=lambda p: diarize_audio(p, model_dir=ctx.diarization_model_dir),
+        )
+        if not segs:
+            return False
+        p = Path(srt_path)
+        p.write_text(relabel_srt(p.read_text(encoding="utf-8"), segs), encoding="utf-8")
+        return True
+    except Exception as e:  # noqa: BLE001 — diarization is strictly optional
+        logger.info("diarization skipped (%s): %s", type(e).__name__, e)
+        return False
 
 
 def caption_source_chain(pref: str, fallback_mode: str) -> list[str]:
@@ -439,6 +469,8 @@ def transcribe_phase(outcome: DownloadOutcome, ctx: PipelineContext) -> Pipeline
         logger.error("transcribe failed: %s (guid=%s)", ep["show_slug"], guid, exc_info=True)
         action = _record_failure(ctx, guid, e, err)
         return PipelineResult(action, guid, err)
+    # Optional speaker diarization (1.5) — relabel the SRT before indexing.
+    _maybe_diarize(ctx, mp3_path, result.srt_path)
     ctx.library.add(result.md_path)
     from core.stats import _duration_from_srt
 

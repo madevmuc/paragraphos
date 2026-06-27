@@ -364,6 +364,14 @@ class SettingsPane(QWidget):
         self.confidence_marking_cb.toggled.connect(self._schedule_save)
         root.addWidget(self.confidence_marking_cb)
 
+        self.diarization_cb = QCheckBox("Label speakers (diarization — needs sherpa-onnx + models)")
+        self.diarization_cb.setObjectName("diarization_checkbox")
+        self.diarization_cb.setChecked(
+            bool(getattr(self.ctx.settings, "diarization_enabled", False))
+        )
+        self.diarization_cb.toggled.connect(self._schedule_save)
+        root.addWidget(self.diarization_cb)
+
         conf_hint = QLabel(
             "<span style='color: palette(placeholder-text); font-size: 11px;'>"
             "Asks whisper for per-word confidence and wraps shaky words in "
@@ -1316,6 +1324,7 @@ class SettingsPane(QWidget):
         s.log_retention_days = self.log_retention.value()
         s.save_srt = self.save_srt_cb.isChecked()
         s.confidence_marking_enabled = self.confidence_marking_cb.isChecked()
+        s.diarization_enabled = self.diarization_cb.isChecked()
         s.use_etag_cache = self.use_etag_cache_cb.isChecked()
         s.disk_guard_enabled = self.disk_guard_cb.isChecked()
         s.disk_guard_min_free_gb = int(self.disk_guard_min_gb.value())

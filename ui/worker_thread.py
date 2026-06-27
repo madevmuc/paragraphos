@@ -614,6 +614,12 @@ class CheckAllThread(QThread):
         )
         kwargs["min_duration_sec"] = emin
         kwargs["max_duration_sec"] = emax
+        # Speaker diarization (1.5): off by default. Resolve the model dir to
+        # <data_dir>/models/diarize when the setting is blank.
+        if bool(getattr(self.settings, "diarization_enabled", False)):
+            kwargs["diarization_enabled"] = True
+            mdir = getattr(self.settings, "diarization_model_dir", "") or ""
+            kwargs["diarization_model_dir"] = mdir or str(self.ctx.data_dir / "models" / "diarize")
         # Per-download pause (2.4): honour a per-guid pause flag in state.meta.
         # Lazy (accesses state inside the call) so a stub ctx without a real
         # state still builds a PipelineContext; the context is per-run/short-
