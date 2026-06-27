@@ -1237,6 +1237,27 @@ def cmd_watch_list(args: argparse.Namespace) -> int:
 # ────────────────────────────────────────────────────────────────────────
 
 
+def cmd_logs(args: argparse.Namespace) -> int:
+    """Query (and optionally export) the structured event log (7.3)."""
+    state = _state()
+    rows = state.query_events(
+        type_prefix=args.type,
+        show_slug=args.show,
+        since=args.since,
+        limit=args.limit or 1000,
+    )
+    if args.export:
+        from core.log_export import export_events
+
+        fmt = "csv" if str(args.export).lower().endswith(".csv") else "json"
+        export_events(rows, fmt, args.export)
+        print(f"exported {len(rows)} event(s) → {args.export}")
+        return 0
+    human = "\n".join(f"{r['ts']}  {r['type']}  {r.get('show_slug') or ''}".rstrip() for r in rows)
+    _emit(rows, as_json=args.json, human=human or "(no events)")
+    return 0
+
+
 def cmd_set_setting(args: argparse.Namespace) -> int:
     """Set a top-level setting in settings.yaml. Type-coerced from the
     Settings model default."""
@@ -1338,6 +1359,15 @@ def main() -> int:
     s_status = sub.add_parser("status", help="snapshot: queue depth, in-flight, by-status counts")
     s_status.add_argument("--json", action="store_true")
     s_status.set_defaults(fn=cmd_status)
+
+    s_logs = sub.add_parser("logs", help="query/export the structured event log")
+    s_logs.add_argument("--type", default=None, help="exact type or prefix (e.g. 'episode.')")
+    s_logs.add_argument("--show", default=None, help="filter by show slug")
+    s_logs.add_argument("--since", default=None, help="ISO-8601 lower bound on timestamp")
+    s_logs.add_argument("--limit", type=int, default=200)
+    s_logs.add_argument("--export", default=None, help="write rows to FILE (.json or .csv)")
+    s_logs.add_argument("--json", action="store_true")
+    s_logs.set_defaults(fn=cmd_logs)
 
     s_eps = sub.add_parser("episodes", help="list episodes for a show")
     s_eps.add_argument("slug")

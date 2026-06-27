@@ -24,6 +24,8 @@ people actually paste, and paired with a full per-show episode browser.
   a curated subset is mirrored into the activity-log dock.
 
 ### Added
+- **Structured, filterable event log + export.** `cli.py logs` queries the
+  event log by type/show/since and exports matching rows to JSON or CSV.
 - **Episode timeline.** Right-click an episode in the Library → **Show
   timeline…** to see how long each phase took (queue wait, download,
   transcribe, total), computed from the recorded events.

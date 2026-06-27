@@ -148,6 +148,12 @@ per-test `_reset_event_bus` fixture was also added for subscriber isolation
   (queue_wait/download/transcribe/total from event ts, missing phases omitted)
   + `format_timeline`. Library episode context-menu "Show timeline…" reads
   `query_events(guid=...)` into a dialog. 4 tests.
+- **Task 18 — filterable logs + export (7.3)** ✅ `core/log_export.py`
+  `export_events` (JSON/CSV, payload flattened for CSV). New `cli.py logs`
+  command (filter by type/show/since, `--export` to .json/.csv). 6 tests.
+  **Best-assumption:** delivered the filter+export via the CLI (operator
+  surface, testable); the GUI LogsPane event-table upgrade is deferred (the
+  dock still shows live activity strings).
 - **Task 11 — wire use_etag_cache (8.5)** ✅ `rss.conditional_validators`
   gates stored ETag/Last-Modified by the setting; worker uses it (off → sends
   no conditional headers). respx tests confirm header present/absent. Settings

@@ -84,6 +84,8 @@ is settable via `cli.py set-setting <key> <value>`.
 ```
 cli.py shows --json     # shows + per-show pending/done/failed counts
 cli.py status --json    # queue depth, in-flight, by-status counts
+cli.py logs --type episode. --show <slug> --json   # query the event log
+cli.py logs --export run.json                       # export events to JSON/CSV
 ```
 
 The CLI shares `state.sqlite` + `watchlist.yaml` with the GUI; changes are picked up live.
