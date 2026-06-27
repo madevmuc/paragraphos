@@ -526,11 +526,18 @@ def _bulk_export(window) -> None:
     if not path:
         return
     show_dir = Path(window.ctx.settings.output_root).expanduser() / slug
-    items = [
-        {"title": md.stem, "text": md.read_text(encoding="utf-8", errors="replace")}
-        for md in sorted(show_dir.glob("*.md"))
-        if md.name != "index.md"
-    ]
+    items = []
+    for md in sorted(show_dir.glob("*.md")):
+        if md.name == "index.md":
+            continue
+        srt = md.with_suffix(".srt")  # timestamps for HTML export, if present
+        items.append(
+            {
+                "title": md.stem,
+                "text": md.read_text(encoding="utf-8", errors="replace"),
+                "srt": srt.read_text(encoding="utf-8", errors="replace") if srt.is_file() else "",
+            }
+        )
     if not items:
         QMessageBox.information(window, "Nothing to export", "No transcripts for that show.")
         return
