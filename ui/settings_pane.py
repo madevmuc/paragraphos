@@ -440,6 +440,34 @@ class SettingsPane(QWidget):
         _pw_holder.setLayout(_pw_form)
         root.addWidget(_pw_holder)
 
+        # Battery budget (8.4): drop to a gentler load level on battery.
+        self.pause_on_battery_cb = QCheckBox("Ease off CPU/RAM when running on battery")
+        self.pause_on_battery_cb.setObjectName("pause_on_battery_checkbox")
+        self.pause_on_battery_cb.setChecked(
+            bool(getattr(self.ctx.settings, "pause_on_battery", False))
+        )
+        self.pause_on_battery_cb.toggled.connect(self._schedule_save)
+        root.addWidget(self.pause_on_battery_cb)
+
+        _bat_form = QFormLayout()
+        self.battery_load_combo = QComboBox()
+        for _lbl, _val in (("Quiet", "quiet"), ("Balanced", "balanced"), ("Full", "full")):
+            self.battery_load_combo.addItem(_lbl, _val)
+        _cur_bat = getattr(self.ctx.settings, "battery_load_level", "quiet")
+        _bat_idx = self.battery_load_combo.findData(_cur_bat)
+        self.battery_load_combo.setCurrentIndex(_bat_idx if _bat_idx >= 0 else 0)
+        self.battery_load_combo.currentIndexChanged.connect(self._schedule_save)
+        self._add_field(
+            _bat_form,
+            "Load level on battery",
+            self.battery_load_combo,
+            hint="Used while unplugged when the option above is on.",
+            hint_kind="info",
+        )
+        _bat_holder = QWidget()
+        _bat_holder.setLayout(_bat_form)
+        root.addWidget(_bat_holder)
+
         # ── YouTube ────────────────────────────────────────────
         # Visible only when Sources → YouTube channels is checked. The
         # whole group hides/shows live as the Sources toggle flips.
@@ -1191,6 +1219,8 @@ class SettingsPane(QWidget):
         s.use_etag_cache = self.use_etag_cache_cb.isChecked()
         s.disk_guard_enabled = self.disk_guard_cb.isChecked()
         s.disk_guard_min_free_gb = int(self.disk_guard_min_gb.value())
+        s.pause_on_battery = self.pause_on_battery_cb.isChecked()
+        s.battery_load_level = self.battery_load_combo.currentData() or "quiet"
         s.processing_windows_enabled = self.processing_windows_cb.isChecked()
         s.processing_windows = [
             w.strip() for w in self.processing_windows_edit.text().split(",") if w.strip()

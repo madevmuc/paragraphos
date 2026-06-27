@@ -205,6 +205,10 @@ per-test `_reset_event_bus` fixture was also added for subscriber isolation
   PipelineContext `download_pause_check`; download_phase catches DownloadPaused
   → re-queue (deferred). Worker reads `download_paused:{guid}` meta; queue
   context-menu Pause/Resume download sets/clears it. 3 tests (respx).
+- **Task 27 — battery load budget (8.4)** ✅ `core/power.py`
+  (`parse_pmset_on_battery`, `on_battery` via pmset, `effective_load_level`).
+  Worker resolves the load profile through it (battery + pause_on_battery →
+  battery_load_level). Settings toggle + battery-load combo. 4 tests.
 - **Task 11 — wire use_etag_cache (8.5)** ✅ `rss.conditional_validators`
   gates stored ETag/Last-Modified by the setting; worker uses it (off → sends
   no conditional headers). respx tests confirm header present/absent. Settings

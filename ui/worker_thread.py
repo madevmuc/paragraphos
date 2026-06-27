@@ -515,8 +515,17 @@ class CheckAllThread(QThread):
         # scheduling tier (see core/load.py). detect() shells out to sysctl,
         # so do it once here rather than per-episode.
         _mem, _perf = hw_detect()
-        self._load_profile = resolve_load_profile(
+        # Battery budget (8.4): on battery + pause_on_battery → gentler level.
+        from core.power import effective_load_level, on_battery
+
+        _level = effective_load_level(
             self.settings.load_level,
+            on_battery=on_battery(),
+            pause_on_battery=bool(getattr(self.settings, "pause_on_battery", False)),
+            battery_level=getattr(self.settings, "battery_load_level", "quiet"),
+        )
+        self._load_profile = resolve_load_profile(
+            _level,
             perf_cores=_perf or (os.cpu_count() or 4),
             background_priority=self.settings.background_priority,
         )

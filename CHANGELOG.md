@@ -104,6 +104,9 @@ people actually paste, and paired with a full per-show episode browser.
   history beyond the RSS window and queues the newly fetched videos.
 
 ### Added
+- **Battery-aware load.** When enabled, transcription drops to a gentler load
+  level while the Mac runs on battery, then returns to the configured level on
+  AC power.
 - **Pause/resume individual downloads.** Right-click a queued episode → Pause
   download to halt its in-flight download (the partial is kept); Resume to
   continue from where it left off.
