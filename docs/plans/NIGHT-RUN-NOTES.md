@@ -252,6 +252,11 @@ per-test `_reset_event_bus` fixture was also added for subscriber isolation
   report — avoids false-skip data loss). 5 tests. **Fingerprint dedup deferred
   to design doc** `docs/plans/dedupe-fingerprint-design.md` (needs `fpcalc`
   dep) per the escape hatch.
+- **Task 39 — local HTTP/JSON API (10.2, escape hatch)** ✅ built fully (no
+  dep): `core/api_server.py` pure `handle_request` router (token-guarded;
+  GET /shows /status /queue, POST /queue/pause /resume) + `serve`
+  (stdlib HTTPServer, 127.0.0.1 only). New `cli.py serve` (token generated +
+  persisted). 6 tests. Exceeded the escape hatch (real build, not skeleton).
 - **Task 11 — wire use_etag_cache (8.5)** ✅ `rss.conditional_validators`
   gates stored ETag/Last-Modified by the setting; worker uses it (off → sends
   no conditional headers). respx tests confirm header present/absent. Settings

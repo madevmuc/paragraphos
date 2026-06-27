@@ -1314,6 +1314,31 @@ def cmd_watch_list(args: argparse.Namespace) -> int:
 # ────────────────────────────────────────────────────────────────────────
 
 
+def cmd_serve(args: argparse.Namespace) -> int:
+    """Run the localhost JSON API server (10.2)."""
+    import secrets
+
+    from core.api_server import serve
+
+    class _Ctx:
+        pass
+
+    ctx = _Ctx()
+    ctx.watchlist = _watchlist()
+    ctx.state = _state()
+    ctx.settings = _settings()
+    token = args.token or ctx.state.get_meta("api_token") or secrets.token_urlsafe(16)
+    ctx.state.set_meta("api_token", token)
+    server = serve(ctx, token=token, host="127.0.0.1", port=args.port)
+    print(f"Paragraphos API → http://127.0.0.1:{args.port}  (token: {token})")
+    print("Ctrl-C to stop.")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        server.shutdown()
+    return 0
+
+
 def cmd_find_duplicates(args: argparse.Namespace) -> int:
     """Report likely re-upload duplicates within a show, by title similarity (3.5)."""
     from core.dedupe import find_near_duplicates
@@ -1592,6 +1617,13 @@ def main() -> int:
     s_status = sub.add_parser("status", help="snapshot: queue depth, in-flight, by-status counts")
     s_status.add_argument("--json", action="store_true")
     s_status.set_defaults(fn=cmd_status)
+
+    s_serve = sub.add_parser("serve", help="run the localhost JSON API (read + queue control)")
+    s_serve.add_argument("--port", type=int, default=8723)
+    s_serve.add_argument(
+        "--token", default=None, help="auth token (default: generated + persisted)"
+    )
+    s_serve.set_defaults(fn=cmd_serve)
 
     s_dup = sub.add_parser("find-duplicates", help="report likely re-upload duplicates in a show")
     s_dup.add_argument("slug")

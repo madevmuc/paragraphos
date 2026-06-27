@@ -93,6 +93,8 @@ cli.py backfill-dates <slug>                         # real YouTube upload dates
 cli.py export <slug> --format md|json|pdf            # bulk-export transcripts
 cli.py publish [--slug X] --out site/                # static searchable site + RSS
 cli.py import-opml subs.opml --backlog recent        # import podcast subscriptions
+cli.py find-duplicates <slug> --json                 # report likely re-uploads
+cli.py serve --port 8723                             # localhost JSON API (token-guarded)
 ```
 
 The CLI shares `state.sqlite` + `watchlist.yaml` with the GUI; changes are picked up live.

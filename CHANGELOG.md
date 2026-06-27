@@ -104,6 +104,9 @@ people actually paste, and paired with a full per-show episode browser.
   history beyond the RSS window and queues the newly fetched videos.
 
 ### Added
+- **Local JSON API.** `cli.py serve` exposes a token-guarded, loopback-only
+  HTTP API (shows / status / queue read, plus queue pause/resume) for local
+  automation — stdlib only, no new dependency.
 - **Re-upload duplicate detection.** `cli.py find-duplicates <slug>` reports
   likely re-uploads within a show by title similarity (non-destructive); an
   audio-fingerprint follow-up is designed in `docs/plans/`.
